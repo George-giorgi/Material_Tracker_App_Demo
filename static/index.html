@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#142237">
+    <title>BRUSNA Material Tracker — Demo</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="BRUSNA Material Tracker home">
+          <img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists">
+        </a>
+        <div class="workspace-label">WORKSPACE</div>
+        <nav class="main-nav" aria-label="Main navigation">
+          <button class="nav-item active" data-tab="overview"><span class="nav-icon">◫</span>Overview</button>
+          <button class="nav-item" data-tab="inventory"><span class="nav-icon">▤</span>Inventory</button>
+          <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span>Houses &amp; teams</button>
+          <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="local-badge"><span class="status-dot"></span><span><strong>Local workspace</strong><small>Data stays on this computer</small></span></div>
+          <p>First step toward clearer stock, delivery and usage records.</p>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists"></a>
+          <div class="topbar-spacer"></div>
+          <button class="button button-secondary" id="start-presentation">Presentation guide</button>
+          <button class="button button-primary" id="new-movement-top"><span>＋</span> Record movement</button>
+        </header>
+        <div id="demo-banner" class="demo-banner hidden" role="status"><strong>DEMO DATA — NOT REAL STOCK</strong><span>Warehouse quantities are sample numbers. Count the physical stock before using these figures to plan or record materials.</span></div>
+
+        <section class="page active" id="page-overview" data-page="overview">
+          <div class="page-heading">
+            <div><div class="eyebrow">YOUR MATERIALS, AT A GLANCE</div><h1>Overview</h1><p class="page-subtitle">A clear picture of warehouse stock and where materials are going.</p></div>
+            <span class="date-chip" id="today-label"></span>
+          </div>
+          <div class="stat-grid">
+            <article class="stat-card"><div class="stat-icon green">▤</div><div class="stat-label">Material types</div><div class="stat-value" id="stat-materials">—</div><div class="stat-caption">being tracked</div></article>
+            <article class="stat-card"><div class="stat-icon orange">⌂</div><div class="stat-label">Active houses</div><div class="stat-value" id="stat-houses">—</div><div class="stat-caption">with movement history</div></article>
+            <article class="stat-card"><div class="stat-icon blue">↔</div><div class="stat-label">Recent movements</div><div class="stat-value" id="stat-movements">—</div><div class="stat-caption">in the latest activity</div></article>
+            <article class="stat-card"><div class="stat-icon red">!</div><div class="stat-label">Reconcile balances</div><div class="stat-value" id="stat-counts">—</div><div class="stat-caption">unknown or negative balances</div></article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="card stock-card">
+              <div class="card-heading"><div><h2>Warehouse stock</h2><p>Current balance by material</p></div><button class="text-button" data-goto="inventory">View inventory <span>→</span></button></div>
+              <div class="table-wrap"><table><thead><tr><th>Material</th><th>Code</th><th>In warehouse</th><th>Status</th></tr></thead><tbody id="overview-stock"></tbody></table></div>
+              <div class="empty-state hidden" id="overview-empty"><div class="empty-symbol">▤</div><strong>No materials yet</strong><p>Import the tracker workbook or add a material to get started.</p><button class="button button-secondary" data-goto="inventory">Set up inventory</button></div>
+            </article>
+            <article class="card activity-card">
+              <div class="card-heading"><div><h2>Recent activity</h2><p>Latest recorded material movements</p></div><button class="icon-button" data-goto="movements" aria-label="View all movements">↗</button></div>
+              <div class="activity-list" id="overview-activity"></div>
+            </article>
+          </div>
+          <div class="privacy-note"><span>i</span><div><strong>Local-first MVP</strong><p>This version stores data in a local database on this computer. It is not yet shared with other employees.</p></div></div>
+        </section>
+
+        <section class="page" id="page-inventory" data-page="inventory">
+          <div class="page-heading">
+            <div><div class="eyebrow">WAREHOUSE &amp; SITE BALANCES</div><h1>Inventory</h1><p class="page-subtitle">Follow every material from warehouse collection to use or return.</p></div>
+            <div class="heading-actions"><button class="button button-secondary" id="open-stocktake">Count stock</button><button class="button button-primary" id="open-material">＋ Add material</button></div>
+          </div>
+          <article class="card">
+            <div class="card-heading inventory-heading"><div><h2>All materials</h2><p id="inventory-caption">Warehouse quantities update with every recorded movement.</p></div><label class="search-box"><span>⌕</span><input id="material-search" type="search" placeholder="Search materials" aria-label="Search materials"></label></div>
+            <div class="table-wrap"><table><thead><tr><th>Material</th><th>Code</th><th>Warehouse</th><th>With teams</th><th>On houses</th><th>Unit</th><th>Status</th><th></th></tr></thead><tbody id="inventory-table"></tbody></table></div>
+            <div class="empty-state hidden" id="inventory-empty"><div class="empty-symbol">▤</div><strong>Your inventory starts here</strong><p>Import the existing Excel tracker to bring in materials and movement history.</p><button class="button button-primary" id="open-import-empty">Import Excel tracker</button></div>
+          </article>
+          <article class="card import-card">
+            <div class="import-intro"><div class="import-icon">↥</div><div><h2>Bring in your Excel tracker</h2><p>Import the STOCK and MOVEMENTS sheets from the current EWI tracker.</p></div></div>
+            <form id="import-form" class="import-form"><label class="file-picker"><input type="file" id="workbook-file" accept=".xlsx,.xlsm"><span>Choose Excel file</span></label><span class="file-name" id="file-name">No file selected</span><button class="button button-secondary" type="submit">Import workbook</button></form>
+            <p class="helper-text">Import is available only when this tracker is empty. Existing workbook data is copied to this computer and is never uploaded to a remote service.</p>
+          </article>
+        </section>
+
+        <section class="page" id="page-houses" data-page="houses">
+          <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Add houses, search saved owner and employee details, and see materials on site.</p></div><button class="button button-primary" id="open-house">＋ Add house</button></div>
+          <div id="houses-list" class="house-grid"></div>
+          <div class="empty-state card hidden" id="houses-empty"><div class="empty-symbol">⌂</div><strong>No houses recorded yet</strong><p>Houses will appear here when materials are delivered or returned.</p><button class="button button-primary" data-goto="movements">Record a movement</button></div>
+        </section>
+
+        <section class="page" id="page-movements" data-page="movements">
+          <div class="page-heading"><div><div class="eyebrow">ACCOUNTABILITY &amp; HISTORY</div><h1>Movements</h1><p class="page-subtitle">Search all recorded movements by material, house, owner, employee, date or team.</p></div><button class="button button-primary" id="new-movement">＋ Record movement</button></div>
+          <article class="card">
+            <div class="card-heading"><div><h2>Movement history</h2><p>Search returns every matching record</p></div><label class="search-box"><span>⌕</span><input id="movement-search" type="search" placeholder="Search history" aria-label="Search movement history"></label></div>
+            <div class="table-wrap"><table><thead><tr><th>Date</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>House / owner</th><th>Responsible</th></tr></thead><tbody id="movement-table"></tbody></table></div>
+            <div class="empty-state hidden" id="movements-empty"><div class="empty-symbol">↔</div><strong>No movements recorded yet</strong><p>Start a ledger entry to keep each material movement accountable.</p><button class="button button-primary" data-goto="movements" id="empty-record-movement">Record first movement</button></div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="movement-dialog" class="dialog">
+      <form id="movement-form" method="dialog">
+        <div class="dialog-heading"><div><div class="eyebrow">NEW LEDGER ENTRY</div><h2>Record movement</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="form-grid">
+          <label class="field full">Movement type<select id="movement-kind" name="kind" required><option value="pickup">Picked up from warehouse</option><option value="return">Returned to warehouse</option><option value="transfer">Moved to another site</option></select><small>Choose a house for a warehouse pickup or return. For a site transfer, choose where materials are coming from and going to.</small></label>
+          <label class="field">Date<input name="date" id="movement-date" type="date" required></label>
+          <label class="field">Department<input name="department" maxlength="120" placeholder="Optional"></label>
+          <label class="field full" id="primary-house-search">House search<input name="house_id" id="movement-house-id" type="search" autocomplete="off" maxlength="120" placeholder="Search by house ID, owner or employee"><div class="suggestions hidden" id="house-suggestions" role="listbox" aria-label="Matching houses"></div><small id="house-hint">Required for pickup, delivery, use and return. Search matches house, owner and assigned employee.</small></label>
+          <label class="field" id="primary-postcode-field">Postcode / Eircode<input name="postcode" id="movement-postcode" maxlength="80" placeholder="Optional"></label>
+          <label class="field" id="primary-owner-field">House owner<input name="owner_name" id="movement-owner" maxlength="160" placeholder="Optional"></label>
+          <label class="field" id="primary-employee-field">Assigned employee<input name="employee_name" id="movement-employee" maxlength="160" placeholder="Employee responsible for this house"></label>
+          <div class="house-live-stock full" id="house-live-stock"><strong>Select a house to see its current on-site materials.</strong><div id="house-live-stock-list"></div></div>
+          <div class="field full">
+            <span>Choose materials and quantities</span>
+            <div class="material-search-row">
+              <div class="autocomplete-wrap"><input id="movement-material-search" type="search" autocomplete="off" placeholder="Search materials by name or code"><div class="suggestions hidden" id="material-suggestions" role="listbox" aria-label="Matching materials"></div></div>
+              <button class="button button-secondary" type="button" id="add-material-line">＋ Add material</button>
+            </div>
+            <small>Search and add as many lines as needed; enter a quantity for each selected material.</small>
+            <div class="selected-materials-heading"><strong id="selected-material-count">0 materials selected</strong><span>Balances at relevant locations update live</span></div>
+            <div class="selected-materials" id="movement-lines"></div>
+          </div>
+          <div class="movement-fields full hidden" data-for="pickup">
+            <label class="field extra-delivery-toggle"><span>Delivery tracking</span><span class="checkbox-field"><input id="extra-delivery" name="is_extra_delivery" type="checkbox"><span>Mark as an extra delivery (#2 and onwards)</span></span></label>
+            <label class="field">Picked up by<input name="person" maxlength="120" placeholder="Employee name"></label>
+            <label class="field">Responsible team<input name="team" maxlength="120" placeholder="Team name"></label>
+          </div>
+          <div class="movement-fields full hidden" data-for="return">
+            <label class="field">Returned to warehouse by<input name="person" maxlength="120" placeholder="Name"></label>
+            <label class="field">Responsible team<input name="team" maxlength="120" placeholder="Team name"></label>
+          </div>
+          <div class="movement-fields full hidden" data-for="transfer">
+            <div class="transfer-block"><strong>From which site?</strong><label class="field">Location type<select name="source_kind" class="location-kind"><option value="house">House / site</option><option value="team">Team</option></select></label><label class="field transfer-team-reference hidden"><span class="location-reference-label">Team name</span><input name="source_reference" maxlength="120" placeholder="Team name"></label><label class="field transfer-house-reference"><span class="house-reference-label">Select source site</span><select name="source_site" class="site-reference"><option value="">Choose a site</option></select></label><label class="field hidden transfer-department">Department<input name="source_department" maxlength="120"></label></div>
+            <div class="transfer-block"><strong>Move to which site?</strong><label class="field">Location type<select name="destination_kind" class="location-kind"><option value="house">House / site</option><option value="team">Team</option></select></label><label class="field transfer-team-reference hidden"><span class="location-reference-label">Team name</span><input name="destination_reference" maxlength="120" placeholder="Team name"></label><label class="field transfer-house-reference"><span class="house-reference-label">Select destination site</span><select name="destination_site" class="site-reference"><option value="">Choose a site</option></select></label><label class="field hidden transfer-department">Department<input name="destination_department" maxlength="120"></label></div>
+            <label class="field">Transferred by<input name="person" maxlength="120" placeholder="Name"></label>
+            <label class="field">Responsible team<input name="team" maxlength="120" placeholder="Team name"></label>
+          </div>
+          <label class="field full">Notes<textarea name="notes" rows="3" maxlength="2000" placeholder="Optional details about this movement"></textarea></label>
+        </div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save movement</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="material-dialog" class="dialog">
+      <form id="material-form" method="dialog">
+        <div class="dialog-heading"><div><div class="eyebrow">INVENTORY SETUP</div><h2>Add material</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="form-grid">
+          <label class="field full">Material name<input name="name" maxlength="200" required placeholder="e.g. Board 100mm"></label>
+          <label class="field">Material code<input name="code" maxlength="100" placeholder="Optional"></label>
+          <label class="field">Unit<input name="unit" maxlength="40" value="units" required placeholder="e.g. bags, boards, m²"></label>
+          <label class="field full">Opening warehouse stock<input name="opening_qty" type="number" min="0" step="any" required value="0"></label>
+        </div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Add material</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="house-dialog" class="dialog">
+      <form id="house-form" method="dialog">
+        <div class="dialog-heading"><div><div class="eyebrow">SITE DIRECTORY</div><h2>Add house</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="form-grid">
+          <label class="field full">House ID<input name="id" maxlength="120" required placeholder="e.g. WH123456"></label>
+          <label class="field">Postcode / Eircode<input name="postcode" maxlength="80" placeholder="Optional"></label>
+          <label class="field">House owner<input name="owner_name" maxlength="160" placeholder="Optional"></label>
+          <label class="field full">Assigned employee<input name="employee_name" maxlength="160" placeholder="Employee responsible for this house"></label>
+        </div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save house</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="stocktake-dialog" class="dialog">
+      <form id="stocktake-form" method="dialog">
+        <div class="dialog-heading"><div><div class="eyebrow">RECONCILE PHYSICAL STOCK</div><h2 id="stocktake-title">Count stock</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <p class="dialog-intro" id="stocktake-intro">Save a physical count as a checkpoint. Future movements will be calculated from this count.</p>
+        <div class="form-grid">
+          <label class="field full">Material<select name="material_id" id="stocktake-material" required></select></label>
+          <label class="field full">Location<select name="location" id="stocktake-location" required></select></label>
+          <label class="field">Counted quantity<input name="quantity" id="stocktake-quantity" type="number" min="0" step="any" required placeholder="0"></label>
+          <label class="field">Counted by<input name="counted_by" maxlength="120" required placeholder="Name"></label>
+          <label class="field full">Notes<textarea name="notes" rows="2" maxlength="2000" placeholder="Optional"></textarea></label>
+        </div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save count</button></div>
+      </form>
+    </dialog>
+
+    <aside id="presentation-guide" class="presentation-guide hidden" aria-labelledby="presentation-title" aria-live="polite">
+      <div class="presentation-topline"><span id="presentation-progress"></span><div><button class="icon-button" id="minimize-presentation" type="button" aria-label="Minimize presentation guide">−</button><button class="icon-button" id="close-presentation" type="button" aria-label="Close presentation guide">×</button></div></div>
+      <h2 id="presentation-title"></h2>
+      <p id="presentation-narration" class="presentation-narration"></p>
+      <div id="presentation-instruction" class="presentation-instruction"></div>
+      <div id="presentation-example" class="presentation-example"></div>
+      <div class="presentation-actions">
+        <button class="button button-secondary" id="presentation-previous" type="button">Back</button>
+        <button class="button button-secondary hidden" id="presentation-do-action" type="button"></button>
+        <button class="button button-primary" id="presentation-next" type="button">Next</button>
+      </div>
+    </aside>
+    <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
