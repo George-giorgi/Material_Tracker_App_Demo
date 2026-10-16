@@ -1,4 +1,7 @@
+import http.client
+import json
 import tempfile
+import threading
 import unittest
 from datetime import date
 from pathlib import Path
@@ -42,6 +45,352 @@ class TrackerTests(unittest.TestCase):
     def balances(self, material_id):
         with server.connect_db() as db:
             return server.balances_for(db, material_id)
+
+    def start_test_server(self):
+        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RequestHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        return httpd, thread
+
+    def http_request(self, httpd, method, path, payload=None, cookie=""):
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", httpd.server_address[1], timeout=5
+        )
+        headers = {}
+        body = None
+        if payload is not None:
+            body = json.dumps(payload)
+            headers["Content-Type"] = "application/json"
+        if cookie:
+            headers["Cookie"] = cookie
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        set_cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        status = response.status
+        connection.close()
+        return status, result, set_cookie
+
+    def test_auth_setup_and_protected_endpoints(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/auth/status"
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(result["setup_required"])
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/dashboard"
+            )
+            self.assertEqual(status, 401)
+
+            status, result, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "12ab56",
+                },
+            )
+            self.assertEqual(status, 400)
+            self.assertIn("6 digits", result["error"])
+
+            status, result, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(result["user"]["role"], "admin")
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin2",
+                    "display_name": "Second Admin",
+                    "pin": "234567",
+                },
+            )
+            self.assertEqual(status, 409)
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "employee1",
+                    "display_name": "Tracker Employee",
+                    "pin": "345678",
+                    "pin_confirm": "345678",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, result, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {
+                    "username": "employee1",
+                    "pin": "345678",
+                },
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["user"]["role"], "employee")
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=employee_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertIn("materials", result)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/pin",
+                {
+                    "current_pin": "111111",
+                    "new_pin": "456789",
+                },
+                employee_cookie,
+            )
+            self.assertEqual(status, 401)
+            status, _, renewed_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/pin",
+                {
+                    "current_pin": "345678",
+                    "new_pin": "456789",
+                },
+                employee_cookie,
+            )
+            self.assertEqual(status, 200)
+            status, _, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=employee_cookie
+            )
+            self.assertEqual(status, 401)
+            status, _, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=renewed_cookie
+            )
+            self.assertEqual(status, 200)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/logout",
+                cookie=renewed_cookie,
+            )
+            self.assertEqual(status, 200)
+            status, _, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=renewed_cookie
+            )
+            self.assertEqual(status, 401)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_login_locks_after_five_incorrect_pins(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            for _ in range(4):
+                status, _, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/auth/login",
+                    {"username": "admin1", "pin": "999999"},
+                )
+                self.assertEqual(status, 401)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "admin1", "pin": "999999"},
+            )
+            self.assertEqual(status, 429)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "admin1", "pin": "123456"},
+            )
+            self.assertEqual(status, 429)
+            with server.connect_db() as db:
+                db.execute(
+                    "UPDATE app_login_attempts SET locked_until = 0 "
+                    "WHERE username_hash = ?",
+                    (server._login_attempt_key("admin1"),),
+                )
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "admin1", "pin": "123456"},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["user"]["role"], "admin")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_employee_cannot_change_stock_or_house_stage(self):
+        material_id = self.add_material(opening=10)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(
+                    db, "H-EXISTING", "A1", "Original Owner", "Original Employee"
+                )
+                server._upsert_house(
+                    db, "H-DEST", "B2", "Destination Owner", "Destination Employee"
+                )
+        httpd, thread = self.start_test_server()
+        try:
+            _, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "employee1",
+                    "display_name": "Tracker Employee",
+                    "pin": "345678",
+                    "pin_confirm": "345678",
+                },
+                admin_cookie,
+            )
+            _, _, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {
+                    "username": "employee1",
+                    "pin": "345678",
+                },
+            )
+            for path, payload in (
+                ("/api/stocktakes", {}),
+                ("/api/materials", {}),
+                ("/api/houses", {"id": "H-NEW"}),
+                (
+                    "/api/houses/status",
+                    {"id": "H-EXISTING", "finished": True},
+                ),
+                ("/api/import", {}),
+            ):
+                status, _, _ = self.http_request(
+                    httpd, "POST", path, payload, employee_cookie
+                )
+                self.assertEqual(status, 403, path)
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/movements/batch",
+                {
+                    "kind": "pickup",
+                    "date": date.today().isoformat(),
+                    "house_id": "H-EXISTING",
+                    "postcode": "Changed",
+                    "owner_name": "Changed Owner",
+                    "employee_name": "Changed Employee",
+                    "person": "Worker",
+                    "team": "Crew A",
+                    "items": [{"material_id": material_id, "qty": 1}],
+                },
+                employee_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/movements/batch",
+                {
+                    "kind": "transfer",
+                    "date": date.today().isoformat(),
+                    "source_kind": "house",
+                    "source_reference": "H-EXISTING",
+                    "source_postcode": "Changed Source",
+                    "destination_kind": "house",
+                    "destination_reference": "H-DEST",
+                    "destination_postcode": "Changed Destination",
+                    "person": "Worker",
+                    "team": "Crew A",
+                    "items": [{"material_id": material_id, "qty": 1}],
+                },
+                employee_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/movements/batch",
+                {
+                    "kind": "transfer",
+                    "date": date.today().isoformat(),
+                    "source_kind": "house",
+                    "source_reference": "H-EXISTING",
+                    "destination_kind": "house",
+                    "destination_reference": "H-NEW",
+                    "person": "Worker",
+                    "team": "Crew A",
+                    "items": [{"material_id": material_id, "qty": 1}],
+                },
+                employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            with server.connect_db() as db:
+                house = db.execute(
+                    "SELECT postcode, owner_name, employee_name, is_finished "
+                    "FROM houses WHERE id = 'H-EXISTING'"
+                ).fetchone()
+                self.assertEqual(
+                    tuple(house),
+                    ("A1", "Original Owner", "Original Employee", 0),
+                )
+                destination = db.execute(
+                    "SELECT postcode, owner_name, employee_name FROM houses "
+                    "WHERE id = 'H-DEST'"
+                ).fetchone()
+                self.assertEqual(
+                    tuple(destination),
+                    ("B2", "Destination Owner", "Destination Employee"),
+                )
+                self.assertIsNone(
+                    db.execute(
+                        "SELECT 1 FROM houses WHERE id = 'H-NEW'"
+                    ).fetchone()
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
 
     def test_movement_flow_updates_warehouse_team_and_house_balances(self):
         material_id = self.add_material()

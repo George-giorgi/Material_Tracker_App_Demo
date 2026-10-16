@@ -8,7 +8,24 @@
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
-    <div class="app-shell">
+    <main id="auth-screen" class="auth-screen hidden">
+      <section class="auth-card">
+        <img class="auth-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists">
+        <div class="eyebrow" id="auth-eyebrow">SECURE WORKSPACE</div>
+        <h1 id="auth-title">Sign in</h1>
+        <p id="auth-description">Sign in with your tracker account to continue.</p>
+        <form id="auth-form">
+          <label id="auth-display-name-field" class="field hidden">Your name<input id="auth-display-name" name="display_name" maxlength="120" autocomplete="name"></label>
+          <label class="field">Username<input id="auth-username" name="username" maxlength="64" required autocomplete="username"></label>
+          <label class="field">6-digit PIN<input id="auth-pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required></label>
+          <label id="auth-pin-confirm-field" class="field hidden">Confirm 6-digit PIN<input id="auth-pin-confirm" name="pin_confirm" type="password" inputmode="numeric" autocomplete="new-password"></label>
+          <p class="auth-error hidden" id="auth-error" role="alert"></p>
+          <button class="button button-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
+        </form>
+        <p class="auth-footnote">Use your own PIN. Do not share it with coworkers.</p>
+      </section>
+    </main>
+    <div class="app-shell hidden">
       <aside class="sidebar">
         <a class="brand" href="/" aria-label="BRUSNA Material Tracker home">
           <img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists">
@@ -21,7 +38,7 @@
           <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
         </nav>
         <div class="sidebar-bottom">
-          <div class="local-badge"><span class="status-dot"></span><span><strong>Local workspace</strong><small>Data stays on this computer</small></span></div>
+          <div class="local-badge"><span class="status-dot"></span><span><strong>Shared workspace</strong><small>Data stays on the tracker host</small></span></div>
           <p>First step toward clearer stock, delivery and usage records.</p>
         </div>
       </aside>
@@ -30,6 +47,7 @@
         <header class="topbar">
           <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists"></a>
           <div class="topbar-spacer"></div>
+          <button class="button button-secondary" id="account-button">Account</button>
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
           <button class="button button-primary" id="new-movement-top"><span>＋</span> Record movement</button>
         </header>
@@ -58,7 +76,7 @@
               <div class="activity-list" id="overview-activity"></div>
             </article>
           </div>
-          <div class="privacy-note"><span>i</span><div><strong>Local-first MVP</strong><p>This version stores data in a local database on this computer. It is not yet shared with other employees.</p></div></div>
+          <div class="privacy-note"><span>i</span><div><strong>Self-hosted shared workspace</strong><p>Authorized users share the database on the tracker host. Configure HTTPS before allowing access from employee devices.</p></div></div>
         </section>
 
         <section class="page" id="page-inventory" data-page="inventory">
@@ -176,6 +194,47 @@
           <label class="field full">Notes<textarea name="notes" rows="2" maxlength="2000" placeholder="Optional"></textarea></label>
         </div>
         <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save count</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="account-dialog" class="dialog">
+      <div class="dialog-content">
+        <div class="dialog-heading"><div><div class="eyebrow">SIGNED-IN ACCOUNT</div><h2 id="account-name"></h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <p id="account-details" class="dialog-intro"></p>
+        <div class="account-actions">
+          <button class="button button-secondary hidden" id="account-manage-users" type="button">Manage employees</button>
+          <button class="button button-secondary" id="account-change-pin" type="button">Change PIN</button>
+          <button class="button button-primary" id="account-sign-out" type="button">Sign out</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="users-dialog" class="dialog">
+      <div class="dialog-content">
+        <div class="dialog-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Manage employees</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div id="user-list" class="user-list"></div>
+        <form id="user-form">
+          <h3>Add employee account</h3>
+          <div class="form-grid">
+            <label class="field">Display name<input name="display_name" maxlength="120" required autocomplete="name"></label>
+            <label class="field">Username<input name="username" maxlength="64" required autocomplete="off"></label>
+            <label class="field">6-digit PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
+            <label class="field">Confirm PIN<input name="pin_confirm" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
+          </div>
+          <div class="dialog-actions"><button class="button button-primary" type="submit">Create employee</button></div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog id="pin-dialog" class="dialog">
+      <form id="pin-form">
+        <div class="dialog-heading"><div><div class="eyebrow">ACCOUNT SECURITY</div><h2>Change PIN</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="form-grid">
+          <label class="field full">Current PIN<input name="current_pin" type="password" inputmode="numeric" maxlength="1024" required autocomplete="current-password"></label>
+          <label class="field">New 6-digit PIN<input name="new_pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
+          <label class="field">Confirm new PIN<input name="new_pin_confirm" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
+        </div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Update PIN</button></div>
       </form>
     </dialog>
 

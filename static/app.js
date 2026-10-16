@@ -7,6 +7,8 @@ const state = {
   batchLines: [],
   selectedHouseId: "",
   presentation: null,
+  user: null,
+  setupRequired: false,
 };
 const movementLabels = {
   collection: "Picked up from warehouse for a team",
@@ -192,9 +194,83 @@ async function request(url, options = {}) {
       `The server returned an unreadable response (${response.status}).`,
     );
   }
+  if (response.status === 401 && !url.startsWith("/api/auth/")) {
+    state.user = null;
+    showAuthScreen(false);
+  }
   if (!response.ok)
     throw new Error(result.error || `Request failed (${response.status}).`);
   return result;
+}
+
+function showAuthScreen(setupRequired) {
+  state.setupRequired = setupRequired;
+  $(".app-shell").classList.add("hidden");
+  $("#auth-screen").classList.remove("hidden");
+  $("#auth-error").classList.add("hidden");
+  $("#auth-form").dataset.mode = setupRequired ? "setup" : "login";
+  $("#auth-eyebrow").textContent = setupRequired
+    ? "INITIAL ADMINISTRATOR SETUP"
+    : "SECURE WORKSPACE";
+  $("#auth-title").textContent = setupRequired
+    ? "Set up your administrator account"
+    : "Sign in";
+  $("#auth-description").textContent = setupRequired
+    ? "Create the first administrator account. Only this account can create employee logins."
+    : "Sign in with your tracker account to continue.";
+  $("#auth-display-name-field").classList.toggle("hidden", !setupRequired);
+  $("#auth-pin-confirm-field").classList.toggle("hidden", !setupRequired);
+  $("#auth-display-name").required = setupRequired;
+  $("#auth-pin-confirm").required = setupRequired;
+  $("#auth-pin-confirm").minLength = setupRequired ? 6 : 0;
+  $("#auth-pin-confirm").maxLength = setupRequired ? 6 : 1024;
+  if (setupRequired) {
+    $("#auth-pin-confirm").setAttribute("pattern", "[0-9]{6}");
+  } else {
+    $("#auth-pin-confirm").removeAttribute("pattern");
+  }
+  $("#auth-pin").minLength = setupRequired ? 6 : 0;
+  $("#auth-pin").maxLength = setupRequired ? 6 : 1024;
+  if (setupRequired) {
+    $("#auth-pin").setAttribute("pattern", "[0-9]{6}");
+  } else {
+    $("#auth-pin").removeAttribute("pattern");
+  }
+  $("#auth-pin").inputMode = "numeric";
+  $("#auth-pin").autocomplete = setupRequired
+    ? "new-password"
+    : "current-password";
+  $("#auth-submit").textContent = setupRequired
+    ? "Create administrator account"
+    : "Sign in";
+  $("#auth-screen").classList.remove("hidden");
+  $("#auth-username").focus();
+}
+
+function showWorkspace(user) {
+  state.user = user;
+  $("#auth-screen").classList.add("hidden");
+  $(".app-shell").classList.remove("hidden");
+  $("#account-name").textContent = user.display_name;
+  $("#account-details").textContent = `${user.username} · ${user.role === "admin" ? "Administrator" : "Employee"}`;
+  $("#account-manage-users").classList.toggle("hidden", user.role !== "admin");
+  $("#open-stocktake").classList.toggle("hidden", user.role !== "admin");
+  $("#open-material").classList.toggle("hidden", user.role !== "admin");
+  $("#open-house").classList.toggle("hidden", user.role !== "admin");
+  $("#open-import-empty").classList.toggle("hidden", user.role !== "admin");
+  $("#start-presentation").classList.toggle("hidden", user.role !== "admin");
+  updateMovementFields();
+  if (user.role !== "admin") closePresentation();
+}
+
+async function checkAuthentication() {
+  const result = await request("/api/auth/status");
+  if (result.user) {
+    showWorkspace(result.user);
+    await refresh();
+  } else {
+    showAuthScreen(result.setup_required);
+  }
 }
 
 function setTab(tab) {
@@ -474,6 +550,7 @@ function locationTotal(item, type) {
 
 function renderInventory() {
   const query = $("#material-search").value.trim().toLocaleLowerCase();
+  const canAdministerInventory = state.user?.role === "admin";
   const materials = state.dashboard.materials.filter((item) =>
     `${item.name} ${item.code || ""}`.toLocaleLowerCase().includes(query),
   );
@@ -488,13 +565,16 @@ function renderInventory() {
       <td class="${locationTotal(item, "house") < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(locationTotal(item, "house"), item.unit))}</td>
       <td>${escapeHtml(item.unit)}</td>
       <td><span class="status-pill ${item.needs_stocktake ? "warning" : ""}">${item.negative_locations?.length ? "Reconcile" : item.needs_stocktake ? "Count needed" : "Tracked"}</span></td>
-      <td><button type="button" class="text-button stock-edit" data-material-id="${item.id}">Edit warehouse stock</button></td>
+      <td>${canAdministerInventory ? `<button type="button" class="text-button stock-edit" data-material-id="${item.id}">Edit warehouse stock</button>` : ""}</td>
     </tr>`,
     )
     .join("");
   const empty = state.dashboard.materials.length === 0;
   $("#inventory-empty").classList.toggle("hidden", !empty);
-  $(".import-card").classList.toggle("hidden", !empty);
+  $(".import-card").classList.toggle(
+    "hidden",
+    !empty || !canAdministerInventory,
+  );
   $(".card:not(.import-card) .table-wrap").classList.toggle(
     "hidden",
     empty || materials.length === 0,
@@ -508,6 +588,7 @@ function renderInventory() {
 
 function renderHouses() {
   const data = state.dashboard;
+  const canManageHouses = state.user?.role === "admin";
   const houseCards = data.house_list.map((house) => {
     const held = data.materials.flatMap((material) => {
       const quantity = material.balances[`house:${house.id}`] || 0;
@@ -522,7 +603,7 @@ function renderHouses() {
         <div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? held.map((item) => `<div class="balance-row"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("") : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
-        <div class="house-card-actions"><button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button></div>
+        ${canManageHouses ? `<div class="house-card-actions"><button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button></div>` : ""}
       </article>`;
   });
   const teams = [
@@ -747,6 +828,10 @@ function updateMovementFields() {
   $("#house-hint").textContent = ["pickup", "return"].includes(kind)
     ? "Required for this movement. Search matches house, owner and assigned employee."
     : "Optional for this movement. Search matches house, owner and assigned employee.";
+  if (state.user?.role === "employee") {
+    $("#house-hint").textContent =
+      "Employees can record movements only for existing houses.";
+  }
   $$(".location-kind").forEach((select) =>
     select.dispatchEvent(new Event("change")),
   );
@@ -1003,6 +1088,140 @@ async function submitImport(event) {
   }
 }
 
+async function submitAuthentication(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const setup = form.dataset.mode === "setup";
+  const values = new FormData(form);
+  const pin = values.get("pin");
+  if (setup && pin !== values.get("pin_confirm")) {
+    $("#auth-error").textContent = "The PINs do not match.";
+    $("#auth-error").classList.remove("hidden");
+    return;
+  }
+  const payload = {
+    username: values.get("username"),
+    pin,
+  };
+  if (setup) payload.display_name = values.get("display_name");
+  const button = $("#auth-submit");
+  button.disabled = true;
+  $("#auth-error").classList.add("hidden");
+  try {
+    const result = await request(
+      setup ? "/api/auth/setup" : "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    form.reset();
+    showWorkspace(result.user);
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(
+        `Signed in, but the tracker could not load its data: ${error.message}`,
+        true,
+      );
+      return;
+    }
+    showToast(
+      setup ? "Administrator account created." : `Welcome, ${result.user.display_name}.`,
+    );
+  } catch (error) {
+    $("#auth-error").textContent = error.message;
+    $("#auth-error").classList.remove("hidden");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadUsers() {
+  const result = await request("/api/users");
+  $("#user-list").innerHTML = result.users
+    .map(
+      (user) => `
+        <div class="user-row">
+          <span><strong>${escapeHtml(user.display_name)}</strong><small>${escapeHtml(user.username)}</small></span>
+          <span>${user.role === "admin" ? "Administrator" : "Employee"}${user.is_active ? "" : " · Disabled"}</span>
+        </div>`,
+    )
+    .join("");
+}
+
+async function submitEmployee(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const values = Object.fromEntries(new FormData(formElement));
+  if (values.pin !== values.pin_confirm) {
+    showToast("The PINs do not match.", true);
+    return;
+  }
+  delete values.pin_confirm;
+  const button = $("button[type='submit']", formElement);
+  button.disabled = true;
+  try {
+    await request("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    formElement.reset();
+    await loadUsers();
+    showToast("Employee account created.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitPinChange(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const button = $("button[type='submit']", formElement);
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(formElement));
+    if (values.new_pin !== values.new_pin_confirm) {
+      showToast("The new PINs do not match.", true);
+      return;
+    }
+    delete values.new_pin_confirm;
+    await request("/api/auth/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    $("#pin-dialog").close();
+    $("#account-dialog").close();
+    formElement.reset();
+    showToast("PIN updated. Other sessions have been signed out.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function signOut() {
+  try {
+    await request("/api/auth/logout", { method: "POST" });
+    state.user = null;
+    state.dashboard = null;
+    state.movements = [];
+    $("#account-dialog").close();
+    showAuthScreen(false);
+    $("#auth-form").reset();
+    $("#auth-error").classList.add("hidden");
+    $("#auth-pin").focus();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
 function bindEvents() {
   $$("dialog").forEach((dialog) =>
     dialog.addEventListener("close", () => {
@@ -1016,6 +1235,26 @@ function bindEvents() {
     }),
   );
   $("#start-presentation").addEventListener("click", startPresentation);
+  $("#account-button").addEventListener("click", () =>
+    $("#account-dialog").showModal(),
+  );
+  $("#account-manage-users").addEventListener("click", async () => {
+    $("#account-dialog").close();
+    try {
+      await loadUsers();
+      $("#users-dialog").showModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("#account-change-pin").addEventListener("click", () => {
+    $("#account-dialog").close();
+    $("#pin-dialog").showModal();
+  });
+  $("#account-sign-out").addEventListener("click", signOut);
+  $("#auth-form").addEventListener("submit", submitAuthentication);
+  $("#user-form").addEventListener("submit", submitEmployee);
+  $("#pin-form").addEventListener("submit", submitPinChange);
   $("#close-presentation").addEventListener("click", closePresentation);
   $("#minimize-presentation").addEventListener("click", minimizePresentation);
   $("#resume-presentation").addEventListener("click", resumePresentation);
@@ -1420,12 +1659,15 @@ async function start() {
   $("#movement-date").value = localDate();
   updateMovementFields();
   try {
-    await refresh();
+    await checkAuthentication();
   } catch (error) {
-    showToast(`Could not load tracker data: ${error.message}`, true);
+    showAuthScreen(false);
+    $("#auth-error").textContent = `Could not connect to the tracker: ${error.message}`;
+    $("#auth-error").classList.remove("hidden");
   }
   let refreshFailureShown = false;
   setInterval(() => {
+    if (!state.user) return;
     refresh(true)
       .then(() => {
         refreshFailureShown = false;

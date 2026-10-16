@@ -1,11 +1,17 @@
 import json
+import hashlib
+import hmac
 import math
 import os
 import re
+import secrets
 import sqlite3
+import ssl
 import sys
 import zipfile
+from contextlib import contextmanager
 from datetime import date, datetime
+from http.cookies import CookieError, SimpleCookie
 from xml.etree.ElementTree import ParseError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +22,12 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 DB_PATH = Path(os.environ.get("EWI_DB_PATH", ROOT / "instance" / "ewi.sqlite3"))
 PORT = int(os.environ.get("EWI_PORT", "8001"))
+HOST = os.environ.get("EWI_HOST", "127.0.0.1")
+TLS_CERT = os.environ.get("EWI_TLS_CERT", "")
+TLS_KEY = os.environ.get("EWI_TLS_KEY", "")
+COOKIE_SECURE = bool(TLS_CERT and TLS_KEY)
+SESSION_MAX_AGE = 12 * 60 * 60
+CREDENTIAL_ITERATIONS = 310_000
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
 
@@ -26,12 +38,20 @@ class ApiError(Exception):
         self.status = status
 
 
+@contextmanager
 def connect_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
-    return db
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def initialize_db():
@@ -84,6 +104,30 @@ def initialize_db():
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS app_users (
+                id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                display_name TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+                password_salt BLOB NOT NULL,
+                password_hash BLOB NOT NULL,
+                password_iterations INTEGER NOT NULL,
+                credential_type TEXT NOT NULL DEFAULT 'pin',
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS app_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS app_sessions_expiry_idx
+                ON app_sessions(expires_at);
+            CREATE TABLE IF NOT EXISTS app_login_attempts (
+                username_hash TEXT PRIMARY KEY,
+                failures INTEGER NOT NULL,
+                window_started_at INTEGER NOT NULL,
+                locked_until INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -149,6 +193,147 @@ def initialize_db():
         db.execute(
             "CREATE INDEX IF NOT EXISTS movements_delivery_idx ON movements(house_id, delivery_number)"
         )
+        user_columns = {row["name"] for row in db.execute("PRAGMA table_info(app_users)")}
+        if "credential_type" not in user_columns:
+            db.execute(
+                "ALTER TABLE app_users ADD COLUMN credential_type TEXT NOT NULL DEFAULT 'password'"
+            )
+
+
+def _validate_user_details(username, display_name):
+    username = str(username or "").strip()
+    display_name = str(display_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{3,64}", username):
+        raise ApiError(
+            400, "Username must be 3-64 characters: letters, numbers, dot, dash or underscore."
+        )
+    if not display_name or len(display_name) > 120:
+        raise ApiError(400, "Enter a display name (maximum 120 characters).")
+    return username, display_name
+
+
+def _validate_pin(pin):
+    if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{6}", pin):
+        raise ApiError(400, "PIN must be exactly 6 digits.")
+    return pin
+
+
+def _credential_digest(credential, salt, iterations=CREDENTIAL_ITERATIONS):
+    return hashlib.pbkdf2_hmac(
+        "sha256", credential.encode("utf-8"), salt, iterations
+    )
+
+
+def _insert_user(db, username, display_name, pin, role):
+    username, display_name = _validate_user_details(username, display_name)
+    pin = _validate_pin(pin)
+    salt = secrets.token_bytes(16)
+    password_hash = _credential_digest(pin, salt)
+    cursor = db.execute(
+        """
+        INSERT INTO app_users
+            (username, display_name, role, password_salt, password_hash, password_iterations, credential_type)
+        VALUES (?, ?, ?, ?, ?, ?, 'pin')
+        """,
+        (
+            username,
+            display_name,
+            role,
+            salt,
+            password_hash,
+            CREDENTIAL_ITERATIONS,
+        ),
+    )
+    return cursor.lastrowid
+
+
+def _public_user(row):
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "display_name": row["display_name"],
+        "role": row["role"],
+    }
+
+
+def _new_session(db, user_id):
+    db.execute("DELETE FROM app_sessions WHERE expires_at <= ?", (int(datetime.now().timestamp()),))
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+    expires_at = int(datetime.now().timestamp()) + SESSION_MAX_AGE
+    db.execute(
+        "INSERT INTO app_sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+        (token_hash, user_id, expires_at),
+    )
+    return token, token_hash, expires_at
+
+
+def _verify_credential(row, credential):
+    if not isinstance(credential, str) or len(credential) > 1024:
+        credential = ""
+    if row is None:
+        salt = b"material-tracker-dummy-salt"
+        expected = _credential_digest(credential, salt)
+        hmac.compare_digest(expected, b"\0" * len(expected))
+        return False
+    actual = _credential_digest(
+        credential, row["password_salt"], row["password_iterations"]
+    )
+    return hmac.compare_digest(actual, row["password_hash"])
+
+
+def _user_count(db):
+    return db.execute("SELECT COUNT(*) FROM app_users").fetchone()[0]
+
+
+def _login_attempt_key(username):
+    normalized = str(username or "").strip().casefold()[:64]
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _check_login_attempts(db, username_hash, now):
+    row = db.execute(
+        "SELECT locked_until FROM app_login_attempts WHERE username_hash = ?",
+        (username_hash,),
+    ).fetchone()
+    if row and row["locked_until"] > now:
+        raise ApiError(429, "Too many incorrect attempts. Try again in 15 minutes.")
+
+
+def _record_failed_login(db, username_hash, now):
+    row = db.execute(
+        """
+        SELECT failures, window_started_at FROM app_login_attempts
+        WHERE username_hash = ?
+        """,
+        (username_hash,),
+    ).fetchone()
+    if row is None or now - row["window_started_at"] >= 900:
+        failures = 1
+        window_started_at = now
+    else:
+        failures = row["failures"] + 1
+        window_started_at = row["window_started_at"]
+    locked_until = now + 900 if failures >= 5 else 0
+    db.execute(
+        """
+        INSERT INTO app_login_attempts
+            (username_hash, failures, window_started_at, locked_until)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(username_hash) DO UPDATE SET
+            failures = excluded.failures,
+            window_started_at = excluded.window_started_at,
+            locked_until = excluded.locked_until
+        """,
+        (username_hash, failures, window_started_at, locked_until),
+    )
+
+
+def _clear_login_attempts(db, username_hash):
+    db.execute(
+        "DELETE FROM app_login_attempts WHERE username_hash = ?",
+        (username_hash,),
+    )
 
 
 def location_key(kind, reference=""):
@@ -334,7 +519,13 @@ def _next_delivery_number(db, house_id):
     ).fetchone()[0]
 
 
-def _record_movement(db, record, check_balance=True, delivery_number=None):
+def _record_movement(
+    db,
+    record,
+    check_balance=True,
+    delivery_number=None,
+    allow_house_updates=True,
+):
     kind = str(record.get("kind", "")).strip()
     if kind not in MOVEMENT_TYPES:
         raise ApiError(400, "Choose a valid movement type.")
@@ -361,10 +552,26 @@ def _record_movement(db, record, check_balance=True, delivery_number=None):
     postcode = str(record.get("postcode") or "").strip()
     owner_name = str(record.get("owner_name") or "").strip()
     employee_name = str(record.get("employee_name") or "").strip()
+
+    def movement_house(reference, postcode="", owner="", assigned_employee=""):
+        house_reference = str(reference or "").strip()
+        if not house_reference:
+            raise ApiError(400, "House ID is required for this movement.")
+        if not allow_house_updates:
+            exists = db.execute(
+                "SELECT 1 FROM houses WHERE id = ?", (house_reference,)
+            ).fetchone()
+            if not exists:
+                raise ApiError(403, "Employees can only record movements for existing houses.")
+            return house_reference
+        return _upsert_house(
+            db, house_reference, postcode, owner, assigned_employee
+        )
+
     if kind in {"pickup", "delivery", "use", "return"} and not house_id:
         raise ApiError(400, "House ID is required for this movement.")
     if house_id:
-        house_id = _upsert_house(db, house_id, postcode, owner_name, employee_name)
+        house_id = movement_house(house_id, postcode, owner_name, employee_name)
 
     if kind == "collection":
         if not team or not person:
@@ -403,14 +610,12 @@ def _record_movement(db, record, check_balance=True, delivery_number=None):
         source_reference = str(record.get("source_reference") or "").strip()
         destination_reference = str(record.get("destination_reference") or "").strip()
         if source_kind == "house":
-            _upsert_house(
-                db,
+            movement_house(
                 source_reference,
                 record.get("source_postcode"),
             )
         if destination_kind == "house":
-            _upsert_house(
-                db,
+            movement_house(
                 destination_reference,
                 record.get("destination_postcode"),
             )
@@ -484,7 +689,7 @@ def _record_movement(db, record, check_balance=True, delivery_number=None):
     return cursor.lastrowid
 
 
-def _record_movement_batch(db, payload):
+def _record_movement_batch(db, payload, allow_house_updates=True):
     if not isinstance(payload, dict):
         raise ApiError(400, "Movement data must be a JSON object.")
     items = payload.get("items")
@@ -516,7 +721,12 @@ def _record_movement_batch(db, payload):
             "qty": item.get("qty"),
         }
         movement_ids.append(
-            _record_movement(db, record, delivery_number=batch_delivery_number)
+            _record_movement(
+                db,
+                record,
+                delivery_number=batch_delivery_number,
+                allow_house_updates=allow_house_updates,
+            )
         )
     return movement_ids, batch_delivery_number
 
@@ -636,6 +846,13 @@ def _import_workbook(db, path):
         workbook = load_workbook(path, data_only=True, read_only=True)
     except (OSError, ValueError, zipfile.BadZipFile, ParseError, InvalidFileException) as exc:
         raise ApiError(400, f"Could not read this Excel workbook: {exc}")
+    try:
+        return _import_workbook_contents(db, workbook)
+    finally:
+        workbook.close()
+
+
+def _import_workbook_contents(db, workbook):
     if "STOCK" not in workbook.sheetnames or "MOVEMENTS" not in workbook.sheetnames:
         raise ApiError(400, "Workbook must contain STOCK and MOVEMENTS sheets.")
     if db.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
@@ -790,12 +1007,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format_string, *args):
         print("%s - %s" % (self.address_string(), format_string % args), file=sys.stderr)
 
-    def _send_json(self, status, payload):
+    def _send_json(self, status, payload, headers=()):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -831,6 +1050,60 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError(400, "Request body must be valid JSON.")
 
+    def _session_cookie(self):
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except CookieError:
+            return ""
+        morsel = cookie.get("ewi_session")
+        return morsel.value if morsel else ""
+
+    def _current_user(self):
+        token = self._session_cookie()
+        if not token:
+            return None
+        token_hash = hashlib.sha256(token.encode("ascii", errors="ignore")).hexdigest()
+        now = int(datetime.now().timestamp())
+        with connect_db() as db:
+            return db.execute(
+                """
+                SELECT u.id, u.username, u.display_name, u.role, s.token_hash
+                FROM app_sessions s
+                JOIN app_users u ON u.id = s.user_id
+                WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1
+                """,
+                (token_hash, now),
+            ).fetchone()
+
+    def _login_required(self):
+        user = self._current_user()
+        if user is None:
+            self._send_json(401, {"error": "Sign in to continue."})
+            return None
+        return user
+
+    def _admin_required(self, user):
+        if user["role"] != "admin":
+            self._send_json(403, {"error": "Administrator access is required."})
+            return False
+        return True
+
+    def _session_headers(self, token, max_age=SESSION_MAX_AGE):
+        attributes = [
+            f"ewi_session={token}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Strict",
+            f"Max-Age={max_age}",
+        ]
+        if COOKIE_SECURE:
+            attributes.append("Secure")
+        return [("Set-Cookie", "; ".join(attributes))]
+
+    def _expired_session_headers(self):
+        return self._session_headers("", 0)
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/":
@@ -841,34 +1114,220 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
         elif path == "/brusna-logo.jpg":
             self._send_file(STATIC_DIR / "brusna-logo.jpg", "image/jpeg")
+        elif path == "/api/auth/status":
+            user = self._current_user()
+            with connect_db() as db:
+                setup_required = _user_count(db) == 0
+            self._send_json(
+                200,
+                {
+                    "setup_required": setup_required,
+                    "user": _public_user(user) if user else None,
+                },
+            )
         elif path == "/api/dashboard":
+            user = self._login_required()
+            if user is None:
+                return
             with connect_db() as db:
                 self._send_json(200, _dashboard(db))
         elif path == "/api/movements":
+            user = self._login_required()
+            if user is None:
+                return
             query = parse_qs(urlparse(self.path).query).get("q", [""])[0]
             with connect_db() as db:
                 self._send_json(
                     200,
                     {"movements": [_movement_json(row) for row in _movement_rows(db, 500, query)]},
                 )
+        elif path == "/api/users":
+            user = self._login_required()
+            if user is None:
+                return
+            if not self._admin_required(user):
+                return
+            with connect_db() as db:
+                users = db.execute(
+                    """
+                    SELECT id, username, display_name, role, is_active
+                    FROM app_users ORDER BY username COLLATE NOCASE
+                    """
+                ).fetchall()
+            self._send_json(200, {"users": [dict(row) for row in users]})
         else:
             self._send_json(404, {"error": "Page not found."})
 
     def do_POST(self):
         path = urlparse(self.path).path
         try:
-            if path in {"/api/movements", "/api/movements/batch"}:
+            if path == "/api/auth/setup":
                 payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Administrator details must be a JSON object.")
+                with connect_db() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    if _user_count(db):
+                        raise ApiError(409, "The initial administrator has already been set up.")
+                    user_id = _insert_user(
+                        db,
+                        payload.get("username"),
+                        payload.get("display_name"),
+                        payload.get("pin"),
+                        "admin",
+                    )
+                    token, _, _ = _new_session(db, user_id)
+                    user = db.execute(
+                        "SELECT id, username, display_name, role FROM app_users WHERE id = ?",
+                        (user_id,),
+                    ).fetchone()
+                self._send_json(
+                    201, {"user": _public_user(user)}, self._session_headers(token)
+                )
+                return
+            if path == "/api/auth/login":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Sign-in details must be a JSON object.")
+                username = str(payload.get("username") or "").strip()
+                pin = payload.get("pin")
+                username_hash = _login_attempt_key(username)
+                now = int(datetime.now().timestamp())
+                with connect_db() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    _check_login_attempts(db, username_hash, now)
+                    row = db.execute(
+                        "SELECT * FROM app_users WHERE username = ? COLLATE NOCASE",
+                        (username,),
+                    ).fetchone()
+                    if not _verify_credential(row, pin) or not row["is_active"]:
+                        _record_failed_login(db, username_hash, now)
+                        attempts = db.execute(
+                            "SELECT locked_until FROM app_login_attempts WHERE username_hash = ?",
+                            (username_hash,),
+                        ).fetchone()
+                        locked = attempts["locked_until"] > now
+                        token = None
+                        user = None
+                    else:
+                        _clear_login_attempts(db, username_hash)
+                        token, _, _ = _new_session(db, row["id"])
+                        user = _public_user(row)
+                if user is None:
+                    if locked:
+                        raise ApiError(
+                            429,
+                            "Too many incorrect attempts. Try again in 15 minutes.",
+                        )
+                    raise ApiError(401, "Username or PIN is incorrect.")
+                self._send_json(
+                    200, {"user": user}, self._session_headers(token)
+                )
+                return
+            if path == "/api/auth/logout":
+                token = self._session_cookie()
+                if token:
+                    token_hash = hashlib.sha256(
+                        token.encode("ascii", errors="ignore")
+                    ).hexdigest()
+                    with connect_db() as db:
+                        db.execute(
+                            "DELETE FROM app_sessions WHERE token_hash = ?",
+                            (token_hash,),
+                        )
+                self._send_json(
+                    200, {"ok": True}, self._expired_session_headers()
+                )
+                return
+            if path == "/api/auth/pin":
+                user = self._login_required()
+                if user is None:
+                    return
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PIN details must be a JSON object.")
+                current_pin = payload.get("current_pin")
+                new_pin = _validate_pin(payload.get("new_pin"))
+                with connect_db() as db:
+                    row = db.execute(
+                        "SELECT * FROM app_users WHERE id = ?", (user["id"],)
+                    ).fetchone()
+                    if not _verify_credential(row, current_pin):
+                        raise ApiError(401, "Current PIN is incorrect.")
+                    salt = secrets.token_bytes(16)
+                    db.execute(
+                        """
+                        UPDATE app_users
+                        SET password_salt = ?, password_hash = ?, password_iterations = ?,
+                            credential_type = 'pin'
+                        WHERE id = ?
+                        """,
+                        (
+                            salt,
+                            _credential_digest(new_pin, salt),
+                            CREDENTIAL_ITERATIONS,
+                            user["id"],
+                        ),
+                    )
+                    db.execute(
+                        "DELETE FROM app_sessions WHERE user_id = ?",
+                        (user["id"],),
+                    )
+                    token, _, _ = _new_session(db, user["id"])
+                self._send_json(
+                    200,
+                    {"ok": True},
+                    self._session_headers(token),
+                )
+                return
+
+            user = self._login_required()
+            if user is None:
+                return
+            if path not in {"/api/movements", "/api/movements/batch"}:
+                if not self._admin_required(user):
+                    return
+            if path == "/api/users":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Employee details must be a JSON object.")
+                with connect_db() as db:
+                    with db:
+                        user_id = _insert_user(
+                            db,
+                            payload.get("username"),
+                            payload.get("display_name"),
+                            payload.get("pin"),
+                            "employee",
+                        )
+                        created = db.execute(
+                            "SELECT id, username, display_name, role FROM app_users WHERE id = ?",
+                            (user_id,),
+                        ).fetchone()
+                self._send_json(201, {"user": _public_user(created)})
+            elif path in {"/api/movements", "/api/movements/batch"}:
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Movement data must be a JSON object.")
+                allow_house_updates = user["role"] == "admin"
                 if path.endswith("/batch"):
                     with connect_db() as db:
                         with db:
-                            movement_ids, delivery_number = _record_movement_batch(db, payload)
+                            movement_ids, delivery_number = _record_movement_batch(
+                                db, payload, allow_house_updates
+                            )
                 else:
                     if not isinstance(payload, dict):
                         raise ApiError(400, "Movement data must be a JSON object.")
                     with connect_db() as db:
                         with db:
-                            movement_ids = [_record_movement(db, payload)]
+                            movement_ids = [
+                                _record_movement(
+                                    db,
+                                    payload,
+                                    allow_house_updates=allow_house_updates,
+                                )
+                            ]
                             delivery_number = None
                             if payload.get("kind") == "delivery":
                                 delivery_number = db.execute(
@@ -1014,11 +1473,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         except ApiError as exc:
             self._send_json(exc.status, {"error": str(exc)})
         except sqlite3.IntegrityError as exc:
-            message = (
-                "A material with that name already exists."
-                if "materials.name" in str(exc)
-                else "This record conflicts with existing tracker data."
-            )
+            error_text = str(exc)
+            if "materials.name" in error_text:
+                message = "A material with that name already exists."
+            elif "app_users.username" in error_text:
+                message = "That username is already in use."
+            else:
+                message = "This record conflicts with existing tracker data."
             self._send_json(409, {"error": message})
         except (OSError, sqlite3.Error) as exc:
             self._send_json(500, {"error": f"Could not save the record: {exc}"})
@@ -1026,8 +1487,25 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run():
     initialize_db()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), RequestHandler)
-    print(f"EWI Tracker demo running at http://127.0.0.1:{PORT}")
+    if bool(TLS_CERT) != bool(TLS_KEY):
+        raise RuntimeError("Set both EWI_TLS_CERT and EWI_TLS_KEY to enable HTTPS.")
+    if HOST not in {"127.0.0.1", "localhost", "::1"} and not COOKIE_SECURE:
+        raise RuntimeError(
+            "Binding to a network interface requires HTTPS; configure EWI_TLS_CERT and EWI_TLS_KEY."
+        )
+    with connect_db() as db:
+        if HOST not in {"127.0.0.1", "localhost", "::1"} and not _user_count(db):
+            raise RuntimeError(
+                "Create the first administrator on localhost before enabling network access."
+            )
+    server = ThreadingHTTPServer((HOST, PORT), RequestHandler)
+    scheme = "https" if COOKIE_SECURE else "http"
+    if COOKIE_SECURE:
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls_context.load_cert_chain(TLS_CERT, TLS_KEY)
+        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+    print(f"EWI Tracker running at {scheme}://{HOST}:{PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
