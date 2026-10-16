@@ -8,7 +8,7 @@ const state = {
   selectedHouseId: "",
   presentation: null,
 };
-const movementLabels = {
+    const movementLabels = {
   collection: "Picked up from warehouse for a team",
   pickup: "Picked up from warehouse",
   delivery: "Delivered to a house",
