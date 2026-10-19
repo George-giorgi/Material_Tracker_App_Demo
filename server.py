@@ -72,6 +72,12 @@ def initialize_db():
                 employee_name TEXT NOT NULL DEFAULT '',
                 is_finished INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS house_checklists (
+                house_id TEXT PRIMARY KEY REFERENCES houses(id) ON DELETE CASCADE,
+                scaffolding_status TEXT,
+                esb_unclipped TEXT,
+                plumber_status TEXT
+            );
             CREATE TABLE IF NOT EXISTS movements (
                 id INTEGER PRIMARY KEY,
                 happened_on TEXT NOT NULL,
@@ -794,6 +800,16 @@ def _house_movement_rows(db, house_id):
     ).fetchall()
 
 
+def _esb_unclipped_status(value):
+    if value is None:
+        return None
+    if value in (1, True, "1", "yes"):
+        return "yes"
+    if value in (0, False, "0", "no"):
+        return "no"
+    return value
+
+
 def _dashboard(db):
     materials = []
     for row in db.execute("SELECT * FROM materials ORDER BY name COLLATE NOCASE"):
@@ -840,11 +856,17 @@ def _dashboard(db):
             key=str.casefold,
         ),
         "house_list": [
-            dict(row)
+            {
+                **dict(row),
+                "esb_unclipped": _esb_unclipped_status(row["esb_unclipped"]),
+            }
             for row in db.execute(
                 """
-                SELECT id, postcode, owner_name, employee_name, is_finished
-                FROM houses ORDER BY id COLLATE NOCASE
+                SELECT h.id, h.postcode, h.owner_name, h.employee_name, h.is_finished,
+                       c.scaffolding_status, c.esb_unclipped, c.plumber_status
+                FROM houses h
+                LEFT JOIN house_checklists c ON c.house_id = h.id
+                ORDER BY h.id COLLATE NOCASE
                 """
             )
         ],
@@ -1158,6 +1180,41 @@ class RequestHandler(BaseHTTPRequestHandler):
                     200,
                     {"movements": [_movement_json(row) for row in _movement_rows(db, 500, query)]},
                 )
+        elif path.startswith("/api/house-checklist/"):
+            user = self._login_required()
+            if user is None:
+                return
+            raw_house_id = path[len("/api/house-checklist/"):]
+            if not raw_house_id or "/" in raw_house_id:
+                self._send_json(404, {"error": "House was not found."})
+                return
+            house_id = unquote(raw_house_id).strip()
+            with connect_db() as db:
+                if not db.execute(
+                    "SELECT 1 FROM houses WHERE id = ?", (house_id,)
+                ).fetchone():
+                    self._send_json(404, {"error": "House was not found."})
+                    return
+                checklist = db.execute(
+                    """
+                    SELECT scaffolding_status, esb_unclipped, plumber_status
+                    FROM house_checklists WHERE house_id = ?
+                    """,
+                    (house_id,),
+                ).fetchone()
+            self._send_json(
+                200,
+                {
+                    "house_id": house_id,
+                    "scaffolding_status": checklist["scaffolding_status"] if checklist else None,
+                    "esb_unclipped": (
+                        _esb_unclipped_status(checklist["esb_unclipped"])
+                        if checklist
+                        else None
+                    ),
+                    "plumber_status": checklist["plumber_status"] if checklist else None,
+                },
+            )
         elif path.startswith("/api/houses/"):
             user = self._login_required()
             if user is None:
@@ -1334,7 +1391,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             user = self._login_required()
             if user is None:
                 return
-            if path not in {"/api/movements", "/api/movements/batch"}:
+            if path not in {
+                "/api/movements",
+                "/api/movements/batch",
+            }:
                 if not self._admin_required(user):
                     return
             if path == "/api/users":
@@ -1394,6 +1454,46 @@ class RequestHandler(BaseHTTPRequestHandler):
                         201,
                         {"id": movement_ids[0], "delivery_number": delivery_number},
                     )
+            elif path == "/api/house-checklist":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "House checklist must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                scaffolding_status = payload.get("scaffolding_status")
+                esb_unclipped = payload.get("esb_unclipped")
+                plumber_status = payload.get("plumber_status")
+                if not house_id:
+                    raise ApiError(400, "House ID is required.")
+                if scaffolding_status not in {"done", "not_done", "not_necessary"}:
+                    raise ApiError(400, "Choose a scaffolding status.")
+                if esb_unclipped not in {"yes", "no", "not_esb"}:
+                    raise ApiError(400, "Choose an ESB cable status.")
+                if plumber_status not in {"done", "not_done", "not_necessary"}:
+                    raise ApiError(400, "Choose a plumber work status.")
+                with connect_db() as db:
+                    with db:
+                        if not db.execute(
+                            "SELECT 1 FROM houses WHERE id = ?", (house_id,)
+                        ).fetchone():
+                            raise ApiError(404, "House was not found.")
+                        db.execute(
+                            """
+                            INSERT INTO house_checklists
+                                (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(house_id) DO UPDATE SET
+                                scaffolding_status = excluded.scaffolding_status,
+                                esb_unclipped = excluded.esb_unclipped,
+                                plumber_status = excluded.plumber_status
+                            """,
+                            (
+                                house_id,
+                                scaffolding_status,
+                                esb_unclipped,
+                                plumber_status,
+                            ),
+                        )
+                self._send_json(200, {"house_id": house_id, "saved": True})
             elif path == "/api/stocktakes":
                 payload = self._json_body()
                 material_id = payload.get("material_id")

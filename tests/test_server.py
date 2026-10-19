@@ -463,6 +463,156 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_house_checklist_is_readable_to_all_roles_but_editable_by_admins(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "H-CHECKLIST")
+
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, _ = self.http_request(
+                httpd, "GET", "/api/house-checklist/H-CHECKLIST"
+            )
+            self.assertEqual(status, 401)
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, checklist, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/house-checklist/H-CHECKLIST",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertIsNone(checklist["scaffolding_status"])
+            self.assertIsNone(checklist["esb_unclipped"])
+            self.assertIsNone(checklist["plumber_status"])
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            house = next(
+                house
+                for house in dashboard["house_list"]
+                if house["id"] == "H-CHECKLIST"
+            )
+            self.assertIsNone(house["scaffolding_status"])
+            self.assertIsNone(house["esb_unclipped"])
+            self.assertIsNone(house["plumber_status"])
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "employee1",
+                    "display_name": "Tracker Employee",
+                    "pin": "345678",
+                    "pin_confirm": "345678",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "employee1", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-checklist",
+                {
+                    "house_id": "H-CHECKLIST",
+                    "scaffolding_status": "not_necessary",
+                    "esb_unclipped": "not_esb",
+                    "plumber_status": "not_necessary",
+                },
+                employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("administrator", result["error"].lower())
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-checklist",
+                {
+                    "house_id": "H-CHECKLIST",
+                    "scaffolding_status": "not_necessary",
+                    "esb_unclipped": "not_esb",
+                    "plumber_status": "not_necessary",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(result["saved"])
+            status, checklist, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/house-checklist/H-CHECKLIST",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(checklist["scaffolding_status"], "not_necessary")
+            self.assertEqual(checklist["esb_unclipped"], "not_esb")
+            self.assertEqual(checklist["plumber_status"], "not_necessary")
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=employee_cookie
+            )
+            self.assertEqual(status, 200)
+            house = next(
+                house
+                for house in dashboard["house_list"]
+                if house["id"] == "H-CHECKLIST"
+            )
+            self.assertEqual(house["scaffolding_status"], "not_necessary")
+            self.assertEqual(house["esb_unclipped"], "not_esb")
+            self.assertEqual(house["plumber_status"], "not_necessary")
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-checklist",
+                {
+                    "house_id": "H-CHECKLIST",
+                    "scaffolding_status": "sometimes",
+                    "esb_unclipped": "yes",
+                    "plumber_status": "done",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 400)
+            self.assertIn("scaffolding", result["error"].lower())
+            status, _, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/H-CHECKLIST",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            status, _, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/house-checklist/UNKNOWN",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 404)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def test_finishing_house_records_remaining_stock_as_used(self):
         material_id = self.add_material(name="Board", opening=20)
         with server.connect_db() as db:

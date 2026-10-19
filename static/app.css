@@ -194,11 +194,34 @@ td:first-child { color: #263b32; font-weight: 600; }
 .house-live-stock-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .house-live-stock-list span { border-radius: 5px; padding: 5px 7px; background: #e7f0e9; color: #536d5b; font-size: 9px; }
 .house-live-stock-list b { margin-left: 4px; color: #2d5940; }
+.status-pill.active { background: linear-gradient(135deg, #e5f6ea, #d5efdd); color: #17653a; font-size: 10px; font-weight: 700; }
 .status-pill.finished { background: #e9edf3; color: #44556d; }
+.house-active { border-color: #cfe6d5; box-shadow: 0 3px 14px #277c4510; }
 .house-finished { border-color: #d8dee8; }
 .house-finished .house-stock { opacity: .8; }
+.house-checklist-card { border-top: 1px solid #f0f2f0; padding: 10px 14px; }
+.checklist-card-row { display: flex; justify-content: space-between; gap: 12px; padding-top: 6px; color: #68786e; font-size: 10px; }
+.checklist-card-row strong { font-size: 10px; font-weight: 700; text-align: right; }
+.checklist-value { border-radius: 999px; padding: 3px 8px; }
+.checklist-value-positive { background: #e2f5e8; color: #17653a; }
+.checklist-value-negative { background: #fde8e7; color: #a83232; }
+.checklist-value-unnecessary, .checklist-value-unset { background: #eef0f2; color: #59636e; }
 .house-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #f0f2f0; padding: 8px 14px; }
 .house-open { color: #3d6950; }
+.house-checklist-open { color: #4963a8; }
+.house-checklist-dialog { max-width: 520px; }
+.house-checklist-dialog form { display: grid; gap: 14px; padding: 23px 25px 19px; }
+.checklist-group { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; border: 1px solid #e1e8e3; border-radius: 8px; padding: 11px; }
+.checklist-group legend { padding: 0 5px; color: #40574a; font-size: 11px; font-weight: 700; }
+.checklist-option { display: inline-flex; min-height: 37px; align-items: center; gap: 7px; border: 1px solid #dfe6e1; border-radius: 7px; padding: 7px 10px; background: #fff; color: #52645b; cursor: pointer; font-size: 11px; }
+.checklist-option:has(input:checked) { font-weight: 700; }
+.checklist-option:has(input:checked[value="done"]),
+.checklist-option:has(input:checked[value="yes"]) { border-color: #72c18a; background: #e2f5e8; color: #17653a; }
+.checklist-option:has(input:checked[value="not_done"]),
+.checklist-option:has(input:checked[value="no"]) { border-color: #e99b98; background: #fde8e7; color: #a83232; }
+.checklist-option:has(input:checked[value="not_necessary"]),
+.checklist-option:has(input:checked[value="not_esb"]) { border-color: #cbd1d8; background: #eef0f2; color: #59636e; }
+.checklist-option input { accent-color: var(--green-2); }
 .house-back { margin-bottom: 18px; }
 .house-detail-heading { margin-bottom: 20px; }
 .house-detail-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }

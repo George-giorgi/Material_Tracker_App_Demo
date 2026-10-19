@@ -98,8 +98,9 @@
 
         <section class="page" id="page-houses" data-page="houses">
           <div id="houses-overview">
-            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Add houses, search saved owner and employee details, and see materials on site.</p></div><button class="button button-primary" id="open-house">＋ Add house</button></div>
+            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div><div class="heading-actions"><label class="search-box"><span>⌕</span><input id="house-search" type="search" placeholder="Search houses" aria-label="Search houses"></label><button class="button button-primary" id="open-house">＋ Add house</button></div></div>
             <div id="houses-list" class="house-grid"></div>
+            <div class="empty-state card hidden" id="houses-no-results"><strong>No matching houses</strong><p>Try another house ID, owner, employee or postcode.</p></div>
             <div class="empty-state card hidden" id="houses-empty"><div class="empty-symbol">⌂</div><strong>No houses recorded yet</strong><p>Houses will appear here when materials are delivered or returned.</p><button class="button button-primary" data-goto="movements">Record a movement</button></div>
           </div>
           <section id="house-detail" class="hidden" aria-labelledby="house-detail-title">
@@ -132,6 +133,37 @@
         </section>
       </main>
     </div>
+
+    <dialog id="house-checklist-dialog" class="dialog house-checklist-dialog">
+      <form id="house-checklist-form">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">HOUSE WORK CHECKLIST</div><h2 id="house-checklist-title">House checklist</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close">×</button>
+        </div>
+        <fieldset class="checklist-group">
+          <legend>Scaffolding</legend>
+          <label class="checklist-option"><input type="radio" name="scaffolding_status" value="not_done" required><span>Not done</span></label>
+          <label class="checklist-option"><input type="radio" name="scaffolding_status" value="done" required><span>Done</span></label>
+          <label class="checklist-option"><input type="radio" name="scaffolding_status" value="not_necessary" required><span>Not necessary</span></label>
+        </fieldset>
+        <fieldset class="checklist-group">
+          <legend>ESB cable unclipped?</legend>
+          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="yes" required><span>Yes</span></label>
+          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="no" required><span>No</span></label>
+          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="not_esb" required><span>Not ESB</span></label>
+        </fieldset>
+        <fieldset class="checklist-group">
+          <legend>Plumber work</legend>
+          <label class="checklist-option"><input type="radio" name="plumber_status" value="not_done" required><span>Not done</span></label>
+          <label class="checklist-option"><input type="radio" name="plumber_status" value="done" required><span>Done</span></label>
+          <label class="checklist-option"><input type="radio" name="plumber_status" value="not_necessary" required><span>Not necessary</span></label>
+        </fieldset>
+        <div class="dialog-actions">
+          <button class="button button-secondary close-dialog" type="button">Cancel</button>
+          <button class="button button-primary" type="submit">Save checklist</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="movement-dialog" class="dialog">
       <form id="movement-form" method="dialog">

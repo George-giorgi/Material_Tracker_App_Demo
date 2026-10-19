@@ -33,6 +33,9 @@ Employees can view tracker records and record material movements against
 existing houses. They cannot add materials, count or adjust stock, import
 workbooks, create houses, or finish/reopen houses. These restrictions are
 enforced by the server, not only by hiding buttons in the interface.
+Admins and employees can open a house's checklist and save its scaffolding,
+ESB cable, and plumber-work statuses. House detail and movement history remain
+available to administrators only.
 
 ## Share with employees
 

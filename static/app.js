@@ -8,6 +8,7 @@ const state = {
   selectedHouseId: "",
   viewingHouseId: "",
   houseDetailRequest: 0,
+  houseChecklistRequest: 0,
   presentation: null,
   user: null,
   setupRequired: false,
@@ -610,7 +611,56 @@ function renderInventory() {
 function renderHouses() {
   const data = state.dashboard;
   const canManageHouses = state.user?.role === "admin";
-  const houseCards = data.house_list.map((house) => {
+  const query = $("#house-search").value.trim().toLocaleLowerCase();
+  const matchingHouses = data.house_list.filter((house) =>
+    [house.id, house.owner_name, house.employee_name, house.postcode]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(query),
+  );
+  const houseCards = matchingHouses.map((house) => {
+    const checklistStatus = (value, labels) =>
+      value === null || value === undefined
+        ? "Not set"
+        : labels[value];
+    const checklistTone = (value) => {
+      if (value === "done" || value === "yes") return "positive";
+      if (value === "not_done" || value === "no") return "negative";
+      if (value === "not_necessary" || value === "not_esb") {
+        return "unnecessary";
+      }
+      return "unset";
+    };
+    const checklist = [
+      [
+        "Scaffolding",
+        house.scaffolding_status,
+        checklistStatus(house.scaffolding_status, {
+          done: "Done",
+          not_done: "Not done",
+          not_necessary: "Not necessary",
+        }),
+      ],
+      [
+        "ESB cable unclipped",
+        house.esb_unclipped,
+        checklistStatus(house.esb_unclipped, {
+          yes: "Yes",
+          no: "No",
+          not_esb: "Not ESB",
+        }),
+      ],
+      [
+        "Plumber work",
+        house.plumber_status,
+        checklistStatus(house.plumber_status, {
+          done: "Done",
+          not_done: "Not done",
+          not_necessary: "Not necessary",
+        }),
+      ],
+    ];
     const held = data.materials.flatMap((material) => {
       const quantity = material.balances[`house:${house.id}`] || 0;
       return Math.abs(quantity) > 1e-9
@@ -619,13 +669,18 @@ function renderHouses() {
     });
     const hasNegative = held.some((item) => item.qty < 0);
     return `
-      <article class="card house-card ${house.is_finished ? "house-finished" : ""}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p></div><span class="status-pill ${house.is_finished ? "finished" : hasNegative ? "warning" : ""}">${house.is_finished ? "Finished" : hasNegative ? "Reconcile" : `${held.length} materials`}</span></div>
+      <article class="card house-card ${house.is_finished ? "house-finished" : "house-active"}">
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p></div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Finished" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? held.map((item) => `<div class="balance-row"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("") : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
+        <div class="house-checklist-card">
+          <div class="house-stock-title">House checklist</div>
+          ${checklist.map(([label, status, value]) => `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></div>`).join("")}
+        </div>
         <div class="house-card-actions">
           ${canManageHouses ? `
+            <button class="text-button house-checklist-open" type="button" data-house-id="${escapeHtml(house.id)}">Edit checklist</button>
             <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
             ${house.is_finished && held.some((item) => Math.abs(item.qty) > 1e-9) ? `<button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-action="closeout">Close out remaining stock</button>` : ""}
             <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button>` : ""}
@@ -657,6 +712,85 @@ function renderHouses() {
     "hidden",
     data.house_list.length > 0 || teams.length > 0,
   );
+  $("#houses-no-results").classList.toggle(
+    "hidden",
+    !query || matchingHouses.length > 0,
+  );
+}
+
+async function openHouseChecklist(houseId) {
+  if (state.user?.role !== "admin") return;
+  const requestId = ++state.houseChecklistRequest;
+  const form = $("#house-checklist-form");
+  form.reset();
+  form.dataset.houseId = houseId;
+  $("#house-checklist-title").textContent = `${houseId} checklist`;
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  $("#house-checklist-dialog").showModal();
+  try {
+    const checklist = await request(
+      `/api/house-checklist/${encodeURIComponent(houseId)}`,
+    );
+    if (requestId !== state.houseChecklistRequest) return;
+    for (const [name, value] of Object.entries({
+      scaffolding_status: checklist.scaffolding_status,
+      esb_unclipped:
+        checklist.esb_unclipped,
+      plumber_status: checklist.plumber_status,
+    })) {
+      if (value !== null) {
+        $(
+          `input[name="${name}"][value="${value}"]`,
+          form,
+        ).checked = true;
+      }
+    }
+  } catch (error) {
+    if (requestId !== state.houseChecklistRequest) return;
+    $("#house-checklist-dialog").close();
+    showToast(error.message, true);
+  } finally {
+    if (requestId === state.houseChecklistRequest) button.disabled = false;
+  }
+}
+
+async function submitHouseChecklist(event) {
+  event.preventDefault();
+  if (state.user?.role !== "admin") {
+    showToast("Administrator access is required to edit house checklists.", true);
+    return;
+  }
+  const form = event.currentTarget;
+  const button = $("button[type='submit']", form);
+  const values = new FormData(form);
+  button.disabled = true;
+  try {
+    await request("/api/house-checklist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: form.dataset.houseId,
+        scaffolding_status: values.get("scaffolding_status"),
+        esb_unclipped: values.get("esb_unclipped"),
+        plumber_status: values.get("plumber_status"),
+      }),
+    });
+    $("#house-checklist-dialog").close();
+    showToast(`Checklist for ${form.dataset.houseId} saved.`);
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(
+        `Checklist was saved, but the house cards could not refresh: ${error.message}`,
+        true,
+      );
+    }
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderHouseDetail(result) {
@@ -1540,9 +1674,15 @@ function bindEvents() {
   $("#material-form").addEventListener("submit", submitMaterial);
   $("#house-form").addEventListener("submit", submitHouse);
   $("#houses-list").addEventListener("click", toggleHouseFinished);
+  $("#houses-list").addEventListener("click", (event) => {
+    const button = event.target.closest(".house-checklist-open");
+    if (button) openHouseChecklist(button.dataset.houseId);
+  });
+  $("#house-checklist-form").addEventListener("submit", submitHouseChecklist);
   $("#stocktake-form").addEventListener("submit", submitStocktake);
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
+  $("#house-search").addEventListener("input", renderHouses);
   $("#movement-search").addEventListener("input", searchMovementHistory);
   $("#workbook-file").addEventListener("change", (event) => {
     $("#file-name").textContent =
