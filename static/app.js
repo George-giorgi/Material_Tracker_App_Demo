@@ -10,6 +10,7 @@ const state = {
   houseDetailRequest: 0,
   houseChecklistRequest: 0,
   houseTeamFilter: null,
+  houseStatusFilter: null,
   housesTeamsTab: "houses",
   presentation: null,
   user: null,
@@ -291,6 +292,7 @@ async function checkAuthentication() {
 }
 
 function setTab(tab) {
+  stickyHouses.clear();
   $$(".nav-item").forEach((button) =>
     button.classList.toggle("active", button.dataset.tab === tab),
   );
@@ -485,6 +487,7 @@ function openPresentationAction() {
     $("#house-search").value = houseId;
     $("#team-search").value = "";
     state.houseTeamFilter = null;
+    state.houseStatusFilter = null;
     renderHouses();
     return;
   }
@@ -541,7 +544,11 @@ function renderOverview() {
   const data = state.dashboard;
   const materials = data.materials;
   $("#stat-materials").textContent = materials.length;
-  $("#stat-houses").textContent = data.houses;
+  const hs = data.house_summary || { provided: 0, active: data.houses, closed: 0, not_started: 0 };
+  $("#stat-provided").textContent = hs.provided;
+  $("#stat-houses").textContent = hs.active;
+  $("#stat-closed").textContent = hs.closed;
+  $("#stat-not-started").textContent = hs.not_started;
   $("#stat-movements").textContent = data.movements.length;
   $("#stat-counts").textContent = materials.filter(
     (item) => item.needs_stocktake,
@@ -632,11 +639,47 @@ function renderInventory() {
   }
 }
 
+const STOCK_PREVIEW = 3;
+
+const expandedStock = new Set();
+
+const stickyHouses = new Set();
+let notStartedCache = null;
+async function renderNotStartedHouses(query) {
+  const list = $("#houses-list");
+  list.classList.remove("house-grid-scrollable");
+  if (!notStartedCache) {
+    list.innerHTML = `<p class="muted">Loading SEAI houses…</p>`;
+    try {
+      notStartedCache = (await request("/api/calculator/houses?status=not_started")).houses;
+    } catch (error) {
+      showToast(error.message, true);
+      return;
+    }
+    if (state.houseStatusFilter !== "not_started") return;
+  }
+  const rows = notStartedCache.filter((h) =>
+    [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query),
+  );
+  list.innerHTML = rows.length
+    ? rows
+        .map(
+          (h) => `<article class="card house-card house-pending">
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(h.id)}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" · ") || "No details")}</p></div><span class="status-pill pending">Not started</span></div>
+        <div class="house-card-actions"><button class="text-button seai-activate" type="button" data-house-id="${escapeHtml(h.id)}">＋ Activate house</button></div>
+      </article>`,
+        )
+        .join("")
+    : `<p class="muted">No SEAI houses waiting to start.</p>`;
+  list.classList.toggle("house-grid-scrollable", rows.length > 6);
+}
+
 function renderHouses() {
   const data = state.dashboard;
   const canManageHouses = state.user?.role === "admin";
   const query = $("#house-search").value.trim().toLocaleLowerCase();
   const teamFilter = state.houseTeamFilter;
+  const statusFilter = state.houseStatusFilter;
   const filteredHouseIds = teamFilter
     ? data.team_house_counts?.[teamFilter.location]?.[
         teamFilter.status === "closed" ? "closed_house_ids" : "open_house_ids"
@@ -652,9 +695,19 @@ function renderHouses() {
       },
     );
   });
+  if (statusFilter === "not_started" && !teamFilter) {
+    $("#houses-list-heading").textContent = "SEAI houses not started";
+    $("#house-team-filter").classList.remove("hidden");
+    $("#house-team-filter-label").textContent = "Showing SEAI houses not started yet";
+    $("#houses-empty").classList.add("hidden");
+    $("#houses-no-results").classList.add("hidden");
+    renderNotStartedHouses(query);
+    return;
+  }
   const matchingHouses = data.house_list.filter((house) =>
     (!filteredHouseIds || filteredHouseIds.includes(house.id)) &&
     (!teamFilter || Boolean(house.is_finished) === (teamFilter.status === "closed")) &&
+    (!statusFilter || stickyHouses.has(house.id) || Boolean(house.is_finished) === (statusFilter === "closed")) &&
     [house.id, house.owner_name, house.employee_name, house.postcode]
       .filter(Boolean)
       .join(" ")
@@ -714,14 +767,16 @@ function renderHouses() {
     return `
       <article class="card house-card ${house.is_finished ? "house-finished" : "house-active"}">
         <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
-        <div class="house-stock"><div class="house-stock-title">Materials on site</div>
-          ${held.length ? held.map((item) => `<div class="balance-row"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("") : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
+        <div class="house-body"><div class="house-stock"><div class="house-stock-title">Materials on site</div>
+          ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
         <div class="house-checklist-card">
           <div class="house-stock-title">House checklist</div>
           ${checklist.map(([label, status, value]) => `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></div>`).join("")}
         </div>
+        </div>
         <div class="house-card-actions">
+          <button class="text-button house-record-movement${house.is_finished ? " ghost" : ""}" type="button" data-house-id="${escapeHtml(house.id)}"${house.is_finished ? ' aria-hidden="true" tabindex="-1"' : ""}>＋ Record movement</button>
           ${canManageHouses ? `
             <button class="text-button house-checklist-open" type="button" data-house-id="${escapeHtml(house.id)}">Edit checklist</button>
             <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
@@ -796,17 +851,31 @@ function renderHouses() {
     "hidden",
     !teamQuery || matchingTeams.length > 0,
   );
-  $("#houses-list").innerHTML = houseCards.join("");
-  $("#houses-list").classList.toggle(
+  const housesList = $("#houses-list");
+  const listScroll = housesList.scrollTop;
+  const pageScroll = window.scrollY;
+  housesList.innerHTML = houseCards.join("");
+  housesList.classList.toggle(
     "house-grid-scrollable",
     matchingHouses.length > 6,
   );
+  // Keep the view exactly where it was when a card is re-rendered in place.
+  housesList.scrollTo({ top: listScroll, behavior: "instant" });
+  if (window.scrollY !== pageScroll) window.scrollTo({ top: pageScroll, behavior: "instant" });
   $("#houses-list-heading").textContent = teamFilter
     ? teamFilter.status === "closed"
       ? "Closed houses"
       : "Open houses"
-    : "Houses";
-  $("#house-team-filter").classList.toggle("hidden", !teamFilter);
+    : statusFilter === "closed"
+      ? "Closed houses"
+      : statusFilter === "active"
+        ? "Active houses"
+        : "Houses";
+  $("#house-team-filter").classList.toggle("hidden", !teamFilter && !statusFilter);
+  if (statusFilter && !teamFilter) {
+    $("#house-team-filter-label").textContent =
+      `Showing ${statusFilter} houses`;
+  }
   if (teamFilter) {
     const teamName = formatLocation(teamFilter.location);
     $("#house-team-filter-label").textContent =
@@ -818,7 +887,7 @@ function renderHouses() {
   );
   $("#houses-no-results").classList.toggle(
     "hidden",
-    (!query && !teamFilter) || matchingHouses.length > 0,
+    (!query && !teamFilter && !statusFilter) || matchingHouses.length > 0,
   );
 }
 
@@ -1157,11 +1226,59 @@ function openStocktake(materialId = null) {
 
 function openHouseDialog() {
   $("#house-form").reset();
+  $("#seai-results").classList.add("hidden");
+  $("#seai-info").classList.add("hidden");
   $("#house-dialog").showModal();
+  $("#seai-search").focus();
+}
+
+let seaiTimer = 0;
+async function searchSeaiHouses() {
+  const box = $("#seai-results");
+  const q = $("#seai-search").value.trim();
+  try {
+    const { houses } = await request(`/api/calculator/houses?q=${encodeURIComponent(q)}`);
+    box.innerHTML = houses.length
+      ? houses
+          .map(
+            (h, i) =>
+              `<button type="button" data-index="${i}"><span><strong>${escapeHtml(h.id)}</strong> ${escapeHtml(h.owner_name || "")}<br><small>${escapeHtml([h.address, h.postcode].filter(Boolean).join(" · "))}</small></span><small>${escapeHtml(h.status.replace("_", " "))}</small></button>`,
+          )
+          .join("")
+      : '<div class="seai-none">No matching SEAI houses</div>';
+    box._houses = houses;
+    box.classList.remove("hidden");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function pickSeaiHouse(event) {
+  const button = event.target.closest("button[data-index]");
+  if (!button) return;
+  fillSeaiHouse($("#seai-results")._houses[Number(button.dataset.index)]);
+}
+
+function fillSeaiHouse(h) {
+  const form = $("#house-form");
+  form.elements.id.value = h.id;
+  form.elements.postcode.value = h.postcode || "";
+  form.elements.owner_name.value = h.owner_name || "";
+  if (h.employee_name) form.elements.employee_name.value = h.employee_name;
+  const fmt = (v, u) => (v === null || v === undefined ? "—" : `${v} ${u}`);
+  $("#seai-info").innerHTML = [
+    ["Address", h.address || "—"],
+    ["Area", fmt(h.area_m2, "m²")],
+    ["Perimeter", fmt(h.perimeter_m, "m")],
+  ]
+    .map(([k, v]) => `<span>${k}: <b>${escapeHtml(String(v))}</b></span>`)
+    .join("");
+  $("#seai-info").classList.remove("hidden");
+  $("#seai-results").classList.add("hidden");
+  $("#seai-search").value = "";
 }
 
 function renderAll(preserveMovementLines = false) {
-  $("#demo-banner").classList.toggle("hidden", !state.dashboard.demo_mode);
   renderOverview();
   renderInventory();
   renderHouses();
@@ -1170,6 +1287,7 @@ function renderAll(preserveMovementLines = false) {
 }
 
 async function refresh(preserveMovementLines = false) {
+  notStartedCache = null;
   const search = $("#movement-search")?.value.trim() || "";
   const [dashboard, ledger] = await Promise.all([
     request("/api/dashboard"),
@@ -1203,6 +1321,7 @@ async function searchMovementHistory() {
 }
 
 function openMovementDialog() {
+  Object.keys(requestCache).forEach((key) => delete requestCache[key]);
   $("#movement-form").reset();
   state.batchLines = [];
   state.selectedHouseId = "";
@@ -1238,6 +1357,7 @@ function updateMovementFields() {
   $$(".location-kind").forEach((select) =>
     select.dispatchEvent(new Event("change")),
   );
+  renderHouseRequest();
 }
 
 function updateTransferKind(select) {
@@ -1383,17 +1503,10 @@ async function submitHouse(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(Object.fromEntries(form)),
     });
+    const savedId = String(form.get("id") || "").trim();
     $("#house-dialog").close();
     formElement.reset();
-    showToast("House saved and ready to search.");
-    try {
-      await refresh();
-    } catch (error) {
-      showToast(
-        `House was saved, but the tracker could not refresh: ${error.message}`,
-        true,
-      );
-    }
+    window.location.href = `/calculator?house=${encodeURIComponent(savedId)}`;
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -1401,7 +1514,39 @@ async function submitHouse(event) {
   }
 }
 
+const pendingHouseStatus = new Set();
+
 async function toggleHouseFinished(event) {
+  const moreButton = event.target.closest(".stock-more-btn");
+  if (moreButton) {
+    const id = moreButton.dataset.houseId;
+    const open = !expandedStock.has(id);
+    if (open) expandedStock.add(id);
+    else expandedStock.delete(id);
+    const list = moreButton.previousElementSibling;
+    list.classList.toggle("expanded", open);
+    moreButton.textContent = open ? "Show less" : `… Show more (${moreButton.dataset.extra})`;
+    if (!open) moreButton.closest(".house-body").scrollTop = 0;
+    return;
+  }
+  const activateButton = event.target.closest(".seai-activate");
+  if (activateButton) {
+    const h = notStartedCache?.find((item) => item.id === activateButton.dataset.houseId);
+    if (h) {
+      openHouseDialog();
+      fillSeaiHouse(h);
+    }
+    return;
+  }
+  const recordButton = event.target.closest(".house-record-movement");
+  if (recordButton) {
+    openMovementDialog();
+    $("#movement-kind").value = "pickup";
+    $("#movement-kind").dispatchEvent(new Event("change"));
+    $("#movement-house-id").value = recordButton.dataset.houseId;
+    updateHouseSelection();
+    return;
+  }
   const detailButton = event.target.closest(".house-open");
   if (detailButton) {
     openHouseDetail(detailButton.dataset.houseId);
@@ -1412,7 +1557,26 @@ async function toggleHouseFinished(event) {
   const houseId = button.dataset.houseId;
   const finished =
     button.dataset.action === "closeout" || button.dataset.finished !== "true";
-  button.disabled = true;
+  if (pendingHouseStatus.has(houseId)) return;
+  pendingHouseStatus.add(houseId);
+  stickyHouses.add(houseId);
+  const house = state.dashboard.house_list.find((item) => item.id === houseId);
+  const previous = house ? house.is_finished : null;
+  const previousSummary = state.dashboard.house_summary
+    ? { ...state.dashboard.house_summary }
+    : null;
+  // Show the new status immediately; the server call and refresh happen in the background.
+  if (house && previous !== Number(finished)) {
+    house.is_finished = Number(finished);
+    const summary = state.dashboard.house_summary;
+    if (summary) {
+      summary.active += finished ? -1 : 1;
+      summary.closed += finished ? 1 : -1;
+    }
+    state.dashboard.houses = state.dashboard.house_list.filter((item) => !item.is_finished).length;
+    renderOverview();
+    renderHouses();
+  }
   try {
     const result = await request("/api/houses/status", {
       method: "POST",
@@ -1422,20 +1586,31 @@ async function toggleHouseFinished(event) {
     showToast(
       finished
         ? `${houseId} marked finished; ${result.materials_closed_out} remaining material balance(s) recorded as used.`
-        : `${houseId} reopened.`,
+        : result.materials_restored
+          ? `${houseId} reopened; ${result.materials_restored} material balance(s) restored.`
+          : `${houseId} reopened.`,
     );
-    try {
-      await refresh();
-    } catch (error) {
-      showToast(
-        `House status was saved, but the tracker could not refresh: ${error.message}`,
-        true,
-      );
+    pendingHouseStatus.delete(houseId);
+    if (pendingHouseStatus.size === 0) {
+      try {
+        await refresh();
+      } catch (error) {
+        showToast(
+          `House status was saved, but the tracker could not refresh: ${error.message}`,
+          true,
+        );
+      }
     }
   } catch (error) {
+    pendingHouseStatus.delete(houseId);
+    if (house) {
+      house.is_finished = previous;
+      if (previousSummary) state.dashboard.house_summary = previousSummary;
+      state.dashboard.houses = state.dashboard.house_list.filter((item) => !item.is_finished).length;
+      renderOverview();
+      renderHouses();
+    }
     showToast(error.message, true);
-  } finally {
-    button.disabled = false;
   }
 }
 
@@ -1677,8 +1852,19 @@ function bindEvents() {
     "click",
     openPresentationAction,
   );
-  $$(".nav-item").forEach((button) =>
+  $$(".nav-item[data-tab]").forEach((button) =>
     button.addEventListener("click", () => setTab(button.dataset.tab)),
+  );
+  $$("[data-house-view]").forEach((tile) =>
+    tile.addEventListener("click", () => {
+      state.houseTeamFilter = null;
+      state.houseStatusFilter = tile.dataset.houseView || null;
+      stickyHouses.clear();
+      state.housesTeamsTab = "houses";
+      $("#house-search").value = "";
+      setTab("houses");
+      renderHouses();
+    }),
   );
   $$("[data-goto]").forEach((button) =>
     button.addEventListener("click", () => setTab(button.dataset.goto)),
@@ -1777,6 +1963,13 @@ function bindEvents() {
   );
   $("#material-form").addEventListener("submit", submitMaterial);
   $("#house-form").addEventListener("submit", submitHouse);
+  $("#house-request").addEventListener("change", toggleRequestItem);
+  $("#seai-search").addEventListener("input", () => {
+    clearTimeout(seaiTimer);
+    seaiTimer = setTimeout(searchSeaiHouses, 200);
+  });
+  $("#seai-search").addEventListener("focus", searchSeaiHouses);
+  $("#seai-results").addEventListener("click", pickSeaiHouse);
   $("#houses-list").addEventListener("click", toggleHouseFinished);
   $("#teams-list").addEventListener("click", (event) => {
     const button = event.target.closest(".team-house-count");
@@ -1790,6 +1983,7 @@ function bindEvents() {
       state.houseTeamFilter?.status === selection.status
         ? null
         : selection;
+    state.houseStatusFilter = null;
     state.housesTeamsTab = "houses";
     $("#house-search").value = "";
     $("#houses-list").scrollTop = 0;
@@ -1808,6 +2002,7 @@ function bindEvents() {
   $("#team-search").addEventListener("input", renderHouses);
   $("#clear-house-team-filter").addEventListener("click", () => {
     state.houseTeamFilter = null;
+    state.houseStatusFilter = null;
     state.housesTeamsTab = "houses";
     renderHouses();
   });
@@ -1818,6 +2013,7 @@ function bindEvents() {
   $("#teams-tab").addEventListener("click", () => {
     state.housesTeamsTab = "teams";
     state.houseTeamFilter = null;
+    state.houseStatusFilter = null;
     renderHouses();
   });
   $("#houses-teams-tabs").addEventListener("keydown", (event) => {
@@ -1927,6 +2123,7 @@ function renderMaterialLines() {
       </div>`;
     })
     .join("");
+  renderHouseRequest();
   $("#movement-lines").innerHTML =
     lines ||
     `<div class="no-material-lines">No materials added yet. Search above to start a materials list.</div>`;
@@ -2043,6 +2240,122 @@ function renderHouseSuggestions() {
   list.classList.remove("hidden");
 }
 
+const requestCache = {};
+const formatNumber = (value) => String(Math.round(Number(value) * 1000) / 1000);
+const materialKey = (name) =>
+  String(name || "").toLowerCase().replace(/aluminium/g, "aluminum").replace(/\s+/g, " ").trim();
+
+function findTrackerMaterial(name) {
+  let key = materialKey(name);
+  const caping = key.match(/^caping 100mm (\w+)$/);
+  if (caping) key = `caping ${caping[1]} 100mm`;
+  return state.dashboard.materials.find((m) => materialKey(m.name) === key);
+}
+
+function requestEntries(request) {
+  const data = request.data || {};
+  const entries = [];
+  (data.items || []).forEach((item) =>
+    entries.push({ label: item.label, detail: item.required, material: item.material, qty: Number(item.qty) }),
+  );
+  (data.manual || []).forEach((item) =>
+    entries.push({
+      label: item.material,
+      detail: `${item.qty} ${item.unit || ""}`.trim(),
+      material: item.material,
+      qty: parseFloat(item.qty),
+    }),
+  );
+  return entries.filter((entry) => entry.qty > 0);
+}
+
+function renderHouseRequest() {
+  const box = $("#house-request");
+  if (!box || !state.dashboard) return;
+  const houseId = $("#movement-house-id").value.trim();
+  const kind = $("#movement-kind").value;
+  const assigned = requestCache[houseId];
+  if (kind !== "pickup" || !houseId || !assigned) {
+    box.classList.add("hidden");
+    return;
+  }
+  const delivered = assigned.delivered || {};
+  let deliveredAny = false;
+  const rows = requestEntries(assigned)
+    .map((entry) => {
+      const material = findTrackerMaterial(entry.material);
+      const sent = material ? Number(delivered[material.id] || 0) : 0;
+      const remaining = Math.max(entry.qty - sent, 0);
+      if (sent > 0) deliveredAny = true;
+      const done = material && remaining <= 1e-9;
+      const checked = material && state.batchLines.some((line) => line.material_id === material.id);
+      const note = !material
+        ? `${entry.detail || ""} · not tracked in warehouse`
+        : sent > 0
+          ? done
+            ? `needed ${formatNumber(entry.qty)} · already delivered ${formatNumber(sent)} · nothing left to deliver`
+            : `needed ${formatNumber(entry.qty)} · already delivered ${formatNumber(sent)} · remaining ${formatNumber(remaining)}`
+          : entry.detail || "";
+      const attrs = material && !done
+        ? `data-material-id="${material.id}" data-qty="${remaining}"`
+        : "disabled";
+      return `<label class="req-row${material ? "" : " req-untracked"}${done ? " req-done" : ""}"><input type="checkbox" ${attrs}${checked ? " checked" : ""}><span><strong>${escapeHtml(entry.label)}</strong><small>${escapeHtml(note)}</small></span></label>`;
+    })
+    .join("");
+  const deliveryNote = deliveredAny
+    ? " Quantities already delivered are subtracted, so this is a follow-up delivery."
+    : "";
+  const markup = `<div class="req-heading"><strong>Materials assigned to ${escapeHtml(houseId)}</strong><small>From calculator · ${escapeHtml(assigned.created_by)}, ${escapeHtml(String(assigned.created_at).replace("T", " "))}. Tick each item as you load it.${deliveryNote}</small></div><div class="req-list">${rows}</div>`;
+  // Rebuilding the panel on every tick collapses its height and makes the dialog jump,
+  // so only rebuild when the content really changed and otherwise just sync the ticks.
+  const signature = markup.replace(/ checked/g, "");
+  if (box.dataset.signature === signature) {
+    $$("input[data-material-id]", box).forEach((input) => {
+      input.checked = state.batchLines.some(
+        (line) => line.material_id === Number(input.dataset.materialId),
+      );
+    });
+  } else {
+    const scroller = box.closest("dialog");
+    const dialogScroll = scroller ? scroller.scrollTop : 0;
+    const listScroll = $(".req-list", box)?.scrollTop || 0;
+    box.innerHTML = markup;
+    box.dataset.signature = signature;
+    $(".req-list", box).scrollTop = listScroll;
+    if (scroller) scroller.scrollTop = dialogScroll;
+  }
+  box.classList.remove("hidden");
+}
+
+async function loadHouseRequest() {
+  const houseId = $("#movement-house-id").value.trim();
+  if (!houseId || houseId in requestCache) return renderHouseRequest();
+  try {
+    const { requests, delivered } = await request(
+      `/api/calculator/requests?house_id=${encodeURIComponent(houseId)}`,
+    );
+    requestCache[houseId] = requests[0]
+      ? {
+          ...requests[0],
+          data: typeof requests[0].data === "string" ? JSON.parse(requests[0].data) : requests[0].data,
+          delivered,
+        }
+      : null;
+  } catch (error) {
+    requestCache[houseId] = null;
+  }
+  renderHouseRequest();
+}
+
+function toggleRequestItem(event) {
+  const box = event.target.closest("input[data-material-id]");
+  if (!box) return;
+  const id = Number(box.dataset.materialId);
+  state.batchLines = state.batchLines.filter((line) => line.material_id !== id);
+  if (box.checked) state.batchLines.push({ material_id: id, qty: box.dataset.qty });
+  renderMaterialLines();
+}
+
 function updateHouseSelection() {
   const value = $("#movement-house-id").value.trim();
   const house = state.dashboard.house_list.find(
@@ -2063,6 +2376,7 @@ function updateHouseSelection() {
   renderHouseSuggestions();
   renderHouseLiveStock();
   renderMaterialLines();
+  loadHouseRequest();
 }
 
 function selectHouseSuggestion(event) {

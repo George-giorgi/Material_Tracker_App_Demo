@@ -30,6 +30,7 @@ button { cursor: pointer; }
 .main-nav { display: grid; gap: 5px; }
 .nav-item { display: flex; align-items: center; gap: 13px; width: 100%; border: 0; border-radius: 8px; padding: 13px 15px; background: transparent; color: #c0d2c9; text-align: left; font-size: 13px; transition: .15s ease; }
 .nav-item:hover { background: #22354d; color: #fff; }
+a.nav-item { text-decoration: none; }
 .nav-item.active { background: #20354c; color: #fff; font-weight: 600; box-shadow: inset 3px 0 var(--green-2); }
 .nav-icon { width: 17px; color: var(--green-2); font-size: 19px; text-align: center; }
 .sidebar-bottom { margin-top: auto; }
@@ -81,6 +82,23 @@ h2 { margin-bottom: 5px; font: 700 15px Manrope, sans-serif; }
 .stat-icon.orange { background: #fbefe0; color: #b67c36; }
 .stat-icon.blue { background: #e9f1f6; color: #527d99; }
 .stat-icon.red { background: #f8ebe8; color: #b86053; }
+.houses-card { padding: 12px 14px; }
+.houses-card .stat-label { top: 18px; left: 52px; }
+.houses-title { position: relative; height: 31px; margin-bottom: 8px; }
+.houses-title .stat-icon { margin: 0; }
+button.house-tile { display: block; width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; transition: transform .12s, box-shadow .12s; }
+button.house-tile:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(20,34,55,.12); }
+.house-tile { border-radius: 8px; background: #f4f7f5; padding: 7px 10px; }
+.house-tile.main { padding: 9px 11px; background: #e9f1ec; }
+.house-tile.active { background: #e0f5ec; border: 1px solid #b6e4d0; }
+.house-tile.active .houses-sub, .house-tile.active .stat-value { color: #1f8a63; }
+.house-tile.closed { background: #f8e9e6; border: 1px solid #efc9c2; }
+.house-tile.closed .houses-sub, .house-tile.closed .stat-value { color: #b3503f; }
+.house-kids { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.houses-sub { color: #697871; font-size: 10px; font-weight: 600; }
+.house-tile .stat-value { font-size: 18px; line-height: 1.2; }
+.house-tile.main .stat-value { font-size: 28px; }
+.house-tile .stat-caption { margin-top: 1px; font-size: 9px; }
 .stat-label { position: absolute; top: 23px; left: 59px; color: #697871; font-size: 11px; }
 .stat-value { font: 700 24px Manrope, sans-serif; letter-spacing: -.04em; }
 .stat-caption { margin-top: 3px; color: #98a19c; font-size: 10px; }
@@ -400,3 +418,116 @@ td:first-child { color: #263b32; font-weight: 600; }
   .transfer-block > strong { grid-row: 1 / 3; }
   .transfer-postcode { grid-column: 2 / -1; }
 }
+
+.seai-search { position: relative; }
+.seai-results { margin-top: 4px; max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.seai-results button { display: flex; width: 100%; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--line); background: none; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.seai-results button:hover { background: #edf6f1; }
+.seai-results small { color: #7a8780; }
+.seai-results .seai-none { padding: 9px 10px; color: #7a8780; font-size: 12px; }
+.seai-info { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; }
+.seai-info span { border-radius: 6px; padding: 4px 8px; background: #e7f0e9; color: #536d5b; }
+.seai-info b { color: #2d5940; }
+
+.house-card.house-active { border-color: #b6e4d0; border-left: 4px solid #2dcc96; background: linear-gradient(90deg, #f1fbf6, var(--paper) 40%); }
+.house-card.house-active .house-avatar { background: #d6f2e5; color: #1f8a63; }
+.house-card.house-finished { border-color: #efc9c2; border-left: 4px solid #d4695a; background: linear-gradient(90deg, #fcf1ef, var(--paper) 40%); }
+.house-card.house-finished .house-avatar { background: #f6dcd7; color: #b3503f; }
+#open-house { background: #1f8a63; border-color: #1f8a63; color: #fff; }
+#open-house:hover { background: #177050; }
+
+.house-request { border: 1px solid #b6e4d0; border-radius: 10px; background: #f1fbf6; padding: 10px 12px; }
+.req-heading { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; font-size: 12px; }
+.req-heading small { color: #6b7a73; font-size: 10px; }
+.req-list { display: grid; gap: 2px; max-height: 220px; overflow: auto; }
+.req-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-bottom: 1px solid #dcefe5; cursor: pointer; font-size: 12px; }
+.req-row input { width: 18px; height: 18px; flex: none; accent-color: #1f8a63; }
+.req-row span { display: flex; justify-content: space-between; gap: 10px; flex: 1; }
+.req-row small { color: #6b7a73; font-size: 11px; }
+.req-row input:checked + span strong { color: #1f8a63; }
+.req-untracked { opacity: .55; cursor: default; }
+.req-done { opacity: .6; cursor: default; }
+.req-done strong { text-decoration: line-through; }
+.req-heading small { line-height: 1.4; }
+
+.stock-rows:not(.expanded) .stock-extra { display: none; }
+.stock-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 6px; padding: 5px 0; border: 0; border-top: 1px dashed #dde3de; background: none; color: #536d5b; font: inherit; font-size: 10px; font-weight: 600; cursor: pointer; }
+.stock-toggle:hover { color: #2d5940; }
+.stock-toggle-arrow { transition: transform .15s; }
+.stock-toggle[aria-expanded="true"] .stock-toggle-arrow { transform: rotate(180deg); }
+.house-tile.pending { margin-top: 6px; background: #fdf3df; border: 1px solid #f0d9a3; }
+.house-tile.pending .houses-sub, .house-tile.pending .stat-value { color: #b57a12; }
+.house-pending { border-left: 3px solid #e0a43a; background: #fffaf0; }
+.status-pill.pending { background: #fdf3df; color: #b57a12; }
+.stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stat-card { min-height: 0; }
+.houses-card { grid-column: 1 / -1; display: flex; align-items: stretch; gap: 8px; padding: 10px 14px; }
+.houses-card .houses-title { display: flex; align-items: center; gap: 10px; height: auto; margin: 0 10px 0 0; }
+.houses-card .houses-title .stat-label { position: static; font-size: 13px; font-weight: 600; }
+.houses-card .house-kids { display: contents; }
+.houses-card .house-tile { flex: 1 1 0; margin: 0; }
+@media (max-width: 1120px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .houses-card { flex-wrap: wrap; }
+  .houses-card .houses-title { flex-basis: 100%; margin: 0; }
+  .houses-card .house-tile { flex: 1 1 40%; }
+}
+@media (max-width: 640px) {
+  .stat-card { min-height: 0; }
+}
+
+.kpi-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; padding: 12px 16px; background: var(--paper); font: inherit; text-align: left; cursor: pointer; transition: transform .12s, box-shadow .12s; }
+.kpi:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(20,34,55,.12); }
+.kpi-label { color: #697871; font-size: 12px; font-weight: 600; }
+.kpi-value { font: 700 26px Manrope, sans-serif; letter-spacing: -.03em; line-height: 1; }
+.kpi.seai { border-left-color: #6f8f7c; }
+.kpi.active { border-left-color: #1f8a63; background: #f1faf6; } .kpi.active .kpi-value { color: #1f8a63; }
+.kpi.closed { border-left-color: #b3503f; background: #fcf3f1; } .kpi.closed .kpi-value { color: #b3503f; }
+.kpi.pending { border-left-color: #e0a43a; background: #fffaf0; } .kpi.pending .kpi-value { color: #b57a12; }
+.kpi-strip { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 16px; padding: 0 4px; color: #697871; font-size: 12px; }
+.kpi-strip b { color: #1d2a3a; font-size: 14px; }
+.kpi-strip .kpi-warn b { color: #b86053; }
+@media (max-width: 1120px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.house-card { display: flex; flex-direction: column; }
+.house-card .house-card-actions { margin-top: auto; }
+.house-record-movement.ghost { visibility: hidden; pointer-events: none; }
+.house-grid { align-items: start; }
+.stock-toggle { margin: 0 0 6px; border-top: 0; border-bottom: 1px dashed #dde3de; padding: 0 0 5px; }
+.stock-rows.expanded { max-height: 260px; overflow-y: auto; }
+.stock-rows.scrolls { max-height: 124px; overflow-y: auto; padding-right: 4px; }
+.stock-more { margin-top: 4px; color: #98a19c; font-size: 9px; text-align: right; }
+.house-grid { align-items: stretch; }
+.house-card:has(.house-body) { height: 470px; overflow: hidden; }
+.house-card .house-top { flex: none; }
+.house-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.house-card .house-card-actions { flex: none; margin-top: 0; background: var(--paper); }
+.house-card:has(.house-body) { height: 290px; padding: 10px 14px 0; }
+.house-card .house-top { gap: 10px; }
+.house-card .house-avatar { width: 28px; height: 28px; border-radius: 8px; font-size: 14px; }
+.house-meta h2 { margin: 0 0 2px; font-size: 15px; line-height: 1.2; }
+.house-meta .house-team-label { margin-top: 2px; }
+.house-card .house-stock { margin-top: 8px; padding-top: 6px; }
+.house-card .house-stock-title { margin-bottom: 3px; }
+.house-card .balance-row { padding: 3px 0; }
+.house-card .house-checklist-card { padding: 6px 0; }
+.house-card .checklist-card-row { padding-top: 3px; }
+.house-card .house-card-actions { flex-wrap: wrap; gap: 2px 10px; margin: 0 -14px; padding: 4px 14px; }
+.topbar { height: 52px; }
+.main-content { padding-bottom: 28px; }
+.page-heading { margin: 12px 0 14px; }
+.page-heading .eyebrow { margin-bottom: 3px; }
+h1 { margin-bottom: 3px; font-size: 24px; }
+.page-subtitle { font-size: 11px; }
+.main-content { padding-top: 14px; }
+.topbar { height: 48px; }
+.page-heading { margin: 8px 0 8px; }
+.kpi-row { margin-bottom: 8px; }
+.kpi-strip { margin-bottom: 10px; }
+.page > .card, .page > .page-heading + * { margin-top: 0; }
+.stock-more-btn { display: block; margin-top: 2px; padding: 2px 0; border: 0; background: none; color: #3d6950; font: inherit; font-size: 10px; font-weight: 600; cursor: pointer; }
+.stock-more-btn:hover { text-decoration: underline; }
+.house-stock-dialog { max-width: 420px; }
+.house-stock-full { max-height: 60vh; overflow-y: auto; padding: 4px 22px 18px; }
+.house-stock-full .balance-row { border-bottom: 1px solid #f0f2f0; font-size: 12px; }
+.stock-rows:not(.expanded) .stock-extra { display: none; }

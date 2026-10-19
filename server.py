@@ -196,10 +196,64 @@ def initialize_db():
             db.execute(
                 "ALTER TABLE houses ADD COLUMN employee_name TEXT NOT NULL DEFAULT ''"
             )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provided_houses (
+                id TEXT PRIMARY KEY,
+                postcode TEXT NOT NULL DEFAULT '',
+                address TEXT NOT NULL DEFAULT '',
+                owner_name TEXT NOT NULL DEFAULT '',
+                area_m2 REAL,
+                perimeter_m REAL,
+                source TEXT NOT NULL DEFAULT 'tracker'
+            )
+            """
+        )
+        # Every house the tracker already works on belongs to the provided list.
+        db.execute(
+            """
+            INSERT OR IGNORE INTO provided_houses(id, postcode, owner_name, source)
+            SELECT id, postcode, owner_name, 'tracker' FROM houses
+            """
+        )
+        references_houses = any(
+            row["table"] == "houses"
+            for row in db.execute("PRAGMA foreign_key_list(material_requests)")
+        )
+        if references_houses:
+            db.execute("ALTER TABLE material_requests RENAME TO material_requests_old")
+            db.execute("DROP INDEX IF EXISTS material_requests_house_idx")
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS material_requests (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id),
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                data TEXT NOT NULL
+            )
+            """
+        )
+        if references_houses:
+            db.execute(
+                "INSERT INTO material_requests SELECT id, house_id, created_at, created_by, notes, data "
+                "FROM material_requests_old"
+            )
+            db.execute("DROP TABLE material_requests_old")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS material_requests_house_idx ON material_requests(house_id, id)"
+        )
         if "department" not in movement_columns:
             db.execute(
                 "ALTER TABLE movements ADD COLUMN department TEXT NOT NULL DEFAULT ''"
             )
+        # Open houses must hold what was delivered: drop close-outs left behind by earlier reopen actions.
+        db.execute(
+            "DELETE FROM movements WHERE kind = 'use' AND notes = ? "
+            "AND house_id IN (SELECT id FROM houses WHERE is_finished = 0)",
+            (CLOSEOUT_NOTE,),
+        )
         db.execute("CREATE INDEX IF NOT EXISTS movements_house_idx ON movements(house_id)")
         db.execute(
             "CREATE INDEX IF NOT EXISTS movements_delivery_idx ON movements(house_id, delivery_number)"
@@ -495,6 +549,18 @@ def _valid_reference(db, location):
         raise ApiError(400, "A selected house or team location is invalid.")
 
 
+CLOSEOUT_NOTE = "Automatically recorded from remaining house stock when the house was marked finished."
+
+
+def _undo_auto_closeouts(db, house_id):
+    """Reopening a house puts back the stock that closing it wrote off automatically."""
+    cursor = db.execute(
+        "DELETE FROM movements WHERE house_id = ? AND kind = 'use' AND notes = ?",
+        (house_id, CLOSEOUT_NOTE),
+    )
+    return cursor.rowcount
+
+
 def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
     if not house_id or not str(house_id).strip():
         raise ApiError(400, "House ID is required for this movement.")
@@ -515,6 +581,11 @@ def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
             str(employee_name or "").strip(),
             datetime.now().timestamp(),
         ),
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO provided_houses(id, postcode, owner_name, source) "
+        "VALUES (?, ?, ?, 'tracker')",
+        (house_id, str(postcode or "").strip(), str(owner_name or "").strip()),
     )
     return house_id
 
@@ -817,6 +888,25 @@ def _esb_unclipped_status(value):
     return value
 
 
+def _delivered_to_house(db, house_id):
+    """Net quantity of each material sent to a house: deliveries in, minus anything sent back out (not consumed)."""
+    location = f"house:{house_id}"
+    delivered = {}
+    for row in db.execute(
+        """
+        SELECT material_id,
+               SUM(CASE WHEN destination = ? THEN qty ELSE 0 END)
+             - SUM(CASE WHEN source = ? AND destination != 'consumed' THEN qty ELSE 0 END) AS qty
+        FROM movements WHERE destination = ? OR source = ?
+        GROUP BY material_id
+        """,
+        (location, location, location, location),
+    ):
+        if row["qty"] and row["qty"] > 1e-9:
+            delivered[str(row["material_id"])] = row["qty"]
+    return delivered
+
+
 def _dashboard(db):
     materials = []
     for row in db.execute("SELECT * FROM materials ORDER BY name COLLATE NOCASE"):
@@ -843,6 +933,12 @@ def _dashboard(db):
     house_count = db.execute("SELECT COUNT(*) FROM houses").fetchone()[0]
     active_house_count = db.execute(
         "SELECT COUNT(*) FROM houses WHERE is_finished = 0"
+    ).fetchone()[0]
+    provided_house_count = db.execute(
+        "SELECT COUNT(*) FROM provided_houses"
+    ).fetchone()[0]
+    closed_house_count = db.execute(
+        "SELECT COUNT(*) FROM houses WHERE is_finished = 1"
     ).fetchone()[0]
     team_house_counts = {}
     for row in db.execute(
@@ -880,6 +976,12 @@ def _dashboard(db):
             ).fetchone() or {"value": "0"}
         )["value"] == "1",
         "houses": active_house_count,
+        "house_summary": {
+            "provided": provided_house_count,
+            "active": active_house_count,
+            "closed": closed_house_count,
+            "not_started": provided_house_count - house_count,
+        },
         "movements": [_movement_json(row) for row in _movement_rows(db, 12)],
         "teams": sorted(
             {
@@ -1188,6 +1290,57 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_file(STATIC_DIR / "app.css", "text/css; charset=utf-8")
         elif path == "/app.js":
             self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
+        elif path == "/calculator":
+            self._send_file(ROOT / "Auto_calc.html", "text/html; charset=utf-8")
+        elif path == "/api/calculator/houses":
+            user = self._login_required()
+            if user is None:
+                return
+            params = parse_qs(urlparse(self.path).query)
+            query = params.get("q", [""])[0].strip()
+            only_not_started = params.get("status", [""])[0] == "not_started"
+            like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            with connect_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT p.id, p.postcode, p.address, p.owner_name,
+                           COALESCE(h.employee_name, '') AS employee_name,
+                           p.area_m2, p.perimeter_m,
+                           CASE WHEN h.id IS NULL THEN 'not_started'
+                                WHEN h.is_finished = 1 THEN 'closed'
+                                ELSE 'active' END AS status
+                    FROM provided_houses p
+                    LEFT JOIN houses h ON h.id = p.id
+                    WHERE (p.id LIKE ? ESCAPE '\\' OR p.postcode LIKE ? ESCAPE '\\'
+                       OR p.owner_name LIKE ? ESCAPE '\\' OR p.address LIKE ? ESCAPE '\\')
+                      AND (? = 0 OR h.id IS NULL)
+                    ORDER BY (h.is_finished = 1), p.id COLLATE NOCASE
+                    LIMIT ?
+                    """,
+                    (like, like, like, like, int(only_not_started), 500 if only_not_started else 20),
+                ).fetchall()
+            self._send_json(200, {"houses": [dict(row) for row in rows]})
+        elif path == "/api/calculator/requests":
+            user = self._login_required()
+            if user is None:
+                return
+            house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
+            with connect_db() as db:
+                rows = db.execute(
+                    """
+                    SELECT id, house_id, created_at, created_by, notes, data
+                    FROM material_requests WHERE house_id = ? ORDER BY id DESC LIMIT 50
+                    """,
+                    (house_id,),
+                ).fetchall()
+                delivered = _delivered_to_house(db, house_id)
+            self._send_json(
+                200,
+                {
+                    "requests": [{**dict(r), "data": json.loads(r["data"])} for r in rows],
+                    "delivered": delivered,
+                },
+            )
         elif path == "/brusna-logo.jpg":
             self._send_file(STATIC_DIR / "brusna-logo.jpg", "image/jpeg")
         elif path == "/tommy.jpeg":
@@ -1592,6 +1745,40 @@ class RequestHandler(BaseHTTPRequestHandler):
                             (code, name, unit, opening_qty),
                         )
                 self._send_json(201, {"id": cursor.lastrowid})
+            elif path == "/api/calculator/requests":
+                user = self._login_required()
+                if user is None:
+                    return
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Request data must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                data = payload.get("data")
+                if not isinstance(data, dict):
+                    raise ApiError(400, "Material request details are required.")
+                encoded = json.dumps(data, ensure_ascii=False)
+                if len(encoded) > 100_000:
+                    raise ApiError(400, "Material request is too large.")
+                notes = str(payload.get("notes") or "").strip()[:2000]
+                with connect_db() as db:
+                    if not db.execute(
+                        "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
+                    ).fetchone():
+                        raise ApiError(404, "Select a house from the provided list first.")
+                    cursor = db.execute(
+                        """
+                        INSERT INTO material_requests(house_id, created_at, created_by, notes, data)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            house_id,
+                            datetime.now().isoformat(timespec="seconds"),
+                            user["display_name"],
+                            notes,
+                            encoded,
+                        ),
+                    )
+                self._send_json(201, {"id": cursor.lastrowid})
             elif path == "/api/houses":
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -1622,6 +1809,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not house_id:
                     raise ApiError(400, "House ID is required.")
                 closeout_count = 0
+                restored_count = 0
                 with connect_db() as db:
                     with db:
                         house = db.execute(
@@ -1630,6 +1818,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                         ).fetchone()
                         if house is None:
                             raise ApiError(404, "House was not found.")
+                        if not payload["finished"]:
+                            restored_count = _undo_auto_closeouts(db, house_id)
                         if payload["finished"]:
                             material_rows = db.execute(
                                 "SELECT id, name FROM materials ORDER BY name COLLATE NOCASE"
@@ -1665,19 +1855,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                                         "house_id": house_id,
                                         "person": user["display_name"],
                                         "team": "",
-                                        "notes": "Automatically recorded from remaining house stock when the house was marked finished.",
+                                        "notes": CLOSEOUT_NOTE,
                                     },
                                 )
                                 closeout_count += 1
                         cursor = db.execute(
                             """
                             UPDATE houses
-                            SET is_finished = ?, status_changed_at = ?
+                            SET is_finished = ?
                             WHERE id = ?
                             """,
                             (
                                 int(payload["finished"]),
-                                datetime.now().timestamp(),
                                 house_id,
                             ),
                         )
@@ -1687,6 +1876,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "id": house_id,
                         "finished": payload["finished"],
                         "materials_closed_out": closeout_count,
+                        "materials_restored": restored_count,
                     },
                 )
             elif path == "/api/import":

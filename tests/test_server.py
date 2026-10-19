@@ -1145,6 +1145,22 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(dashboard["houses"], 1)
         self.assertEqual(len(dashboard["house_list"]), 2)
 
+    def test_house_summary_derives_from_provided_list(self):
+        with server.connect_db() as db:
+            with db:
+                db.execute(
+                    "INSERT INTO provided_houses(id, postcode, owner_name, source) "
+                    "VALUES ('P-1', '', '', 'government'), ('P-2', '', '', 'government'), "
+                    "('P-3', '', '', 'government')"
+                )
+                server._upsert_house(db, "P-1")
+                server._upsert_house(db, "P-2")
+                db.execute("UPDATE houses SET is_finished = 1 WHERE id = 'P-2'")
+            summary = server._dashboard(db)["house_summary"]
+        self.assertEqual(
+            summary, {"provided": 3, "active": 1, "closed": 1, "not_started": 1}
+        )
+
     def test_dashboard_orders_open_houses_by_latest_status_change(self):
         with server.connect_db() as db:
             with db:

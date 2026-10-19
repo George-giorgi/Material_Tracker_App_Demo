@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
-    <title>BRUSNA Material Tracker — Demo</title>
+    <title>BRUSNA Material Tracker</title>
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
@@ -52,18 +52,22 @@
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
           <button class="button button-primary" id="new-movement-top"><span>＋</span> Record movement</button>
         </header>
-        <div id="demo-banner" class="demo-banner hidden" role="status"><strong>DEMO DATA — NOT REAL STOCK</strong><span>Warehouse quantities are sample numbers. Count the physical stock before using these figures to plan or record materials.</span></div>
 
         <section class="page active" id="page-overview" data-page="overview">
           <div class="page-heading">
             <div><div class="eyebrow">YOUR MATERIALS, AT A GLANCE</div><h1>Overview</h1><p class="page-subtitle">A clear picture of warehouse stock and where materials are going.</p></div>
             <span class="date-chip" id="today-label"></span>
           </div>
-          <div class="stat-grid">
-            <article class="stat-card"><div class="stat-icon green">▤</div><div class="stat-label">Material types</div><div class="stat-value" id="stat-materials">—</div><div class="stat-caption">being tracked</div></article>
-            <article class="stat-card"><div class="stat-icon orange">⌂</div><div class="stat-label">Active houses</div><div class="stat-value" id="stat-houses">—</div><div class="stat-caption">with movement history</div></article>
-            <article class="stat-card"><div class="stat-icon blue">↔</div><div class="stat-label">Recent movements</div><div class="stat-value" id="stat-movements">—</div><div class="stat-caption">in the latest activity</div></article>
-            <article class="stat-card"><div class="stat-icon red">!</div><div class="stat-label">Reconcile balances</div><div class="stat-value" id="stat-counts">—</div><div class="stat-caption">unknown or negative balances</div></article>
+          <div class="kpi-row">
+            <button type="button" class="kpi seai" data-house-view="" title="View all houses"><span class="kpi-label">From SEAI</span><span class="kpi-value" id="stat-provided">—</span></button>
+            <button type="button" class="kpi active" data-house-view="active" title="View active houses"><span class="kpi-label">Active houses</span><span class="kpi-value" id="stat-houses">—</span></button>
+            <button type="button" class="kpi closed" data-house-view="closed" title="View closed houses"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="stat-closed">—</span></button>
+            <button type="button" class="kpi pending" data-house-view="not_started" title="View SEAI houses not started yet"><span class="kpi-label">Not started</span><span class="kpi-value" id="stat-not-started">—</span></button>
+          </div>
+          <div class="kpi-strip">
+            <span><b id="stat-materials">—</b> material types tracked</span>
+            <span><b id="stat-movements">—</b> recent movements</span>
+            <span class="kpi-warn"><b id="stat-counts">—</b> balances to reconcile</span>
           </div>
 
           <div class="overview-grid">
@@ -110,7 +114,7 @@
               <div><h2 id="houses-list-heading">Houses</h2></div>
               <div class="heading-actions">
                 <label class="search-box house-search-box"><span>⌕</span><input id="house-search" type="search" placeholder="Search houses" aria-label="Search houses"></label>
-                <button class="button button-primary" id="open-house">＋ Add house</button>
+                <button class="button button-primary" id="open-house">＋ Active house</button>
               </div>
             </div>
             <div id="houses-list" class="house-grid"></div>
@@ -197,6 +201,7 @@
           <label class="field" id="primary-owner-field">House owner<input name="owner_name" id="movement-owner" maxlength="160" placeholder="Optional"></label>
           <label class="field" id="primary-employee-field">Assigned employee<input name="employee_name" id="movement-employee" maxlength="160" placeholder="Employee responsible for this house"></label>
           <div class="house-live-stock full" id="house-live-stock"><strong>Select a house to see its current on-site materials.</strong><div id="house-live-stock-list"></div></div>
+          <div class="house-request full hidden" id="house-request"></div>
           <div class="field full">
             <span>Choose materials and quantities</span>
             <div class="material-search-row">
@@ -243,14 +248,16 @@
 
     <dialog id="house-dialog" class="dialog">
       <form id="house-form" method="dialog">
-        <div class="dialog-heading"><div><div class="eyebrow">SITE DIRECTORY</div><h2>Add house</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-heading"><div><div class="eyebrow">SITE DIRECTORY</div><h2>Active house</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
         <div class="form-grid">
+          <div class="field full seai-search"><label for="seai-search">Search SEAI provided houses<input id="seai-search" type="search" autocomplete="off" placeholder="House ID, owner, address or postcode"></label><div class="seai-results hidden" id="seai-results"></div></div>
           <label class="field full">House ID<input name="id" maxlength="120" required placeholder="e.g. WH123456"></label>
+          <div class="seai-info full hidden" id="seai-info"></div>
           <label class="field">Postcode / Eircode<input name="postcode" maxlength="80" placeholder="Optional"></label>
           <label class="field">House owner<input name="owner_name" maxlength="160" placeholder="Optional"></label>
           <label class="field full">Assigned employee<input name="employee_name" maxlength="160" placeholder="Employee responsible for this house"></label>
         </div>
-        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save house</button></div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save &amp; open calculator</button></div>
       </form>
     </dialog>
 
