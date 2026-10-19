@@ -1162,6 +1162,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             user = self._login_required()
             if user is None:
                 return
+            if not self._admin_required(user):
+                return
             raw_house_id = path[len("/api/houses/"):]
             if not raw_house_id or "/" in raw_house_id:
                 self._send_json(404, {"error": "House was not found."})

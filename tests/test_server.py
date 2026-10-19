@@ -443,22 +443,21 @@ class TrackerTests(unittest.TestCase):
                 {"username": "employee1", "pin": "345678"},
             )
             self.assertEqual(status, 200)
-            status, employee_history, _ = self.http_request(
+            status, result, _ = self.http_request(
                 httpd,
                 "GET",
                 "/api/houses/H-DEST",
                 cookie=employee_cookie,
             )
-            self.assertEqual(status, 200)
-            self.assertEqual(len(employee_history["movements"]), 1)
+            self.assertEqual(status, 403)
+            self.assertIn("administrator", result["error"].lower())
             status, result, _ = self.http_request(
                 httpd,
                 "GET",
                 "/api/houses/UNKNOWN",
                 cookie=employee_cookie,
             )
-            self.assertEqual(status, 404)
-            self.assertIn("not found", result["error"].lower())
+            self.assertEqual(status, 403)
         finally:
             httpd.shutdown()
             httpd.server_close()

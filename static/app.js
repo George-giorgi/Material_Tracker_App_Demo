@@ -625,8 +625,8 @@ function renderHouses() {
           ${held.length ? held.map((item) => `<div class="balance-row"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("") : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
         <div class="house-card-actions">
-          <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
           ${canManageHouses ? `
+            <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
             ${house.is_finished && held.some((item) => Math.abs(item.qty) > 1e-9) ? `<button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-action="closeout">Close out remaining stock</button>` : ""}
             <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button>` : ""}
         </div>
