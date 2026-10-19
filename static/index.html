@@ -37,6 +37,7 @@
           <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span>Houses &amp; teams</button>
           <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
         </nav>
+        <img class="sidebar-cat" src="/tommy.jpeg" alt="Tommy the cat">
         <div class="sidebar-bottom">
           <div class="local-badge"><span class="status-dot"></span><span><strong>Shared workspace</strong><small>Data stays on the tracker host</small></span></div>
           <p>First step toward clearer stock, delivery and usage records.</p>
@@ -98,13 +99,32 @@
 
         <section class="page" id="page-houses" data-page="houses">
           <div id="houses-overview">
-            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div><div class="heading-actions"><label class="search-box"><span>⌕</span><input id="house-search" type="search" placeholder="Search houses" aria-label="Search houses"></label><button class="button button-primary" id="open-house">＋ Add house</button></div></div>
+            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div></div>
+            <div class="houses-teams-tabs" id="houses-teams-tabs" role="tablist" aria-label="Houses and teams views">
+              <button class="houses-teams-tab active" id="houses-tab" type="button" role="tab" aria-selected="true" aria-controls="houses-section" tabindex="0">Houses</button>
+              <button class="houses-teams-tab" id="teams-tab" type="button" role="tab" aria-selected="false" aria-controls="teams-section" tabindex="-1">Teams</button>
+            </div>
+            <section id="houses-section" role="tabpanel" aria-labelledby="houses-tab">
+            <div id="house-team-filter" class="house-team-filter hidden"><button class="text-button back-button" id="clear-house-team-filter" type="button">← Back to houses &amp; teams</button><span id="house-team-filter-label"></span></div>
+            <div class="page-heading houses-list-toolbar">
+              <div><h2 id="houses-list-heading">Houses</h2></div>
+              <div class="heading-actions">
+                <label class="search-box house-search-box"><span>⌕</span><input id="house-search" type="search" placeholder="Search houses" aria-label="Search houses"></label>
+                <button class="button button-primary" id="open-house">＋ Add house</button>
+              </div>
+            </div>
             <div id="houses-list" class="house-grid"></div>
             <div class="empty-state card hidden" id="houses-no-results"><strong>No matching houses</strong><p>Try another house ID, owner, employee or postcode.</p></div>
             <div class="empty-state card hidden" id="houses-empty"><div class="empty-symbol">⌂</div><strong>No houses recorded yet</strong><p>Houses will appear here when materials are delivered or returned.</p><button class="button button-primary" data-goto="movements">Record a movement</button></div>
+            </section>
+            <section id="teams-section" class="hidden" role="tabpanel" aria-labelledby="teams-tab">
+              <div class="teams-heading"><h2>Teams</h2><label class="search-box team-search-box"><span>⌕</span><input id="team-search" type="search" placeholder="Search teams" aria-label="Search teams"></label></div>
+              <div id="teams-list" class="house-grid"></div>
+              <div class="empty-state card hidden" id="teams-no-results"><strong>No matching teams</strong><p>Try another team name.</p></div>
+            </section>
           </div>
           <section id="house-detail" class="hidden" aria-labelledby="house-detail-title">
-            <button class="text-button house-back" id="back-to-houses" type="button">← Back to houses &amp; teams</button>
+            <button class="text-button back-button house-back" id="back-to-houses" type="button">← Back to houses &amp; teams</button>
             <div class="page-heading house-detail-heading"><div><div class="eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div><h1 id="house-detail-title"></h1><p class="page-subtitle" id="house-detail-subtitle"></p></div></div>
             <div id="house-detail-facts" class="house-detail-facts"></div>
             <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">

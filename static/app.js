@@ -9,6 +9,8 @@ const state = {
   viewingHouseId: "",
   houseDetailRequest: 0,
   houseChecklistRequest: 0,
+  houseTeamFilter: null,
+  housesTeamsTab: "houses",
   presentation: null,
   user: null,
   setupRequired: false,
@@ -105,7 +107,18 @@ const presentationSteps = [
     actionLabel: "Show the house card",
   },
   {
-    title: "8. Find the complete house history",
+    title: "8. Explore houses, teams, and checklists",
+    narration:
+      "The Houses and teams view brings house status, checklist progress, and team activity together. Houses can be searched by their details, and team cards show the houses associated with each crew.",
+    instruction:
+      "Open Houses & teams. Search for the demonstration house or its owner, review the checklist on its card, and try the team's open or closed house count to filter the list. Checklist editing is available to administrators.",
+    example:
+      "Search by house ID, owner, employee, postcode, or team name. Open/closed team counts are based on recorded movements.",
+    action: "houses",
+    actionLabel: "Show houses & teams",
+  },
+  {
+    title: "9. Find the complete house history",
     narration:
       "Search the movement ledger by the demonstration house ID to review its pickups, return, transfer, responsible person, and team.",
     instruction:
@@ -117,7 +130,7 @@ const presentationSteps = [
   {
     title: "Demo complete",
     narration:
-      "This walkthrough showed house setup, accountable pickups, extra deliveries, returns, site-to-site transfers, live balances, and house completion.",
+      "This walkthrough showed house setup, accountable pickups, extra deliveries, returns, site-to-site transfers, live balances, house completion, and how to find house and team information.",
     instruction:
       "All example data is fictional and remains in the separate demo app. The production tracker and its database were not used.",
     example:
@@ -457,11 +470,22 @@ function openPresentationAction() {
   }
   if (action === "finish-house") {
     setTab("houses");
+    state.housesTeamsTab = "houses";
+    renderHouses();
     $(`.house-finish-toggle[data-house-id="${houseId}"]`)?.scrollIntoView({
       behavior: "smooth",
       block: "center",
     });
     minimizePresentation();
+    return;
+  }
+  if (action === "houses") {
+    setTab("houses");
+    state.housesTeamsTab = "houses";
+    $("#house-search").value = houseId;
+    $("#team-search").value = "";
+    state.houseTeamFilter = null;
+    renderHouses();
     return;
   }
   if (action === "history") {
@@ -612,7 +636,25 @@ function renderHouses() {
   const data = state.dashboard;
   const canManageHouses = state.user?.role === "admin";
   const query = $("#house-search").value.trim().toLocaleLowerCase();
+  const teamFilter = state.houseTeamFilter;
+  const filteredHouseIds = teamFilter
+    ? data.team_house_counts?.[teamFilter.location]?.[
+        teamFilter.status === "closed" ? "closed_house_ids" : "open_house_ids"
+      ] || []
+    : null;
+  const houseTeams = new Map();
+  Object.entries(data.team_house_counts || {}).forEach(([location, counts]) => {
+    [...(counts.open_house_ids || []), ...(counts.closed_house_ids || [])].forEach(
+      (houseId) => {
+        const names = houseTeams.get(houseId) || [];
+        names.push(formatLocation(location));
+        houseTeams.set(houseId, names);
+      },
+    );
+  });
   const matchingHouses = data.house_list.filter((house) =>
+    (!filteredHouseIds || filteredHouseIds.includes(house.id)) &&
+    (!teamFilter || Boolean(house.is_finished) === (teamFilter.status === "closed")) &&
     [house.id, house.owner_name, house.employee_name, house.postcode]
       .filter(Boolean)
       .join(" ")
@@ -668,9 +710,10 @@ function renderHouses() {
         : [];
     });
     const hasNegative = held.some((item) => item.qty < 0);
+    const assignedTeams = houseTeams.get(house.id) || [];
     return `
       <article class="card house-card ${house.is_finished ? "house-finished" : "house-active"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p></div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Finished" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? held.map((item) => `<div class="balance-row"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("") : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
@@ -692,29 +735,90 @@ function renderHouses() {
       data.locations.filter((location) => location.startsWith("team:")),
     ),
   ];
-  const teamCards = teams.map((location) => {
+  const teamQuery = $("#team-search").value.trim().toLocaleLowerCase();
+  const matchingTeams = teams.filter((location) =>
+    formatLocation(location).toLocaleLowerCase().includes(teamQuery),
+  );
+  const teamCards = matchingTeams.map((location) => {
     const name = formatLocation(location);
-    const held = data.materials.flatMap((material) => {
-      const quantity = material.balances[location] || 0;
-      return Math.abs(quantity) > 1e-9
-        ? [{ name: material.name, qty: quantity, unit: material.unit }]
-        : [];
-    });
-    const hasNegative = held.some((item) => item.qty < 0);
+    const countsAvailable = Boolean(data.team_house_counts);
+    const houseCounts = data.team_house_counts?.[location] || {
+      open: countsAvailable ? 0 : null,
+      closed: countsAvailable ? 0 : null,
+      open_house_ids: [],
+      closed_house_ids: [],
+    };
     return `
       <article class="team-card">
-        <div class="house-top"><span class="house-avatar">♧</span><div class="house-meta"><h2>${escapeHtml(name)}</h2><p>Materials collected and currently held by this team</p></div>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
-        <div>${held.length ? held.map((item) => `<span class="team-badge ${item.qty < 0 ? "negative-badge" : ""}">${escapeHtml(item.name)} · ${escapeHtml(formatQuantity(item.qty, item.unit))}</span>`).join(" ") : `<span class="team-badge">No positive balance recorded</span>`}</div>
+        <div class="house-top"><span class="house-avatar">♧</span><div class="house-meta"><h2>${escapeHtml(name)}</h2></div></div>
+        <div class="team-house-counts">
+          <button class="team-house-count team-house-count-open" type="button" data-team-location="${escapeHtml(location)}" data-house-status="open" ${!countsAvailable || !houseCounts.open ? "disabled" : ""} aria-label="Show ${houseCounts.open ?? "unknown"} open houses for ${escapeHtml(name)}">
+            <strong>${houseCounts.open ?? "—"}</strong><span>Open houses</span>
+          </button>
+          <button class="team-house-count team-house-count-closed" type="button" data-team-location="${escapeHtml(location)}" data-house-status="closed" ${!countsAvailable || !houseCounts.closed ? "disabled" : ""} aria-label="Show ${houseCounts.closed ?? "unknown"} closed houses for ${escapeHtml(name)}">
+            <strong>${houseCounts.closed ?? "—"}</strong><span>Closed houses</span>
+          </button>
+        </div>
       </article>`;
   });
-  $("#houses-list").innerHTML = [...houseCards, ...teamCards].join("");
+  $("#houses-section").classList.toggle(
+    "hidden",
+    state.housesTeamsTab !== "houses",
+  );
+  $("#teams-section").classList.toggle(
+    "hidden",
+    state.housesTeamsTab !== "teams",
+  );
+  $("#houses-tab").classList.toggle(
+    "active",
+    state.housesTeamsTab === "houses",
+  );
+  $("#houses-tab").setAttribute(
+    "aria-selected",
+    String(state.housesTeamsTab === "houses"),
+  );
+  $("#houses-tab").tabIndex = state.housesTeamsTab === "houses" ? 0 : -1;
+  $("#teams-tab").classList.toggle(
+    "active",
+    state.housesTeamsTab === "teams",
+  );
+  $("#teams-tab").setAttribute(
+    "aria-selected",
+    String(state.housesTeamsTab === "teams"),
+  );
+  $("#teams-tab").tabIndex = state.housesTeamsTab === "teams" ? 0 : -1;
+  $("#teams-list").innerHTML = teamCards.join("");
+  $("#teams-list").classList.toggle(
+    "team-grid-scrollable",
+    matchingTeams.length > 6,
+  );
+  $("#teams-no-results").classList.toggle(
+    "hidden",
+    !teamQuery || matchingTeams.length > 0,
+  );
+  $("#houses-list").innerHTML = houseCards.join("");
+  $("#houses-list").classList.toggle(
+    "house-grid-scrollable",
+    matchingHouses.length > 6,
+  );
+  $("#houses-list-heading").textContent = teamFilter
+    ? teamFilter.status === "closed"
+      ? "Closed houses"
+      : "Open houses"
+    : "Houses";
+  $("#house-team-filter").classList.toggle("hidden", !teamFilter);
+  if (teamFilter) {
+    const teamName = formatLocation(teamFilter.location);
+    $("#house-team-filter-label").textContent =
+      `Showing ${teamFilter.status === "closed" ? "closed" : "active"} houses for ${teamName}`;
+  }
   $("#houses-empty").classList.toggle(
     "hidden",
     data.house_list.length > 0 || teams.length > 0,
   );
   $("#houses-no-results").classList.toggle(
     "hidden",
-    !query || matchingHouses.length > 0,
+    (!query && !teamFilter) || matchingHouses.length > 0,
   );
 }
 
@@ -1674,6 +1778,24 @@ function bindEvents() {
   $("#material-form").addEventListener("submit", submitMaterial);
   $("#house-form").addEventListener("submit", submitHouse);
   $("#houses-list").addEventListener("click", toggleHouseFinished);
+  $("#teams-list").addEventListener("click", (event) => {
+    const button = event.target.closest(".team-house-count");
+    if (!button || button.disabled) return;
+    const selection = {
+      location: button.dataset.teamLocation,
+      status: button.dataset.houseStatus,
+    };
+    state.houseTeamFilter =
+      state.houseTeamFilter?.location === selection.location &&
+      state.houseTeamFilter?.status === selection.status
+        ? null
+        : selection;
+    state.housesTeamsTab = "houses";
+    $("#house-search").value = "";
+    $("#houses-list").scrollTop = 0;
+    renderHouses();
+    $("#houses-list").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   $("#houses-list").addEventListener("click", (event) => {
     const button = event.target.closest(".house-checklist-open");
     if (button) openHouseChecklist(button.dataset.houseId);
@@ -1683,6 +1805,33 @@ function bindEvents() {
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
   $("#house-search").addEventListener("input", renderHouses);
+  $("#team-search").addEventListener("input", renderHouses);
+  $("#clear-house-team-filter").addEventListener("click", () => {
+    state.houseTeamFilter = null;
+    state.housesTeamsTab = "houses";
+    renderHouses();
+  });
+  $("#houses-tab").addEventListener("click", () => {
+    state.housesTeamsTab = "houses";
+    renderHouses();
+  });
+  $("#teams-tab").addEventListener("click", () => {
+    state.housesTeamsTab = "teams";
+    state.houseTeamFilter = null;
+    renderHouses();
+  });
+  $("#houses-teams-tabs").addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextTab =
+      event.key === "Home" || event.key === "ArrowLeft"
+        ? "houses"
+        : "teams";
+    state.housesTeamsTab = nextTab;
+    if (nextTab === "teams") state.houseTeamFilter = null;
+    renderHouses();
+    $(`#${nextTab}-tab`).focus();
+  });
   $("#movement-search").addEventListener("input", searchMovementHistory);
   $("#workbook-file").addEventListener("change", (event) => {
     $("#file-name").textContent =

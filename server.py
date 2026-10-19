@@ -70,7 +70,8 @@ def initialize_db():
                 postcode TEXT NOT NULL DEFAULT '',
                 owner_name TEXT NOT NULL DEFAULT '',
                 employee_name TEXT NOT NULL DEFAULT '',
-                is_finished INTEGER NOT NULL DEFAULT 0
+                is_finished INTEGER NOT NULL DEFAULT 0,
+                status_changed_at REAL NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS house_checklists (
                 house_id TEXT PRIMARY KEY REFERENCES houses(id) ON DELETE CASCADE,
@@ -143,6 +144,10 @@ def initialize_db():
         if "is_finished" not in house_columns:
             db.execute(
                 "ALTER TABLE houses ADD COLUMN is_finished INTEGER NOT NULL DEFAULT 0"
+            )
+        if "status_changed_at" not in house_columns:
+            db.execute(
+                "ALTER TABLE houses ADD COLUMN status_changed_at REAL NOT NULL DEFAULT 0"
             )
         movement_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(movements)")
@@ -496,7 +501,8 @@ def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
     house_id = str(house_id).strip()
     db.execute(
         """
-        INSERT INTO houses(id, postcode, owner_name, employee_name) VALUES (?, ?, ?, ?)
+        INSERT INTO houses(id, postcode, owner_name, employee_name, status_changed_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             postcode = CASE WHEN excluded.postcode = '' THEN houses.postcode ELSE excluded.postcode END,
             owner_name = CASE WHEN excluded.owner_name = '' THEN houses.owner_name ELSE excluded.owner_name END,
@@ -507,6 +513,7 @@ def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
             str(postcode or "").strip(),
             str(owner_name or "").strip(),
             str(employee_name or "").strip(),
+            datetime.now().timestamp(),
         ),
     )
     return house_id
@@ -837,6 +844,34 @@ def _dashboard(db):
     active_house_count = db.execute(
         "SELECT COUNT(*) FROM houses WHERE is_finished = 0"
     ).fetchone()[0]
+    team_house_counts = {}
+    for row in db.execute(
+        """
+        SELECT DISTINCT m.team, m.department, h.id, h.is_finished, h.status_changed_at
+        FROM movements m
+        JOIN houses h
+          ON h.id = m.house_id
+          OR m.source = 'house:' || h.id
+          OR m.destination = 'house:' || h.id
+        WHERE m.team != ''
+        ORDER BY h.status_changed_at DESC, h.id COLLATE NOCASE
+        """
+    ):
+        counts = team_house_counts.setdefault(
+            team_location(row["team"], row["department"]),
+            {"open_house_ids": [], "closed_house_ids": []},
+        )
+        house_ids = (
+            counts["closed_house_ids"]
+            if row["is_finished"]
+            else counts["open_house_ids"]
+        )
+        house_ids.append(row["id"])
+    for counts in team_house_counts.values():
+        counts["open_house_ids"].sort(key=str.casefold)
+        counts["closed_house_ids"].sort(key=str.casefold)
+        counts["open"] = len(counts["open_house_ids"])
+        counts["closed"] = len(counts["closed_house_ids"])
     return {
         "materials": materials,
         "demo_mode": (
@@ -855,6 +890,7 @@ def _dashboard(db):
             },
             key=str.casefold,
         ),
+        "team_house_counts": team_house_counts,
         "house_list": [
             {
                 **dict(row),
@@ -863,10 +899,11 @@ def _dashboard(db):
             for row in db.execute(
                 """
                 SELECT h.id, h.postcode, h.owner_name, h.employee_name, h.is_finished,
+                       h.status_changed_at,
                        c.scaffolding_status, c.esb_unclipped, c.plumber_status
                 FROM houses h
                 LEFT JOIN house_checklists c ON c.house_id = h.id
-                ORDER BY h.id COLLATE NOCASE
+                ORDER BY h.status_changed_at DESC, h.id COLLATE NOCASE
                 """
             )
         ],
@@ -1153,6 +1190,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
         elif path == "/brusna-logo.jpg":
             self._send_file(STATIC_DIR / "brusna-logo.jpg", "image/jpeg")
+        elif path == "/tommy.jpeg":
+            self._send_file(ROOT / "tommy.jpeg", "image/jpeg")
         elif path == "/api/auth/status":
             user = self._current_user()
             with connect_db() as db:
@@ -1631,8 +1670,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 )
                                 closeout_count += 1
                         cursor = db.execute(
-                            "UPDATE houses SET is_finished = ? WHERE id = ?",
-                            (int(payload["finished"]), house_id),
+                            """
+                            UPDATE houses
+                            SET is_finished = ?, status_changed_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                int(payload["finished"]),
+                                datetime.now().timestamp(),
+                                house_id,
+                            ),
                         )
                 self._send_json(
                     200,

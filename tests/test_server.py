@@ -52,6 +52,24 @@ class TrackerTests(unittest.TestCase):
         thread.start()
         return httpd, thread
 
+    def test_tommy_photo_is_served_for_sidebar(self):
+        httpd, thread = self.start_test_server()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", httpd.server_address[1], timeout=5
+        )
+        try:
+            connection.request("GET", "/tommy.jpeg")
+            response = connection.getresponse()
+            photo = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "image/jpeg")
+            self.assertTrue(photo)
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def http_request(self, httpd, method, path, payload=None, cookie=""):
         connection = http.client.HTTPConnection(
             "127.0.0.1", httpd.server_address[1], timeout=5
@@ -613,6 +631,72 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_dashboard_counts_each_team_house_once_by_house_status(self):
+        material_id = self.add_material(opening=100)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "H-OPEN")
+                server._upsert_house(db, "H-CLOSED")
+                server._upsert_house(db, "H-UNASSIGNED")
+                db.execute(
+                    "UPDATE houses SET is_finished = 1 WHERE id = ?",
+                    ("H-CLOSED",),
+                )
+
+        for house_id in ("H-OPEN", "H-OPEN", "H-CLOSED"):
+            self.add_movement(
+                material_id,
+                "pickup",
+                1,
+                house_id=house_id,
+                person="Worker",
+                team="Crew A",
+                department="Electrical",
+            )
+        self.add_movement(
+            material_id,
+            "pickup",
+            1,
+            house_id="H-OPEN",
+            person="Worker",
+            team="Crew B",
+        )
+        self.add_movement(
+            material_id,
+            "transfer",
+            1,
+            source_kind="house",
+            source_reference="H-OPEN",
+            destination_kind="house",
+            destination_reference="H-UNASSIGNED",
+            person="Worker",
+            team="Crew B",
+        )
+
+        with server.connect_db() as db:
+            dashboard = server._dashboard(db)
+
+        self.assertEqual(
+            dashboard["team_house_counts"][
+                server.team_location("Crew A", "Electrical")
+            ],
+            {
+                "open": 1,
+                "closed": 1,
+                "open_house_ids": ["H-OPEN"],
+                "closed_house_ids": ["H-CLOSED"],
+            },
+        )
+        self.assertEqual(
+            dashboard["team_house_counts"][server.team_location("Crew B")],
+            {
+                "open": 2,
+                "closed": 0,
+                "open_house_ids": ["H-OPEN", "H-UNASSIGNED"],
+                "closed_house_ids": [],
+            },
+        )
+
     def test_finishing_house_records_remaining_stock_as_used(self):
         material_id = self.add_material(name="Board", opening=20)
         with server.connect_db() as db:
@@ -1060,6 +1144,23 @@ class TrackerTests(unittest.TestCase):
             dashboard = server._dashboard(db)
         self.assertEqual(dashboard["houses"], 1)
         self.assertEqual(len(dashboard["house_list"]), 2)
+
+    def test_dashboard_orders_open_houses_by_latest_status_change(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "H-OLDER")
+                server._upsert_house(db, "H-NEWER")
+                db.execute(
+                    "UPDATE houses SET status_changed_at = 100 WHERE id = 'H-OLDER'"
+                )
+                db.execute(
+                    "UPDATE houses SET status_changed_at = 200 WHERE id = 'H-NEWER'"
+                )
+            house_ids = [
+                house["id"] for house in server._dashboard(db)["house_list"]
+            ]
+
+        self.assertEqual(house_ids[:2], ["H-NEWER", "H-OLDER"])
 
     def test_extra_warehouse_pickups_must_be_marked_and_numbered(self):
         material_id = self.add_material(name="Board", opening=20)

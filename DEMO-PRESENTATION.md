@@ -85,7 +85,22 @@ click **Resume presentation** afterward.
 work is complete, we mark the house finished. It stops counting as active,
 but its remaining stock and movement history stay available.”
 
-### 8. Search the house history
+### 8. Explore houses, teams, and checklists
+
+**Action:** In the guide choose **Next** → **Show houses & teams**. Search for
+`DEMO-SHOW-301`, review its checklist and assigned team on the house card, then
+try the team's open/closed house count to filter the houses.
+
+**Say:** “Houses & teams gives us a quick view of active and closed jobs, their
+checklist progress, and the teams connected through recorded movements. We can
+search houses by ID, owner, employee, or postcode, or find a team by name.
+Selecting a team's open or closed count shows the matching houses.
+Administrators can update the checklist, while employees can view it.”
+
+**Note:** Team house counts are based on recorded movements. Creating a house
+without recording a movement does not assign it to a team.
+
+### 9. Search the house history
 
 **Action:** In the guide choose **Next** → **Show house movement history**.
 
@@ -93,7 +108,7 @@ but its remaining stock and movement history stay available.”
 delivery, return, and site transfer together, including their dates and
 responsibility details.”
 
-### 9. Close
+### 10. Close
 
 **Show:** The demo warning and the completed house movement history.
 
