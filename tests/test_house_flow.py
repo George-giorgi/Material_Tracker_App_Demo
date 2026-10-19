@@ -722,6 +722,24 @@ class FrontEndLogicTests(unittest.TestCase):
             [("Board 100mm", 150), ("Corner Outside white", 6)],
         )
 
+    def test_aliases_and_polluted_manual_names_resolve_to_tracker_materials(self):
+        script = (
+            'state.dashboard.materials.push({id:5,name:"45 deg connector white"},'
+            '{id:6,name:"Downpipe brackets long brown"},{id:7,name:"Fisher fixing"});'
+            'console.log(JSON.stringify(["45° connector White","Downpipe bracket long Brown",'
+            '"Fisher fixing104 in stock"].map(n=>{const m=findTrackerMaterial(cleanMaterialName(n));return m?m.id:null})))'
+        )
+        self.assertEqual(self.run_js(script), [5, 6, 7])
+
+    def test_calculator_nkey_aliases(self):
+        html = (ROOT / "Auto_calc.html").read_text(encoding="utf-8")
+        line = next(l for l in html.splitlines() if l.startswith("const nkey="))
+        out = subprocess.run(
+            ["node", "-e", line + 'console.log(JSON.stringify([nkey("45° connector White"),nkey("Downpipe bracket short Black")]))'],
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(json.loads(out.stdout), ["45 deg connector white", "downpipe brackets short black"])
+
     def test_request_entries_handles_requests_saved_before_automatic_items_existed(self):
         result = self.run_js(
             'console.log(JSON.stringify(requestEntries({data:{manual:[{material:"Mesh",qty:"2",unit:"rolls"}]}})))'

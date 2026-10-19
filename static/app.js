@@ -2243,7 +2243,13 @@ function renderHouseSuggestions() {
 const requestCache = {};
 const formatNumber = (value) => String(Math.round(Number(value) * 1000) / 1000);
 const materialKey = (name) =>
-  String(name || "").toLowerCase().replace(/aluminium/g, "aluminum").replace(/\s+/g, " ").trim();
+  String(name || "")
+    .toLowerCase()
+    .replace(/aluminium/g, "aluminum")
+    .replace(/45\s*°\s*connector/g, "45 deg connector")
+    .replace(/downpipe bracket (long|short)/g, "downpipe brackets $1")
+    .replace(/\s+/g, " ")
+    .trim();
 
 function findTrackerMaterial(name) {
   let key = materialKey(name);
@@ -2251,6 +2257,10 @@ function findTrackerMaterial(name) {
   if (caping) key = `caping ${caping[1]} 100mm`;
   return state.dashboard.materials.find((m) => materialKey(m.name) === key);
 }
+
+// Older saved requests picked up the calculator's stock tag text in the material name.
+const cleanMaterialName = (name) =>
+  String(name || "").replace(/\s*(\d+(\.\d+)?\s+in stock.*|not tracked|count needed)$/i, "").trim();
 
 function requestEntries(request) {
   const data = request.data || {};
@@ -2260,9 +2270,9 @@ function requestEntries(request) {
   );
   (data.manual || []).forEach((item) =>
     entries.push({
-      label: item.material,
+      label: cleanMaterialName(item.material),
       detail: `${item.qty} ${item.unit || ""}`.trim(),
-      material: item.material,
+      material: cleanMaterialName(item.material),
       qty: parseFloat(item.qty),
     }),
   );

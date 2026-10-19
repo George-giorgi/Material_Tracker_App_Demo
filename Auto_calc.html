@@ -875,7 +875,7 @@ function opens(id){
 }
 function corner(ls){let p=0,left=[];for(let x of ls.filter(Boolean).sort((a,b)=>b-a)){if(x>2.5){p+=up(x/2.5);continue}let i=left.findIndex(v=>v>=x);if(i>=0)left.splice(i,1);else{p++;left.push(2.5-x)}}return p}
 let STOCK=null;
-const nkey=x=>String(x||"").toLowerCase().replace(/aluminium/g,"aluminum").replace(/\s+/g," ").trim();
+const nkey=x=>String(x||"").toLowerCase().replace(/aluminium/g,"aluminum").replace(/45\s*°\s*connector/g,"45 deg connector").replace(/downpipe bracket (long|short)/g,"downpipe brackets $1").replace(/\s+/g," ").trim();
 function stockFor(name){return STOCK&&name!=null?STOCK[nkey(name)]:undefined}
 function stockTag(name,need){
   if(!STOCK)return "";
@@ -1035,7 +1035,7 @@ async function saveToHouse(){
   const pairs=sel=>[...document.querySelectorAll(sel)].map(r=>({w:+r.querySelector(".w").value||0,h:+r.querySelector(".h").value||0})).filter(x=>x.w&&x.h);
   const lens=sel=>vals(sel).filter(Boolean);
   const auto=[...document.querySelectorAll("#out table tr")].slice(1).map(tr=>[...tr.children].map(c=>c.textContent));
-  const manualItems=[...document.querySelectorAll("#manual .manual")].map(r=>({material:(r.querySelector(".mv")||r.querySelector("label")).value||r.querySelector("label").textContent.trim(),qty:r.querySelector(".mq").value.trim(),unit:r.querySelector(".mu").value,note:r.querySelector(".mn").value.trim()})).filter(x=>x.qty);
+  const manualItems=[...document.querySelectorAll("#manual .manual")].map(r=>({material:(r.querySelector(".mv")||{}).value||r.dataset.fam,qty:r.querySelector(".mq").value.trim(),unit:r.querySelector(".mu").value,note:r.querySelector(".mn").value.trim()})).filter(x=>x.qty);
   const data={job:g("job"),address:g("address"),wall_m2:+g("wall")||0,perimeter_m:+g("per")||0,plinth_m:+g("plinth")||0,board60:g("b60"),colour:g("colour"),texture:document.getElementById("texture").selectedOptions[0].text,windows:pairs("#windows .row"),doors:pairs("#doors .row"),house_corners:lens("#hc .cl"),opening_corners:lens("#oc .cl"),automatic:auto,items:(window.lastRows||[]).map(x=>({label:x[0],required:x[1],material:x[2],qty:x[3]})),manual:manualItems};
   const btn=document.getElementById("saveToHouse");btn.disabled=true;st.textContent="Assigning…";
   try{
