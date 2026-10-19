@@ -26,7 +26,7 @@ button { cursor: pointer; }
 .brand-logo { display: block; width: 100%; height: auto; border-radius: 7px; }
 .workspace-label { margin: 0 0 12px 4px; color: #a2b0c2; font-size: 10px; font-weight: 700; letter-spacing: .14em; }
 .main-nav { display: grid; gap: 5px; }
-.nav-item { display: flex; align-items: center; gap: 13px; width: 100%; border: 0; border-radius: 8px; padding: 12px 13px; background: transparent; color: #c0d2c9; text-align: left; font-size: 13px; transition: .15s ease; }
+.nav-item { display: flex; align-items: center; gap: 13px; width: 100%; border: 0; border-radius: 8px; padding: 13px 15px; background: transparent; color: #c0d2c9; text-align: left; font-size: 13px; transition: .15s ease; }
 .nav-item:hover { background: #22354d; color: #fff; }
 .nav-item.active { background: #20354c; color: #fff; font-weight: 600; box-shadow: inset 3px 0 var(--green-2); }
 .nav-icon { width: 17px; color: var(--green-2); font-size: 19px; text-align: center; }
@@ -39,7 +39,8 @@ button { cursor: pointer; }
 .sidebar-bottom > p { margin: 12px 4px 0; color: #b2bfce; font-size: 10px; line-height: 1.6; }
 
 .main-content { min-height: 100vh; margin-left: 244px; padding: 0 38px 42px; }
-.topbar { display: flex; height: 75px; align-items: center; border-bottom: 1px solid var(--line); }
+.topbar { display: flex; height: 75px; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+.topbar .button { padding-right: 16px; padding-left: 16px; }
 .topbar-spacer { flex: 1; }
 .mobile-brand { display: none; }
 .page { display: none; padding-top: 34px; }
@@ -276,7 +277,8 @@ td:first-child { color: #263b32; font-weight: 600; }
   .nav-item.active { box-shadow: inset 0 -2px #a6d6bb; }
   .nav-icon { font-size: 17px; line-height: 1; }
   .main-content { min-height: calc(100vh - 61px); margin: 0; padding: 0 14px 78px; }
-  .topbar { height: 58px; }
+  .topbar { height: 58px; gap: 4px; }
+  .topbar .button { padding-right: 9px; padding-left: 9px; }
   .mobile-brand { display: block; width: 80px; flex: 0 0 auto; }
   .mobile-brand .brand-logo { width: 100%; }
   #start-presentation { display: none; }
