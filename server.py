@@ -653,7 +653,7 @@ def _record_movement(
             )
         )
 
-    if not person or not team:
+    if not person or (not team and kind != "use"):
         raise ApiError(400, "Record the responsible person and team for every movement.")
     _valid_reference(db, source)
     _valid_reference(db, destination)
@@ -761,6 +761,7 @@ def _movement_rows(db, limit=100, query=""):
         FROM movements m
         JOIN materials p ON p.id = m.material_id
         LEFT JOIN houses h ON h.id = m.house_id
+        WHERE m.kind != 'use'
     """
     if query:
         searchable = (
@@ -768,13 +769,29 @@ def _movement_rows(db, limit=100, query=""):
             "m.house_id", "h.owner_name", "h.employee_name", "h.postcode",
             "m.person", "m.team", "m.department", "m.notes",
         )
-        sql += " WHERE " + " OR ".join(
+        sql += " AND (" + " OR ".join(
             "instr(lower(COALESCE({}, '')), lower(?)) > 0".format(column)
             for column in searchable
-        )
+        ) + ")"
         sql += " ORDER BY m.id DESC"
         return db.execute(sql, (query,) * len(searchable)).fetchall()
     return db.execute(sql + " ORDER BY m.id DESC LIMIT ?", (limit,)).fetchall()
+
+
+def _house_movement_rows(db, house_id):
+    location = f"house:{house_id}"
+    return db.execute(
+        """
+        SELECT m.*, p.name AS material, h.owner_name AS house_owner,
+            h.employee_name AS house_employee, h.postcode AS house_postcode
+        FROM movements m
+        JOIN materials p ON p.id = m.material_id
+        LEFT JOIN houses h ON h.id = m.house_id
+        WHERE m.house_id = ? OR m.source = ? OR m.destination = ?
+        ORDER BY m.happened_on DESC, m.id DESC
+        """,
+        (house_id, location, location),
+    ).fetchall()
 
 
 def _dashboard(db):
@@ -1141,6 +1158,37 @@ class RequestHandler(BaseHTTPRequestHandler):
                     200,
                     {"movements": [_movement_json(row) for row in _movement_rows(db, 500, query)]},
                 )
+        elif path.startswith("/api/houses/"):
+            user = self._login_required()
+            if user is None:
+                return
+            raw_house_id = path[len("/api/houses/"):]
+            if not raw_house_id or "/" in raw_house_id:
+                self._send_json(404, {"error": "House was not found."})
+                return
+            house_id = unquote(raw_house_id).strip()
+            if not house_id:
+                self._send_json(404, {"error": "House was not found."})
+                return
+            with connect_db() as db:
+                house = db.execute(
+                    """
+                    SELECT id, postcode, owner_name, employee_name, is_finished
+                    FROM houses WHERE id = ?
+                    """,
+                    (house_id,),
+                ).fetchone()
+                if house is None:
+                    self._send_json(404, {"error": "House was not found."})
+                    return
+                movements = _house_movement_rows(db, house_id)
+                self._send_json(
+                    200,
+                    {
+                        "house": dict(house),
+                        "movements": [_movement_json(row) for row in movements],
+                    },
+                )
         elif path == "/api/users":
             user = self._login_required()
             if user is None:
@@ -1432,15 +1480,66 @@ class RequestHandler(BaseHTTPRequestHandler):
                 house_id = str(payload.get("id") or "").strip()
                 if not house_id:
                     raise ApiError(400, "House ID is required.")
+                closeout_count = 0
                 with connect_db() as db:
                     with db:
+                        house = db.execute(
+                            "SELECT id, employee_name FROM houses WHERE id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        if house is None:
+                            raise ApiError(404, "House was not found.")
+                        if payload["finished"]:
+                            material_rows = db.execute(
+                                "SELECT id, name FROM materials ORDER BY name COLLATE NOCASE"
+                            ).fetchall()
+                            house_location = f"house:{house_id}"
+                            balances = [
+                                (material, balances_for(db, material["id"]).get(house_location, 0))
+                                for material in material_rows
+                            ]
+                            negative = [
+                                (material["name"], balance)
+                                for material, balance in balances
+                                if balance < -1e-9
+                            ]
+                            if negative:
+                                detail = ", ".join(
+                                    f"{name}: {balance:g}" for name, balance in negative
+                                )
+                                raise ApiError(
+                                    409,
+                                    f"Cannot finish this house while material balances are negative. Reconcile first: {detail}.",
+                                )
+                            for material, balance in balances:
+                                if balance <= 1e-9:
+                                    continue
+                                _record_movement(
+                                    db,
+                                    {
+                                        "kind": "use",
+                                        "date": date.today().isoformat(),
+                                        "material_id": material["id"],
+                                        "qty": balance,
+                                        "house_id": house_id,
+                                        "person": user["display_name"],
+                                        "team": "",
+                                        "notes": "Automatically recorded from remaining house stock when the house was marked finished.",
+                                    },
+                                )
+                                closeout_count += 1
                         cursor = db.execute(
                             "UPDATE houses SET is_finished = ? WHERE id = ?",
                             (int(payload["finished"]), house_id),
                         )
-                        if not cursor.rowcount:
-                            raise ApiError(404, "House was not found.")
-                self._send_json(200, {"id": house_id, "finished": payload["finished"]})
+                self._send_json(
+                    200,
+                    {
+                        "id": house_id,
+                        "finished": payload["finished"],
+                        "materials_closed_out": closeout_count,
+                    },
+                )
             elif path == "/api/import":
                 content_type = self.headers.get("Content-Type", "")
                 if not content_type.startswith("multipart/form-data;"):

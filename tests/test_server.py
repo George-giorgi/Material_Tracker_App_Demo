@@ -251,6 +251,424 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_house_history_includes_transfers_for_both_house_endpoints(self):
+        material_id = self.add_material(name="Board", opening=10)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "H-SOURCE", "D01", "Owner One", "Worker One")
+                server._upsert_house(db, "H-DEST", "D02", "Owner Two", "Worker Two")
+                server._record_movement(
+                    db,
+                    {
+                        "kind": "pickup",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 4,
+                        "house_id": "H-SOURCE",
+                        "person": "Worker One",
+                        "team": "Site Crew",
+                        "notes": "Initial delivery",
+                    },
+                )
+                server._record_movement(
+                    db,
+                    {
+                        "kind": "delivery",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 1,
+                        "house_id": "H-SOURCE",
+                        "person": "Worker One",
+                        "team": "Site Crew",
+                        "notes": "Additional delivery",
+                    },
+                )
+                server._record_movement(
+                    db,
+                    {
+                        "kind": "transfer",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 2,
+                        "source_kind": "house",
+                        "source_reference": "H-SOURCE",
+                        "destination_kind": "house",
+                        "destination_reference": "H-DEST",
+                        "person": "Worker One",
+                        "team": "Site Crew",
+                        "notes": "Moved to second site",
+                    },
+                )
+                server._record_movement(
+                    db,
+                    {
+                        "kind": "return",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 1,
+                        "house_id": "H-SOURCE",
+                        "person": "Worker One",
+                        "team": "Site Crew",
+                        "notes": "Unused board returned",
+                    },
+                )
+                server._record_movement(
+                    db,
+                    {
+                        "kind": "use",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 1,
+                        "house_id": "H-SOURCE",
+                        "person": "Worker One",
+                        "team": "Site Crew",
+                        "notes": "Installed on site",
+                    },
+                )
+                db.execute(
+                    "UPDATE houses SET is_finished = 1 WHERE id = ?",
+                    ("H-SOURCE",),
+                )
+
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, _ = self.http_request(
+                httpd, "GET", "/api/houses/H-DEST"
+            )
+            self.assertEqual(status, 401)
+
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, source_history, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/H-SOURCE",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(source_history["house"]["owner_name"], "Owner One")
+            self.assertTrue(source_history["house"]["is_finished"])
+            self.assertEqual(len(source_history["movements"]), 5)
+            self.assertEqual(
+                {movement["kind"] for movement in source_history["movements"]},
+                {"pickup", "delivery", "transfer", "return", "use"},
+            )
+            status, global_history, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/movements",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertNotIn(
+                "use",
+                {movement["kind"] for movement in global_history["movements"]},
+            )
+            self.assertNotIn(
+                "Installed on site",
+                {movement["notes"] for movement in global_history["movements"]},
+            )
+            status, search_result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/movements?q=Installed%20on%20site",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(search_result["movements"], [])
+            status, dashboard, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/dashboard",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertNotIn(
+                "use",
+                {movement["kind"] for movement in dashboard["movements"]},
+            )
+            self.assertEqual(
+                source_history["movements"][0]["notes"],
+                "Installed on site",
+            )
+            used = [
+                movement
+                for movement in source_history["movements"]
+                if movement["kind"] == "use"
+            ]
+            self.assertEqual(len(used), 1)
+            self.assertEqual(used[0]["material"], "Board")
+            self.assertEqual(used[0]["qty"], 1)
+
+            status, destination_history, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/H-DEST",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(destination_history["house"]["employee_name"], "Worker Two")
+            self.assertEqual(len(destination_history["movements"]), 1)
+            self.assertEqual(
+                destination_history["movements"][0]["destination"],
+                "house:H-DEST",
+            )
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "employee1",
+                    "display_name": "Tracker Employee",
+                    "pin": "345678",
+                    "pin_confirm": "345678",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "employee1", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, employee_history, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/H-DEST",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(len(employee_history["movements"]), 1)
+            status, result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/UNKNOWN",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 404)
+            self.assertIn("not found", result["error"].lower())
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_finishing_house_records_remaining_stock_as_used(self):
+        material_id = self.add_material(name="Board", opening=20)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "H-FINISH", "D01", "Owner", "Worker")
+                server._upsert_house(db, "H-SOURCE", "D02", "Other Owner", "Other Worker")
+                movements = [
+                    {
+                        "kind": "pickup",
+                        "house_id": "H-FINISH",
+                        "qty": 6,
+                        "person": "Worker",
+                        "team": "Crew A",
+                    },
+                    {
+                        "kind": "use",
+                        "house_id": "H-FINISH",
+                        "qty": 1,
+                        "person": "Worker",
+                        "team": "Crew A",
+                    },
+                    {
+                        "kind": "return",
+                        "house_id": "H-FINISH",
+                        "qty": 1,
+                        "person": "Worker",
+                        "team": "Crew A",
+                    },
+                    {
+                        "kind": "pickup",
+                        "house_id": "H-SOURCE",
+                        "qty": 4,
+                        "person": "Other Worker",
+                        "team": "Crew B",
+                    },
+                    {
+                        "kind": "transfer",
+                        "source_kind": "house",
+                        "source_reference": "H-SOURCE",
+                        "destination_kind": "house",
+                        "destination_reference": "H-FINISH",
+                        "person": "Worker",
+                        "team": "Crew A",
+                        "qty": 2,
+                    },
+                    {
+                        "kind": "transfer",
+                        "source_kind": "house",
+                        "source_reference": "H-FINISH",
+                        "destination_kind": "house",
+                        "destination_reference": "H-SOURCE",
+                        "person": "Worker",
+                        "team": "Crew A",
+                        "qty": 1,
+                    },
+                ]
+                for movement in movements:
+                    server._record_movement(
+                        db,
+                        {
+                            "date": date.today().isoformat(),
+                            "material_id": material_id,
+                            **movement,
+                        },
+                    )
+                self.assertEqual(
+                    server.balances_for(db, material_id)["house:H-FINISH"],
+                    5,
+                )
+
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/houses/status",
+                {"id": "H-FINISH", "finished": True},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["materials_closed_out"], 1)
+
+            with server.connect_db() as db:
+                self.assertAlmostEqual(
+                    server.balances_for(db, material_id)["house:H-FINISH"],
+                    0,
+                )
+                usage = db.execute(
+                    """
+                    SELECT SUM(qty) AS total, COUNT(*) AS count
+                    FROM movements
+                    WHERE kind = 'use' AND house_id = ?
+                    """,
+                    ("H-FINISH",),
+                ).fetchone()
+                self.assertEqual(usage["count"], 2)
+                self.assertAlmostEqual(usage["total"], 6)
+                closeout = db.execute(
+                    """
+                    SELECT person, team, notes FROM movements
+                    WHERE kind = 'use' AND house_id = ?
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    ("H-FINISH",),
+                ).fetchone()
+                self.assertEqual(closeout["person"], "Tracker Admin")
+                self.assertEqual(closeout["team"], "")
+                self.assertIn("automatically recorded", closeout["notes"].lower())
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/houses/status",
+                {"id": "H-FINISH", "finished": True},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["materials_closed_out"], 0)
+            with server.connect_db() as db:
+                self.assertEqual(
+                    db.execute(
+                        "SELECT COUNT(*) FROM movements "
+                        "WHERE kind = 'use' AND house_id = ?",
+                        ("H-FINISH",),
+                    ).fetchone()[0],
+                    2,
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_finishing_house_requires_negative_balances_to_be_reconciled(self):
+        material_id = self.add_material(name="Board", opening=10)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "H-NEGATIVE")
+                server._record_movement(
+                    db,
+                    {
+                        "kind": "transfer",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 1,
+                        "source_kind": "house",
+                        "source_reference": "H-NEGATIVE",
+                        "destination_kind": "team",
+                        "destination_reference": "Crew A",
+                        "person": "Worker",
+                        "team": "Crew A",
+                    },
+                    check_balance=False,
+                )
+
+        httpd, thread = self.start_test_server()
+        try:
+            _, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/houses/status",
+                {"id": "H-NEGATIVE", "finished": True},
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+            self.assertIn("negative", result["error"].lower())
+            with server.connect_db() as db:
+                house = db.execute(
+                    "SELECT is_finished FROM houses WHERE id = ?",
+                    ("H-NEGATIVE",),
+                ).fetchone()
+                self.assertEqual(house["is_finished"], 0)
+                self.assertEqual(
+                    db.execute(
+                        "SELECT COUNT(*) FROM movements "
+                        "WHERE kind = 'use' AND house_id = ?",
+                        ("H-NEGATIVE",),
+                    ).fetchone()[0],
+                    0,
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def test_employee_cannot_change_stock_or_house_stage(self):
         material_id = self.add_material(opening=10)
         with server.connect_db() as db:

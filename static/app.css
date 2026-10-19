@@ -97,6 +97,7 @@ td:first-child { color: #263b32; font-weight: 600; }
 .status-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 20px; padding: 4px 7px; background: #edf5ef; color: #4d8263; font-size: 9px; }
 .status-pill.warning { background: #fff4e7; color: #a56d2d; }
 .status-pill.extra-delivery { background: #fff0cf; color: #96520c; font-weight: 700; }
+.status-pill.house-transfer { background: #e7eaff; color: #394da8; font-weight: 700; }
 .status-pill::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
 .activity-list { padding: 0 18px 8px; }
 .activity-item { display: grid; grid-template-columns: 29px 1fr auto; align-items: start; gap: 9px; border-top: 1px solid #f0f2f0; padding: 12px 0; }
@@ -154,6 +155,11 @@ td:first-child { color: #263b32; font-weight: 600; }
 .dialog { width: min(620px, calc(100% - 28px)); max-height: calc(100% - 32px); overflow-y: auto; border: 1px solid #dfe7e1; border-radius: 13px; padding: 0; background: #fff; color: var(--ink); box-shadow: 0 18px 70px #1a312433; }
 .dialog::backdrop { background: #10251dcc; backdrop-filter: blur(2px); }
 .dialog form { padding: 23px 25px 19px; }
+#movement-form .form-grid { gap: 16px 14px; }
+#movement-form .field { gap: 8px; font-size: 11px; }
+#movement-form .field input, #movement-form .field select, #movement-form .field textarea,
+#movement-form .material-search-row > .autocomplete-wrap > input { min-height: 40px; padding: 9px 10px; font-size: 12px; }
+#movement-form .field small { font-size: 10px; }
 .dialog-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 19px; }
 .dialog-heading .eyebrow { margin-bottom: 5px; }
 .dialog-heading h2 { margin: 0; font-size: 20px; }
@@ -191,7 +197,16 @@ td:first-child { color: #263b32; font-weight: 600; }
 .status-pill.finished { background: #e9edf3; color: #44556d; }
 .house-finished { border-color: #d8dee8; }
 .house-finished .house-stock { opacity: .8; }
-.house-card-actions { display: flex; justify-content: flex-end; border-top: 1px solid #f0f2f0; padding: 8px 14px; }
+.house-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #f0f2f0; padding: 8px 14px; }
+.house-open { color: #3d6950; }
+.house-back { margin-bottom: 18px; }
+.house-detail-heading { margin-bottom: 20px; }
+.house-detail-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.house-detail-fact { min-width: 0; padding: 14px 16px; }
+.house-detail-fact strong { overflow-wrap: anywhere; color: #344b3e; font-size: 12px; }
+.house-detail-stock-card, .house-history-card { margin-bottom: 14px; }
+.house-detail-stock { padding: 0 18px 12px; }
+.house-detail-stock .empty-state { padding: 10px; }
 .house-finish-toggle { color: var(--green); }
 .selected-materials-heading { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; color: #68786e; font-size: 9px; }
 .selected-materials-heading strong { color: #3e5d4b; }
@@ -268,6 +283,7 @@ td:first-child { color: #263b32; font-weight: 600; }
   .local-badge > span:last-child, .sidebar-bottom > p { display: none; }
   .main-content { margin-left: 68px; padding-right: 18px; padding-left: 18px; }
   .overview-grid { grid-template-columns: 1fr; }
+  .house-detail-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
   .sidebar { inset: auto 0 0; width: 100%; height: 61px; flex-direction: row; justify-content: center; padding: 6px 10px; }
@@ -277,6 +293,7 @@ td:first-child { color: #263b32; font-weight: 600; }
   .nav-item.active { box-shadow: inset 0 -2px #a6d6bb; }
   .nav-icon { font-size: 17px; line-height: 1; }
   .main-content { min-height: calc(100vh - 61px); margin: 0; padding: 0 14px 78px; }
+  .house-card-actions { align-items: flex-start; flex-direction: column; }
   .topbar { height: 58px; gap: 4px; }
   .topbar .button { padding-right: 9px; padding-left: 9px; }
   .mobile-brand { display: block; width: 80px; flex: 0 0 auto; }

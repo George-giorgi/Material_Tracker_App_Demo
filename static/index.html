@@ -97,9 +97,29 @@
         </section>
 
         <section class="page" id="page-houses" data-page="houses">
-          <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Add houses, search saved owner and employee details, and see materials on site.</p></div><button class="button button-primary" id="open-house">＋ Add house</button></div>
-          <div id="houses-list" class="house-grid"></div>
-          <div class="empty-state card hidden" id="houses-empty"><div class="empty-symbol">⌂</div><strong>No houses recorded yet</strong><p>Houses will appear here when materials are delivered or returned.</p><button class="button button-primary" data-goto="movements">Record a movement</button></div>
+          <div id="houses-overview">
+            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Add houses, search saved owner and employee details, and see materials on site.</p></div><button class="button button-primary" id="open-house">＋ Add house</button></div>
+            <div id="houses-list" class="house-grid"></div>
+            <div class="empty-state card hidden" id="houses-empty"><div class="empty-symbol">⌂</div><strong>No houses recorded yet</strong><p>Houses will appear here when materials are delivered or returned.</p><button class="button button-primary" data-goto="movements">Record a movement</button></div>
+          </div>
+          <section id="house-detail" class="hidden" aria-labelledby="house-detail-title">
+            <button class="text-button house-back" id="back-to-houses" type="button">← Back to houses &amp; teams</button>
+            <div class="page-heading house-detail-heading"><div><div class="eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div><h1 id="house-detail-title"></h1><p class="page-subtitle" id="house-detail-subtitle"></p></div></div>
+            <div id="house-detail-facts" class="house-detail-facts"></div>
+            <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">
+              <div class="card-heading"><div><h2>Materials used on this finished house</h2><p>Recorded usage plus the remaining on-site quantities automatically closed out when the house was finished.</p></div></div>
+              <div id="house-detail-usage" class="house-detail-stock"></div>
+            </article>
+            <article class="card house-detail-stock-card">
+              <div class="card-heading"><div><h2>Materials currently on site</h2><p>Balances reflect all recorded movements and stock counts.</p></div></div>
+              <div id="house-detail-stock" class="house-detail-stock"></div>
+            </article>
+            <article class="card house-history-card">
+              <div class="card-heading"><div><h2>Complete movement history</h2><p>Includes records where this house was either the source or destination.</p></div></div>
+              <div class="table-wrap"><table><thead><tr><th>Date</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>Responsible</th><th>Notes</th></tr></thead><tbody id="house-movement-history"></tbody></table></div>
+              <div id="house-history-empty" class="empty-state hidden"><div class="empty-symbol">↔</div><strong>No movements recorded yet</strong><p>This house's delivery, return, use, and transfer history will appear here.</p></div>
+            </article>
+          </section>
         </section>
 
         <section class="page" id="page-movements" data-page="movements">
@@ -117,10 +137,10 @@
       <form id="movement-form" method="dialog">
         <div class="dialog-heading"><div><div class="eyebrow">NEW LEDGER ENTRY</div><h2>Record movement</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
         <div class="form-grid">
-          <label class="field full">Movement type<select id="movement-kind" name="kind" required><option value="pickup">Picked up from warehouse</option><option value="return">Returned to warehouse</option><option value="transfer">Moved to another site</option></select><small>Choose a house for a warehouse pickup or return. For a site transfer, choose where materials are coming from and going to.</small></label>
+          <label class="field full">Movement type<select id="movement-kind" name="kind" required><option value="pickup">Picked up from warehouse</option><option value="return">Returned to warehouse</option><option value="transfer">Moved to another site</option></select><small>For a site transfer, choose the source and destination. House-to-house transfers are highlighted in movement history.</small></label>
           <label class="field">Date<input name="date" id="movement-date" type="date" required></label>
           <label class="field">Department<input name="department" maxlength="120" placeholder="Optional"></label>
-          <label class="field full" id="primary-house-search">House search<input name="house_id" id="movement-house-id" type="search" autocomplete="off" maxlength="120" placeholder="Search by house ID, owner or employee"><div class="suggestions hidden" id="house-suggestions" role="listbox" aria-label="Matching houses"></div><small id="house-hint">Required for pickup, delivery, use and return. Search matches house, owner and assigned employee.</small></label>
+          <label class="field full" id="primary-house-search">House search<input name="house_id" id="movement-house-id" type="search" autocomplete="off" maxlength="120" placeholder="Search by house ID, owner or employee"><div class="suggestions hidden" id="house-suggestions" role="listbox" aria-label="Matching houses"></div><small id="house-hint">Required for pickup and return. Search matches house, owner and assigned employee.</small></label>
           <label class="field" id="primary-postcode-field">Postcode / Eircode<input name="postcode" id="movement-postcode" maxlength="80" placeholder="Optional"></label>
           <label class="field" id="primary-owner-field">House owner<input name="owner_name" id="movement-owner" maxlength="160" placeholder="Optional"></label>
           <label class="field" id="primary-employee-field">Assigned employee<input name="employee_name" id="movement-employee" maxlength="160" placeholder="Employee responsible for this house"></label>

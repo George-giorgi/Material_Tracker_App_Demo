@@ -6,6 +6,8 @@ const state = {
   movements: [],
   batchLines: [],
   selectedHouseId: "",
+  viewingHouseId: "",
+  houseDetailRequest: 0,
   presentation: null,
   user: null,
   setupRequired: false,
@@ -13,6 +15,7 @@ const state = {
 const movementLabels = {
   collection: "Picked up from warehouse for a team",
   pickup: "Picked up from warehouse",
+  use: "Used on a house",
   delivery: "Delivered to a house",
   use: "Used on a house",
   return: "Returned to warehouse",
@@ -476,6 +479,9 @@ function movementIcon(kind) {
 }
 
 function movementDisplayLabel(item) {
+  if (isHouseToHouseTransfer(item)) {
+    return "House-to-house transfer";
+  }
   if (item.kind === "delivery") {
     return `Delivery #${item.delivery_number || 1}`;
   }
@@ -487,8 +493,23 @@ function movementDisplayLabel(item) {
   return movementLabels[item.kind] || item.kind;
 }
 
+function isHouseToHouseTransfer(item) {
+  return (
+    item.kind === "transfer" &&
+    item.source?.startsWith("house:") &&
+    item.destination?.startsWith("house:")
+  );
+}
+
 function isExtraDelivery(item) {
   return item.kind === "pickup" && item.delivery_number > 1;
+}
+
+function movementStatusClass(item) {
+  if (isHouseToHouseTransfer(item)) return "house-transfer";
+  if (isExtraDelivery(item)) return "extra-delivery";
+  if (item.kind === "return") return "warning";
+  return "";
 }
 
 function renderOverview() {
@@ -531,7 +552,7 @@ function renderOverview() {
       (item) => `
     <div class="activity-item">
       <span class="activity-icon ${escapeHtml(item.kind)}">${movementIcon(item.kind)}</span>
-      <div class="activity-copy"><strong>${escapeHtml(item.material)}</strong>${isExtraDelivery(item) ? `<span class="status-pill extra-delivery">Extra delivery #${item.delivery_number}</span>` : `<span>${escapeHtml(movementDisplayLabel(item))}</span>`}<span>${escapeHtml(item.date)}${item.department ? ` · ${escapeHtml(item.department)}` : ""}${item.team ? ` · ${escapeHtml(item.team)}` : ""}</span></div>
+      <div class="activity-copy"><strong>${escapeHtml(item.material)}</strong>${isExtraDelivery(item) ? `<span class="status-pill extra-delivery">Extra delivery #${item.delivery_number}</span>` : `<span class="${isHouseToHouseTransfer(item) ? "status-pill house-transfer" : ""}">${escapeHtml(movementDisplayLabel(item))}</span>`}<span>${escapeHtml(item.date)}${item.department ? ` · ${escapeHtml(item.department)}` : ""}${item.team ? ` · ${escapeHtml(item.team)}` : ""}</span></div>
       <span class="activity-qty">${escapeHtml(formatQuantity(item.qty))}</span>
     </div>`,
     )
@@ -603,7 +624,12 @@ function renderHouses() {
         <div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? held.map((item) => `<div class="balance-row"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("") : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
-        ${canManageHouses ? `<div class="house-card-actions"><button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button></div>` : ""}
+        <div class="house-card-actions">
+          <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
+          ${canManageHouses ? `
+            ${house.is_finished && held.some((item) => Math.abs(item.qty) > 1e-9) ? `<button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-action="closeout">Close out remaining stock</button>` : ""}
+            <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button>` : ""}
+        </div>
       </article>`;
   });
   const teams = [
@@ -633,6 +659,142 @@ function renderHouses() {
   );
 }
 
+function renderHouseDetail(result) {
+  const { house, movements } = result;
+  $("#house-detail-title").textContent = house.id;
+  $("#house-detail-subtitle").textContent =
+    [house.owner_name, house.employee_name, house.postcode]
+      .filter(Boolean)
+      .join(" · ") || "House details have not been recorded.";
+  $("#house-detail-facts").innerHTML = [
+    ["Owner", house.owner_name],
+    ["Assigned employee", house.employee_name],
+    ["Postcode / Eircode", house.postcode],
+    ["Status", house.is_finished ? "Finished" : "Active"],
+  ]
+    .map(
+      ([label, value]) => `
+        <article class="card house-detail-fact">
+          <div class="house-stock-title">${escapeHtml(label)}</div>
+          <strong>${escapeHtml(value || "Not recorded")}</strong>
+        </article>`,
+    )
+    .join("");
+
+  const used = new Map();
+  movements
+    .filter((item) => item.kind === "use")
+    .forEach((item) => {
+      const total = used.get(item.material_id) || {
+        name: item.material,
+        qty: 0,
+        unit:
+          state.dashboard.materials.find(
+            (material) => material.id === item.material_id,
+          )?.unit || "",
+      };
+      total.qty += item.qty;
+      used.set(item.material_id, total);
+    });
+  const usedMaterials = [...used.values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  $("#house-detail-usage-card").classList.toggle(
+    "hidden",
+    !house.is_finished,
+  );
+  $("#house-detail-usage").innerHTML = usedMaterials.length
+    ? usedMaterials
+        .map(
+          (item) => `
+            <div class="balance-row">
+              <span>${escapeHtml(item.name)}</span>
+              <span>${escapeHtml(formatQuantity(item.qty, item.unit))}</span>
+            </div>`,
+        )
+        .join("")
+    : `<div class="empty-state"><strong>No materials were left to close out</strong><p>No material usage or remaining stock was recorded for this house.</p></div>`;
+
+  const held = state.dashboard.materials.flatMap((material) => {
+    const quantity = material.balances[`house:${house.id}`] || 0;
+    return Math.abs(quantity) > 1e-9
+      ? [{ name: material.name, qty: quantity, unit: material.unit }]
+      : [];
+  });
+  $("#house-detail-stock").innerHTML = held.length
+    ? held
+        .map(
+          (item) => `
+            <div class="balance-row">
+              <span>${escapeHtml(item.name)}</span>
+              <span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span>
+            </div>`,
+        )
+        .join("")
+    : `<div class="empty-state"><strong>No material balance recorded</strong><p>Current material quantities for this house will appear here.</p></div>`;
+
+  $("#house-movement-history").innerHTML = movements
+    .map(
+      (item) => `
+        <tr>
+          <td>${escapeHtml(item.date)}</td>
+          <td><span class="status-pill ${movementStatusClass(item)}">${escapeHtml(movementDisplayLabel(item))}</span></td>
+          <td>${escapeHtml(item.material)}</td>
+          <td class="qty-cell">${escapeHtml(formatQuantity(item.qty))}</td>
+          <td>${escapeHtml(formatLocation(item.source))}</td>
+          <td>${escapeHtml(formatLocation(item.destination))}</td>
+          <td>${escapeHtml([item.person, item.department, item.team].filter(Boolean).join(" · ") || "—")}</td>
+          <td>${escapeHtml(item.notes || "—")}</td>
+        </tr>`,
+    )
+    .join("");
+  $("#house-history-empty").classList.toggle("hidden", movements.length > 0);
+  $(".house-history-card .table-wrap").classList.toggle(
+    "hidden",
+    movements.length === 0,
+  );
+}
+
+async function loadHouseDetail(houseId) {
+  const requestId = ++state.houseDetailRequest;
+  try {
+    const result = await request(`/api/houses/${encodeURIComponent(houseId)}`);
+    if (
+      requestId !== state.houseDetailRequest ||
+      state.viewingHouseId !== houseId
+    ) {
+      return;
+    }
+    renderHouseDetail(result);
+  } catch (error) {
+    if (requestId !== state.houseDetailRequest) return;
+    showToast(error.message, true);
+    showHousesOverview();
+  }
+}
+
+function openHouseDetail(houseId) {
+  state.viewingHouseId = houseId;
+  $("#houses-overview").classList.add("hidden");
+  $("#house-detail").classList.remove("hidden");
+  $("#house-detail-title").textContent = houseId;
+  $("#house-detail-subtitle").textContent = "Loading house record…";
+  $("#house-detail-facts").innerHTML = "";
+  $("#house-detail-stock").innerHTML = "";
+  $("#house-movement-history").innerHTML = "";
+  $("#house-detail-usage-card").classList.add("hidden");
+  $("#house-history-empty").classList.add("hidden");
+  $(".house-history-card .table-wrap").classList.remove("hidden");
+  loadHouseDetail(houseId);
+}
+
+function showHousesOverview() {
+  state.viewingHouseId = "";
+  state.houseDetailRequest += 1;
+  $("#house-detail").classList.add("hidden");
+  $("#houses-overview").classList.remove("hidden");
+}
+
 function renderMovementTable() {
   const query = $("#movement-search").value.trim().toLocaleLowerCase();
   const movements = state.movements.filter((item) =>
@@ -660,7 +822,7 @@ function renderMovementTable() {
       (item) => `
     <tr>
       <td>${escapeHtml(item.date)}</td>
-      <td><span class="status-pill ${isExtraDelivery(item) ? "extra-delivery" : item.kind === "return" ? "warning" : ""}">${escapeHtml(movementDisplayLabel(item))}</span></td>
+      <td><span class="status-pill ${movementStatusClass(item)}">${escapeHtml(movementDisplayLabel(item))}</span></td>
       <td>${escapeHtml(item.material)}</td>
       <td class="qty-cell">${escapeHtml(formatQuantity(item.qty))}</td>
       <td>${escapeHtml(formatLocation(item.source))}</td>
@@ -780,6 +942,9 @@ async function refresh(preserveMovementLines = false) {
   state.dashboard = dashboard;
   state.movements = ledger.movements;
   renderAll(preserveMovementLines);
+  if (state.viewingHouseId) {
+    await loadHouseDetail(state.viewingHouseId);
+  }
 }
 
 async function searchMovementHistory() {
@@ -999,19 +1164,27 @@ async function submitHouse(event) {
 }
 
 async function toggleHouseFinished(event) {
+  const detailButton = event.target.closest(".house-open");
+  if (detailButton) {
+    openHouseDetail(detailButton.dataset.houseId);
+    return;
+  }
   const button = event.target.closest(".house-finish-toggle");
   if (!button) return;
   const houseId = button.dataset.houseId;
-  const finished = button.dataset.finished !== "true";
+  const finished =
+    button.dataset.action === "closeout" || button.dataset.finished !== "true";
   button.disabled = true;
   try {
-    await request("/api/houses/status", {
+    const result = await request("/api/houses/status", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: houseId, finished }),
     });
     showToast(
-      finished ? `${houseId} marked finished.` : `${houseId} reopened.`,
+      finished
+        ? `${houseId} marked finished; ${result.materials_closed_out} remaining material balance(s) recorded as used.`
+        : `${houseId} reopened.`,
     );
     try {
       await refresh();
@@ -1281,6 +1454,7 @@ function bindEvents() {
     $("#material-dialog").showModal(),
   );
   $("#open-house").addEventListener("click", openHouseDialog);
+  $("#back-to-houses").addEventListener("click", showHousesOverview);
   $("#open-stocktake").addEventListener("click", () => openStocktake());
   $("#inventory-table").addEventListener("click", (event) => {
     const button = event.target.closest(".stock-edit");
