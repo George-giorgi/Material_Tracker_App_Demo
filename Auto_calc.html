@@ -605,19 +605,60 @@ body>main.calculator-main{
 .calculator-main td{border-color:#f0f2f0;color:#55635d}
 .calculator-main td:first-child{color:#263b32;font-weight:600}
 .calculator-main .manual{
-  grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 78px 84px minmax(0,1fr);
+  grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 78px 84px minmax(0,1fr) 34px;
   align-items:center;
   gap:8px;
   padding:6px 0;
   border-color:#edf0ed;
 }
 .calculator-main .manual label{margin:0;font-size:11px;color:#263b32}
+.calculator-main .manual .row-add,.calculator-main .manual .row-remove{min-height:34px;width:34px;padding:0;font-size:16px;line-height:1}
+.calculator-main .manual .row-add{color:#29977d}
+.calculator-main .manual.extra{padding-top:0;border-top:0;background:#f7faf8;border-radius:6px}
+.calculator-main .manual.extra>label{color:#9aa6a0;font-weight:400}
 .calculator-main .manual input,.calculator-main .manual select{min-height:34px}
 .calculator-main>section:last-child{
   border-color:var(--tracker-line);
   background:var(--tracker-paper);
 }
 .calculator-main .actions{gap:8px}
+/* Compact layout */
+body>header.brand-header{min-height:0;padding:10px 28px}
+.brand-header .app-title{font-size:20px}
+.brand-header .header-subtitle{display:none}
+body>main.calculator-main{min-height:0;padding:16px 28px 28px}
+.calculator-main .card{margin-bottom:10px;padding:13px 16px}
+.calculator-main .card h2{margin-bottom:9px}
+.calculator-main .muted{margin:0 0 8px;font-size:11px;line-height:1.4}
+.calculator-main .grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:9px 12px}
+.calculator-main .grid label,.calculator-main .window-group label{margin-bottom:3px}
+.house-picker{margin-bottom:10px}
+.calculator-main .window-group{padding:9px 11px;margin-bottom:6px}
+.calculator-main .manual{padding:3px 0}
+.calculator-main .manual.extra{padding:3px 0}
+.calculator-main td,.calculator-main th{padding:5px 8px}
+.calculator-main #out{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.calculator-main #out .result{margin:0;padding:8px 10px}
+.calculator-main #out .result strong{float:none;display:block;font-size:15px}
+.calculator-main #out table{grid-column:1/-1}
+.manual-card summary{cursor:pointer;list-style:none}
+.calculator-main .card h3.sub-title{margin:14px 0 6px;padding-top:12px;border-top:1px solid #edf0ed;font:700 12px Manrope,sans-serif;color:#344b3e}
+.calculator-main .card h3.sub-title:first-of-type{margin-top:0;padding-top:0;border-top:0}
+.manual-card details>:not(summary){padding-left:18px}
+.manual-card summary::-webkit-details-marker{display:none}
+.manual-card summary h2{margin:0;display:flex;align-items:center;gap:12px}
+.manual-card summary h2:before{content:"▸";width:auto;height:auto;border-radius:0;background:none;color:#29977d;font-size:14px;transition:transform .15s}
+.manual-card details[open] summary h2:before{transform:rotate(90deg)}
+.manual-card details[open] summary{margin-bottom:9px}
+.manual-count{color:var(--tracker-muted);font:400 11px "DM Sans",sans-serif}
+.action-bar{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px 16px}
+.action-bar .notes-field{flex:1 1 260px}
+.action-bar .notes-field label{margin-bottom:3px}
+.action-bar #saveStatus{flex-basis:100%;margin:0}
+.action-bar #saveStatus:empty{display:none}
+@media(min-width:1001px){.action-bar{position:sticky;bottom:0;z-index:10;box-shadow:0 -4px 14px #1a31241a}}
+@media(max-width:1000px){.calculator-main .grid,.calculator-main #out{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.calculator-main .grid{grid-template-columns:1fr}}
 .house-picker{margin-bottom:14px}
 .house-search-wrap{position:relative}
 .house-results{position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;max-height:300px;overflow-y:auto;border:1px solid #dfe7e1;border-radius:8px;background:#fff;box-shadow:0 10px 24px #1a31241c}
@@ -780,7 +821,8 @@ body>main.calculator-main{
 <div><label>Finish texture</label><select id="texture"><option value="2.9">K2 — 2.9 kg/m²</option><option value="2.5">K1.5 — 2.5 kg/m²</option><option value="3.9">K3 — 3.9 kg/m²</option><option value="2.6">R2 — 2.6 kg/m²</option><option value="3.6">R3 — 3.6 kg/m²</option></select></div>
 </div></section>
 <section class="card">
-<h2>2. Windows</h2>
+<h2>2. Windows, doors &amp; corners</h2>
+<h3 class="sub-title">Windows</h3>
 <p class="muted">For common windows, choose the quantity and enter the same width and height. You can still add individual windows with different sizes below.</p>
 <div class="window-group no-print">
   <div>
@@ -813,14 +855,12 @@ body>main.calculator-main{
 </div>
 <div id="windows"></div>
 <button class="secondary no-print" onclick="addOpen('windows','Window')">+ Add individual window</button>
-</section>
-<section class="card"><h2>3. Doors</h2><div id="doors"></div><button class="secondary no-print" onclick="addOpen('doors','Door')">+ Add door</button></section>
-<section class="card"><h2>4. Corner measurements</h2><p class="muted">Enter actual lengths. The calculator uses 2.5m pieces and reuses suitable individual leftovers.</p>
+<h3 class="sub-title">Doors</h3><div id="doors"></div><button class="secondary no-print" onclick="addOpen('doors','Door')">+ Add door</button><h3 class="sub-title">Corner measurements</h3><p class="muted">Enter actual lengths. The calculator uses 2.5m pieces and reuses suitable individual leftovers.</p>
 <div class="two"><div><h3>House corners</h3><div id="hc"></div><button class="secondary no-print" onclick="addCorner('hc')">+ Add house corner</button></div>
 <div><h3>Window / door corners</h3><div id="oc"></div><button class="secondary no-print" onclick="addCorner('oc')">+ Add opening corner</button></div></div></section>
-<section class="card"><h2>5. Automatic calculation</h2><div id="out"></div></section>
-<section class="card"><h2>6. Manual materials</h2><p class="muted">All other STOCK materials are entered by hand in Version 1.</p><div id="manual"></div></section>
-<section class="card"><h2>7. Delivery request</h2><label>Notes</label><input id="notes"><br><br><div class="actions no-print"><button onclick="calc()">Calculate</button><button class="secondary" onclick="printDelivery()">Print / Save PDF</button><button onclick="emailReq()">Create email request</button><button id="saveToHouse" class="secondary" onclick="saveToHouse()">Assigned to house</button></div><p id="saveStatus" class="muted no-print"></p></section>
+<section class="card"><h2>3. Automatic calculation</h2><div id="out"></div></section>
+<section class="card manual-card"><details id="manualDetails"><summary><h2>4. Manual materials <span id="manualCount" class="manual-count">click to expand</span></h2></summary><p class="muted">All other STOCK materials are entered by hand. Use + to add another type of the same material with its own quantity.</p><div id="manual"></div></details></section>
+<section class="card action-bar"><div class="notes-field"><label for="notes">Delivery notes</label><input id="notes" placeholder="Optional notes for the request"></div><div class="actions no-print"><button onclick="calc()">Calculate</button><button class="secondary" onclick="printDelivery()">Print / Save PDF</button><button onclick="emailReq()">Create email request</button><button id="saveToHouse" class="secondary" onclick="saveToHouse()">Assigned to house</button></div><p id="saveStatus" class="muted no-print"></p></section>
 </main>
 <script>
 const C=["White","Black","Brown"];
@@ -894,7 +934,10 @@ function refreshManualStock(){
     const name=manualName(row.dataset.fam,v?v.value:"");
     const q=+row.querySelector(".mq").value||0;
     t.innerHTML=stockTag(name,q||null)
-  })
+  });
+  const n=[...document.querySelectorAll("#manual .mq")].filter(i=>i.value.trim()).length;
+  const c=document.getElementById("manualCount");
+  if(c)c.textContent=n?n+" item"+(n>1?"s":"")+" entered":"none entered"
 }
 async function loadStock(){
   try{
@@ -955,7 +998,7 @@ function printDelivery(){
   document.querySelectorAll("#manual .manual").forEach(row=>{
     const qty=(row.querySelector(".mq").value||"").trim();
     if(!qty)return;
-    const fam=row.querySelector("label").textContent.trim();
+    const fam=row.dataset.fam;
     const v=row.querySelector(".mv");
     const label=v?v.value:fam;
     const unit=row.querySelector(".mu").value;
@@ -1048,9 +1091,19 @@ async function saveToHouse(){
 function emailReq(){calc();location.href="mailto:?subject="+encodeURIComponent("Material Request - "+(job.value||"House"))+"&body="+encodeURIComponent("Job: "+job.value+"\nAddress: "+address.value+"\n\n"+out.innerText+"\n\nNotes: "+notes.value)}
 const full=["Rockwool","Spacers","Gun foam","Caping 100mm","Caping joiner","Corner","End cap","Silicone","Downpipe","45° connector","Downpipe bracket long","Downpipe bracket short","Downpipe shoe","Screw"];
 const units=["pcs","bags","packs","rolls","buckets","m"];
-manual.innerHTML=stock.map(([name,opts])=>`<div class="manual" data-fam="${name}"><label>${name}<small class="mstock"></small></label>${opts?`<select class="mv" aria-label="${name} type">${opts.map(o=>`<option value="${full.includes(name)?name+" "+o:o}">${o}</option>`).join("")}</select>`:"<span></span>"}<input class="mq" type="number" min="0" step="any" placeholder="Qty" aria-label="${name} quantity"><select class="mu" aria-label="${name} unit">${units.map(u=>`<option>${u}</option>`).join("")}</select><input class="mn" placeholder="Notes" aria-label="${name} notes"></div>`).join("");
+manual.innerHTML=stock.map(([name,opts])=>`<div class="manual" data-fam="${name}"><label>${name}<small class="mstock"></small></label>${opts?`<select class="mv" aria-label="${name} type">${opts.map(o=>`<option value="${full.includes(name)?name+" "+o:o}">${o}</option>`).join("")}</select>`:"<span></span>"}<input class="mq" type="number" min="0" step="any" placeholder="Qty" aria-label="${name} quantity"><select class="mu" aria-label="${name} unit">${units.map(u=>`<option>${u}</option>`).join("")}</select><input class="mn" placeholder="Notes" aria-label="${name} notes">${opts?`<button type="button" class="secondary row-add" aria-label="Add another ${name} type" title="Add another type of ${name} with a different quantity">+</button>`:"<span></span>"}</div>`).join("");
 addOpen("windows","Window");addOpen("doors","Door");calc();
 manual.addEventListener("input",refreshManualStock);
+refreshManualStock();
+manual.addEventListener("click",e=>{
+  const b=e.target.closest(".row-add,.row-remove");if(!b)return;
+  const row=b.closest(".manual");
+  if(b.classList.contains("row-remove")){row.remove();return}
+  const c=row.cloneNode(true);
+  c.classList.add("extra");c.querySelector(".mq").value="";c.querySelector(".mn").value="";
+  const a=c.querySelector(".row-add");a.className="danger row-remove";a.textContent="×";a.title="Remove this line";a.setAttribute("aria-label","Remove this line");
+  row.after(c);refreshManualStock();(c.querySelector(".mv")||c.querySelector(".mq")).focus()
+});
 loadStock();
 (async function(){
   const id=new URLSearchParams(location.search).get("house");
