@@ -1,3 +1,4 @@
+import csv
 import json
 import hashlib
 import hmac
@@ -12,6 +13,7 @@ import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime
 from http.cookies import CookieError, SimpleCookie
+from io import StringIO
 from xml.etree.ElementTree import ParseError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -74,7 +76,7 @@ def initialize_db():
                 status_changed_at REAL NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS house_checklists (
-                house_id TEXT PRIMARY KEY REFERENCES houses(id) ON DELETE CASCADE,
+                house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
                 scaffolding_status TEXT,
                 esb_unclipped TEXT,
                 plumber_status TEXT
@@ -116,7 +118,7 @@ def initialize_db():
                 id INTEGER PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 display_name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+                role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'surveyor')),
                 password_salt BLOB NOT NULL,
                 password_hash BLOB NOT NULL,
                 password_iterations INTEGER NOT NULL,
@@ -141,6 +143,9 @@ def initialize_db():
         house_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(houses)")
         }
+        if "is_archived" in house_columns and sqlite3.sqlite_version_info >= (3, 35, 0):
+            db.execute("ALTER TABLE houses DROP COLUMN is_archived")
+            house_columns.remove("is_archived")
         if "is_finished" not in house_columns:
             db.execute(
                 "ALTER TABLE houses ADD COLUMN is_finished INTEGER NOT NULL DEFAULT 0"
@@ -223,6 +228,17 @@ def initialize_db():
             )
             """
         )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_surveys (
+                house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
+                data TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                updated_by TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         provided_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(provided_houses)")
         }
@@ -232,6 +248,8 @@ def initialize_db():
             ("plan_scaffolding", "TEXT"),
             ("plan_esb", "TEXT"),
             ("plan_plumber", "TEXT"),
+            ("latitude", "REAL"),
+            ("longitude", "REAL"),
         ):
             if column not in provided_columns:
                 db.execute(f"ALTER TABLE provided_houses ADD COLUMN {column} {definition}")
@@ -242,6 +260,35 @@ def initialize_db():
             SELECT id, postcode, owner_name, 'tracker' FROM houses
             """
         )
+        checklist_parent = next(
+            (
+                row["table"]
+                for row in db.execute("PRAGMA foreign_key_list(house_checklists)")
+                if row["from"] == "house_id"
+            ),
+            None,
+        )
+        if checklist_parent != "provided_houses":
+            db.execute("ALTER TABLE house_checklists RENAME TO house_checklists_old")
+            db.execute(
+                """
+                CREATE TABLE house_checklists (
+                    house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
+                    scaffolding_status TEXT,
+                    esb_unclipped TEXT,
+                    plumber_status TEXT
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists
+                    (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                SELECT house_id, scaffolding_status, esb_unclipped, plumber_status
+                FROM house_checklists_old
+                """
+            )
+            db.execute("DROP TABLE house_checklists_old")
         references_houses = any(
             row["table"] == "houses"
             for row in db.execute("PRAGMA foreign_key_list(material_requests)")
@@ -289,6 +336,50 @@ def initialize_db():
             db.execute(
                 "ALTER TABLE app_users ADD COLUMN credential_type TEXT NOT NULL DEFAULT 'password'"
             )
+    _migrate_surveyor_role()
+
+
+def _migrate_surveyor_role():
+    with connect_db() as db:
+        schema = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'app_users'"
+        ).fetchone()[0]
+        if 'surveyor' in schema:
+            return
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute("""
+                CREATE TABLE app_users_new (
+                    id INTEGER PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    display_name TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'surveyor')),
+                    password_salt BLOB NOT NULL,
+                    password_hash BLOB NOT NULL,
+                    password_iterations INTEGER NOT NULL,
+                    credential_type TEXT NOT NULL DEFAULT 'pin',
+                    is_active INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            db.execute("INSERT INTO app_users_new SELECT id, username, display_name, role, password_salt, password_hash, password_iterations, credential_type, is_active FROM app_users")
+            db.execute("""CREATE TABLE app_sessions_new (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES app_users_new(id) ON DELETE CASCADE,
+                expires_at INTEGER NOT NULL
+            )""")
+            db.execute("INSERT INTO app_sessions_new SELECT token_hash, user_id, expires_at FROM app_sessions")
+            db.execute("DROP TABLE app_sessions")
+            db.execute("DROP TABLE app_users")
+            db.execute("ALTER TABLE app_users_new RENAME TO app_users")
+            db.execute("ALTER TABLE app_sessions_new RENAME TO app_sessions")
+            db.execute("CREATE INDEX app_sessions_expiry_idx ON app_sessions(expires_at)")
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.execute("PRAGMA foreign_keys = ON")
 
 
 def _validate_user_details(username, display_name):
@@ -317,6 +408,8 @@ def _credential_digest(credential, salt, iterations=CREDENTIAL_ITERATIONS):
 
 def _insert_user(db, username, display_name, pin, role):
     username, display_name = _validate_user_details(username, display_name)
+    if not isinstance(role, str) or role not in {"admin", "employee", "surveyor"}:
+        raise ApiError(400, "Choose a valid account role.")
     pin = _validate_pin(pin)
     salt = secrets.token_bytes(16)
     password_hash = _credential_digest(pin, salt)
@@ -590,7 +683,8 @@ def _undo_auto_closeouts(db, house_id):
 def _require_ready_to_activate(db, house_id):
     """A listed SEAI house can only become active once it is marked ready for start."""
     row = db.execute(
-        "SELECT p.ready_for_start, h.id AS active_id FROM provided_houses p "
+        "SELECT p.ready_for_start, h.id AS active_id "
+        "FROM provided_houses p "
         "LEFT JOIN houses h ON h.id = p.id WHERE p.id = ?",
         (str(house_id).strip(),),
     ).fetchone()
@@ -696,10 +790,10 @@ def _record_movement(
         if not house_reference:
             raise ApiError(400, "House ID is required for this movement.")
         closed = db.execute(
-            "SELECT 1 FROM houses WHERE id = ? COLLATE NOCASE AND is_finished = 1",
+            "SELECT is_finished FROM houses WHERE id = ? COLLATE NOCASE",
             (house_reference,),
         ).fetchone()
-        if closed:
+        if closed and closed["is_finished"]:
             raise ApiError(409, f"House {house_reference} is closed. Reopen it before recording movements.")
         _require_ready_to_activate(db, house_reference)
         if not allow_house_updates:
@@ -968,15 +1062,67 @@ def _delivered_to_house(db, house_id):
     return delivered
 
 
-def _snags_by_house(db):
+def _snags_by_house(db, include_created_at=False):
     grouped = {}
     for row in db.execute(
-        "SELECT id, house_id, text, done FROM house_snags ORDER BY done, id"
+        "SELECT id, house_id, text, done, created_at FROM house_snags ORDER BY done, id"
     ):
-        grouped.setdefault(row["house_id"], []).append(
-            {"id": row["id"], "text": row["text"], "done": bool(row["done"])}
-        )
+        snag = {"id": row["id"], "text": row["text"], "done": bool(row["done"])}
+        if include_created_at:
+            snag["created_at"] = row["created_at"]
+        grouped.setdefault(row["house_id"], []).append(snag)
     return grouped
+
+
+def _validate_survey_payload(payload):
+    if not isinstance(payload, dict):
+        raise ApiError(400, "Survey data must be an object.")
+
+    def dimensions(key):
+        rows = payload.get(key)
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise ApiError(400, f"{key.capitalize()} must contain at most 100 rows.")
+        result = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ApiError(400, f"Invalid {key} measurement.")
+            try:
+                width, height = float(row.get("w")), float(row.get("h"))
+                qty = row.get("qty", 1)
+                if isinstance(qty, bool) or int(qty) != qty or not 1 <= int(qty) <= 100:
+                    raise ValueError
+                qty = int(qty)
+            except (TypeError, ValueError, OverflowError):
+                raise ApiError(400, f"Enter valid dimensions and quantity for {key}.")
+            if not math.isfinite(width) or not math.isfinite(height) or not (0 < width <= 100 and 0 < height <= 100):
+                raise ApiError(400, f"{key.capitalize()} dimensions must be between 0 and 100 metres.")
+            result.append({"w": width, "h": height, "qty": qty})
+        return result
+
+    def lengths(key):
+        rows = payload.get(key)
+        if not isinstance(rows, list) or len(rows) > 200:
+            raise ApiError(400, f"{key.capitalize()} must contain at most 200 lengths.")
+        result = []
+        for value in rows:
+            try:
+                length = float(value)
+            except (TypeError, ValueError, OverflowError):
+                raise ApiError(400, f"Enter a valid length for {key}.")
+            if not math.isfinite(length) or not (0 < length <= 100):
+                raise ApiError(400, f"{key.capitalize()} must be between 0 and 100 metres.")
+            result.append(length)
+        return result
+
+    notes = str(payload.get("notes") or "").strip()
+    if len(notes) > 2000:
+        raise ApiError(400, "Survey notes must be 2,000 characters or fewer.")
+    return {
+        "windows": dimensions("windows"),
+        "doors": dimensions("doors"),
+        "house_corners": lengths("house_corners"),
+        "notes": notes,
+    }
 
 
 def _dashboard(db):
@@ -1003,7 +1149,6 @@ def _dashboard(db):
                 "needs_stocktake": warehouse is None or bool(negative_locations),
             }
         )
-    house_count = db.execute("SELECT COUNT(*) FROM houses").fetchone()[0]
     active_house_count = db.execute(
         "SELECT COUNT(*) FROM houses WHERE is_finished = 0"
     ).fetchone()[0]
@@ -1015,6 +1160,10 @@ def _dashboard(db):
     ).fetchone()[0]
     ready_house_count = db.execute(
         "SELECT COUNT(*) FROM provided_houses p WHERE p.ready_for_start = 1 "
+        "AND NOT EXISTS (SELECT 1 FROM houses h WHERE h.id = p.id)"
+    ).fetchone()[0]
+    not_started_house_count = db.execute(
+        "SELECT COUNT(*) FROM provided_houses p WHERE p.ready_for_start = 0 "
         "AND NOT EXISTS (SELECT 1 FROM houses h WHERE h.id = p.id)"
     ).fetchone()[0]
     team_house_counts = {}
@@ -1058,7 +1207,7 @@ def _dashboard(db):
             "active": active_house_count,
             "closed": closed_house_count,
             "ready": ready_house_count,
-            "not_started": provided_house_count - house_count - ready_house_count,
+            "not_started": not_started_house_count,
         },
         "movements": [_movement_json(row) for row in _movement_rows(db, 12)],
         "teams": sorted(
@@ -1079,7 +1228,10 @@ def _dashboard(db):
             }
             for row in db.execute(
                 """
-                SELECT h.id, h.postcode, h.owner_name, h.employee_name, h.is_finished,
+                SELECT h.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
+                       COALESCE(NULLIF(p.owner_name, ''), h.owner_name) AS owner_name,
+                       h.employee_name, p.address, p.area_m2, p.perimeter_m,
+                       p.latitude, p.longitude, h.is_finished,
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
                        c.scaffolding_status, c.esb_unclipped, c.plumber_status
                 FROM houses h
@@ -1091,6 +1243,126 @@ def _dashboard(db):
         ],
         "locations": sorted(known_locations(db)),
     }
+
+
+def _import_house_locations_csv(db, contents):
+    try:
+        reader = csv.DictReader(StringIO(contents.decode("utf-8-sig")), strict=True)
+    except UnicodeDecodeError:
+        raise ApiError(400, "House-location CSV must use UTF-8 encoding.")
+    if not reader.fieldnames:
+        raise ApiError(400, "House-location CSV needs a header row.")
+    try:
+        records = list(reader)
+    except csv.Error:
+        raise ApiError(400, "House-location CSV is malformed.")
+
+    aliases = {
+        "id": {"id", "houseid", "house"},
+        "postcode": {"postcode", "eircode", "irishpostcode"},
+        "address": {"address", "propertyaddress"},
+        "owner_name": {"owner", "ownername"},
+        "area_m2": {"area", "aream2", "floorarea"},
+        "perimeter_m": {"perimeter", "perimeterm"},
+        "latitude": {"latitude", "lat"},
+        "longitude": {"longitude", "lon", "lng", "long"},
+    }
+    columns = {}
+    for raw_name in reader.fieldnames:
+        normalized = re.sub(r"[^a-z0-9]", "", str(raw_name or "").casefold())
+        for name, accepted in aliases.items():
+            if normalized in accepted:
+                if name in columns:
+                    raise ApiError(400, f"House-location CSV has duplicate {name} columns.")
+                columns[name] = raw_name
+                break
+    required = {"id", "postcode", "latitude", "longitude"}
+    if not required.issubset(columns):
+        missing = ", ".join(sorted(required - columns.keys()))
+        raise ApiError(400, f"House-location CSV is missing required columns: {missing}.")
+
+    rows = []
+    house_ids = set()
+
+    def optional_number(raw, label, row_number):
+        if raw is None or not str(raw).strip():
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ApiError(400, f"House-location CSV row {row_number} has invalid {label}.")
+        if not math.isfinite(value) or value < 0:
+            raise ApiError(400, f"House-location CSV row {row_number} has invalid {label}.")
+        return value
+
+    if len(records) > 10000:
+        raise ApiError(400, "House-location CSV cannot contain more than 10,000 rows.")
+    for row_number, record in enumerate(records, start=2):
+        house_id = str(record.get(columns["id"]) or "").strip()
+        postcode = str(record.get(columns["postcode"]) or "").strip().upper()
+        if not house_id or len(house_id) > 100:
+            raise ApiError(400, f"House-location CSV row {row_number} needs a valid house ID.")
+        if not postcode:
+            raise ApiError(400, f"House-location CSV row {row_number} needs an Eircode.")
+        if house_id.casefold() in house_ids:
+            raise ApiError(400, f"House-location CSV contains duplicate house ID {house_id}.")
+        house_ids.add(house_id.casefold())
+        try:
+            latitude = float(record.get(columns["latitude"], ""))
+            longitude = float(record.get(columns["longitude"], ""))
+        except (TypeError, ValueError):
+            raise ApiError(400, f"House-location CSV row {row_number} needs valid coordinates.")
+        if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+            raise ApiError(400, f"House-location CSV row {row_number} has invalid latitude.")
+        if not math.isfinite(longitude) or not -180 <= longitude <= 180:
+            raise ApiError(400, f"House-location CSV row {row_number} has invalid longitude.")
+        rows.append(
+            {
+                "id": house_id,
+                "postcode": postcode,
+                "address": str(record.get(columns.get("address", "")) or "").strip(),
+                "owner_name": str(record.get(columns.get("owner_name", "")) or "").strip(),
+                "area_m2": optional_number(
+                    record.get(columns.get("area_m2", "")), "area", row_number
+                ),
+                "perimeter_m": optional_number(
+                    record.get(columns.get("perimeter_m", "")), "perimeter", row_number
+                ),
+                "latitude": latitude,
+                "longitude": longitude,
+            }
+        )
+    if not rows:
+        raise ApiError(400, "House-location CSV contains no house records.")
+
+    updated = 0
+    for house in rows:
+        exists = db.execute(
+            "SELECT 1 FROM provided_houses WHERE id = ?", (house["id"],)
+        ).fetchone()
+        updated += bool(exists)
+        db.execute(
+            """
+            INSERT INTO provided_houses
+                (id, postcode, address, owner_name, area_m2, perimeter_m,
+                 latitude, longitude, source)
+            VALUES
+                (:id, :postcode, :address, :owner_name, :area_m2, :perimeter_m,
+                 :latitude, :longitude, 'government')
+            ON CONFLICT(id) DO UPDATE SET
+                postcode = excluded.postcode,
+                address = COALESCE(NULLIF(excluded.address, ''), provided_houses.address),
+                owner_name = COALESCE(NULLIF(excluded.owner_name, ''), provided_houses.owner_name),
+                area_m2 = COALESCE(excluded.area_m2, provided_houses.area_m2),
+                perimeter_m = COALESCE(excluded.perimeter_m, provided_houses.perimeter_m),
+                latitude = excluded.latitude,
+                longitude = excluded.longitude,
+                source = 'government'
+            """,
+            house,
+        )
+    total = db.execute("SELECT COUNT(*) FROM provided_houses").fetchone()[0]
+    return {"imported": len(rows) - updated, "updated": updated, "total": total}
 
 
 def _import_workbook(db, path):
@@ -1339,6 +1611,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         if user is None:
             self._send_json(401, {"error": "Sign in to continue."})
             return None
+        if user["role"] == "surveyor":
+            allowed = self.command == "GET" and self.path.split("?", 1)[0] == "/api/calculator/houses"
+            allowed = allowed or (self.command == "POST" and urlparse(self.path).path in {"/api/house-survey", "/api/auth/pin"})
+            if not allowed:
+                self._send_json(403, {"error": "Surveyor access is limited to ready-house surveys."})
+                return None
         return user
 
     def _admin_required(self, user):
@@ -1379,10 +1657,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             params = parse_qs(urlparse(self.path).query)
             query = params.get("q", [""])[0].strip()
             status_filter = params.get("status", [""])[0]
+            if user["role"] == "surveyor":
+                status_filter = "ready"
             wanted = {
                 "not_started": "h.id IS NULL AND p.ready_for_start = 0",
                 "ready": "h.id IS NULL AND p.ready_for_start = 1",
                 "pending": "h.id IS NULL",
+                "all": "1 = 1",
+                "map": "((h.id IS NOT NULL AND h.is_finished = 0) OR "
+                       "(h.id IS NULL AND p.ready_for_start = 1))",
             }.get(status_filter)
             like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             with connect_db() as db:
@@ -1390,27 +1673,41 @@ class RequestHandler(BaseHTTPRequestHandler):
                     f"""
                     SELECT p.id, p.postcode, p.address, p.owner_name,
                            COALESCE(h.employee_name, '') AS employee_name,
-                           p.area_m2, p.perimeter_m, p.notes, p.source,
+                           p.area_m2, p.perimeter_m, p.latitude, p.longitude,
+                           COALESCE(h.stage, 1) AS stage, p.notes, p.source,
                            p.plan_scaffolding, p.plan_esb, p.plan_plumber,
+                           hs.data AS survey_data, hs.notes AS survey_notes,
+                           hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
                                 WHEN h.is_finished = 1 THEN 'closed'
                                 ELSE 'active' END AS status
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
+                    LEFT JOIN house_surveys hs ON hs.house_id = p.id
                     WHERE (p.id LIKE ? ESCAPE '\\' OR p.postcode LIKE ? ESCAPE '\\'
                        OR p.owner_name LIKE ? ESCAPE '\\' OR p.address LIKE ? ESCAPE '\\')
                       AND ({wanted or "1 = 1"})
                     ORDER BY (h.is_finished = 1), p.id COLLATE NOCASE
                     LIMIT ?
                     """,
-                    (like, like, like, like, 500 if wanted else 20),
+                    (
+                        like,
+                        like,
+                        like,
+                        like,
+                        500 if status_filter in {"all", "map"} or wanted else 20,
+                    ),
                 ).fetchall()
                 snags = _snags_by_house(db)
-            self._send_json(
-                200,
-                {"houses": [{**dict(row), "snags": snags.get(row["id"], [])} for row in rows]},
-            )
+            houses = []
+            for row in rows:
+                house = dict(row)
+                raw_survey = house.pop("survey_data", None)
+                house["survey"] = json.loads(raw_survey) if raw_survey else None
+                house["snags"] = snags.get(row["id"], [])
+                houses.append(house)
+            self._send_json(200, {"houses": houses})
         elif path == "/api/calculator/requests":
             user = self._login_required()
             if user is None:
@@ -1528,19 +1825,50 @@ class RequestHandler(BaseHTTPRequestHandler):
             with connect_db() as db:
                 house = db.execute(
                     """
-                    SELECT id, postcode, owner_name, employee_name, is_finished
-                    FROM houses WHERE id = ?
+                    SELECT p.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
+                           COALESCE(NULLIF(p.owner_name, ''), h.owner_name) AS owner_name,
+                           COALESCE(h.employee_name, '') AS employee_name,
+                           p.address, p.area_m2, p.perimeter_m,
+                           COALESCE(h.is_finished, 0) AS is_finished,
+                           CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                                WHEN h.id IS NULL THEN 'not_started'
+                                WHEN h.is_finished = 1 THEN 'closed'
+                                ELSE 'active' END AS status,
+                           COALESCE(p.notes, '') AS notes,
+                           COALESCE(hs.notes, '') AS survey_notes,
+                           COALESCE(hs.updated_by, '') AS survey_updated_by,
+                           COALESCE(hs.updated_at, '') AS survey_updated_at
+                    FROM provided_houses p
+                    LEFT JOIN houses h ON h.id = p.id
+                    LEFT JOIN house_surveys hs ON hs.house_id = p.id
+                    WHERE p.id = ?
                     """,
                     (house_id,),
                 ).fetchone()
                 if house is None:
+                    house = db.execute(
+                        """
+                        SELECT id, postcode, owner_name, employee_name, NULL AS address,
+                               NULL AS area_m2, NULL AS perimeter_m, is_finished,
+                               CASE WHEN is_finished = 1 THEN 'closed' ELSE 'active' END AS status,
+                               '' AS notes, '' AS survey_notes,
+                               '' AS survey_updated_by, '' AS survey_updated_at
+                        FROM houses WHERE id = ?
+                        """,
+                        (house_id,),
+                    ).fetchone()
+                if house is None:
                     self._send_json(404, {"error": "House was not found."})
                     return
                 movements = _house_movement_rows(db, house_id)
+                house_data = dict(house)
+                house_data["snags"] = _snags_by_house(db, include_created_at=True).get(
+                    house_id, []
+                )
                 self._send_json(
                     200,
                     {
-                        "house": dict(house),
+                        "house": house_data,
                         "movements": [_movement_json(row) for row in movements],
                     },
                 )
@@ -1687,6 +2015,32 @@ class RequestHandler(BaseHTTPRequestHandler):
             user = self._login_required()
             if user is None:
                 return
+            if path == "/api/house-survey":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(403, "Surveyor access is required to record measurements.")
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Survey data must be an object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                survey = _validate_survey_payload(payload.get("survey"))
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute("""
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                        """, (house_id,)).fetchone()
+                        if not ready:
+                            raise ApiError(409, "Survey measurements can only be saved for houses ready for start.")
+                        db.execute("""
+                            INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(house_id) DO UPDATE SET data = excluded.data,
+                                notes = excluded.notes, updated_by = excluded.updated_by,
+                                updated_at = excluded.updated_at
+                        """, (house_id, json.dumps(survey, ensure_ascii=False), survey["notes"],
+                                  user["display_name"], datetime.now().isoformat(timespec="seconds")))
+                self._send_json(200, {"house_id": house_id, "saved": True, "survey": survey})
+                return
             if path not in {
                 "/api/movements",
                 "/api/movements/batch",
@@ -1704,7 +2058,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                             payload.get("username"),
                             payload.get("display_name"),
                             payload.get("pin"),
-                            "employee",
+                            payload.get("role", "employee"),
                         )
                         created = db.execute(
                             "SELECT id, username, display_name, role FROM app_users WHERE id = ?",
@@ -1974,7 +2328,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     ).fetchone():
                         raise ApiError(404, "Select a house from the provided list first.")
                     if db.execute(
-                        "SELECT 1 FROM houses WHERE id = ? AND is_finished = 1", (house_id,)
+                        "SELECT 1 FROM houses WHERE id = ? AND is_finished = 1",
+                        (house_id,),
                     ).fetchone():
                         raise ApiError(409, f"House {house_id} is closed. Reopen it before assigning materials.")
                     cursor = db.execute(
@@ -2006,6 +2361,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with connect_db() as db:
                     with db:
                         _require_ready_to_activate(db, house_id)
+                        provided_house = db.execute(
+                            "SELECT postcode, owner_name FROM provided_houses WHERE id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        if provided_house:
+                            postcode = provided_house["postcode"] or postcode
+                            owner_name = provided_house["owner_name"] or owner_name
                         _upsert_house(
                             db,
                             house_id,
@@ -2092,6 +2454,36 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "materials_restored": restored_count,
                     },
                 )
+            elif path == "/api/houses/import":
+                user = self._login_required()
+                if user is None:
+                    return
+                if not self._admin_required(user):
+                    return
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload the approved house-location CSV file.")
+                body = self._body()
+                match = re.search(r'boundary="?([^";]+)"?', content_type)
+                if not match:
+                    raise ApiError(400, "Invalid house-location file upload.")
+                boundary = match.group(1).encode("ascii")
+                file_data = None
+                for part in body.split(b"--" + boundary):
+                    if b"filename=" not in part or b"\r\n\r\n" not in part:
+                        continue
+                    headers, candidate = part.split(b"\r\n\r\n", 1)
+                    filename = re.search(rb'filename="([^"]*)"', headers)
+                    if filename and not filename.group(1).lower().endswith(b".csv"):
+                        raise ApiError(400, "House locations must be uploaded as a CSV file.")
+                    file_data = candidate.rsplit(b"\r\n", 1)[0]
+                    break
+                if not file_data:
+                    raise ApiError(400, "Choose a house-location CSV file to import.")
+                with connect_db() as db:
+                    with db:
+                        result = _import_house_locations_csv(db, file_data)
+                self._send_json(201, result)
             elif path == "/api/import":
                 content_type = self.headers.get("Content-Type", "")
                 if not content_type.startswith("multipart/form-data;"):

@@ -12,6 +12,10 @@ const state = {
   houseTeamFilter: null,
   houseStatusFilter: null,
   housesTeamsTab: "houses",
+  houseMapMode: false,
+  houseMapData: null,
+  selectedMapHouseId: "",
+  houseMapCamera: null,
   presentation: null,
   user: null,
   setupRequired: false,
@@ -27,115 +31,120 @@ const movementLabels = {
 };
 const presentationSteps = [
   {
-    title: "A clearer view of materials",
+    title: "A clear view of each job",
     narration:
-      "We will follow a fictional job from the warehouse to a house, record a later delivery, return unused material, and transfer stock to another site.",
+      "We will follow a house from the pre-start survey through activation, material movements, completion, and its retained history.",
     instruction:
-      "This isolated demo uses fictional quantities and people. Each action is saved only in the demo database on this computer.",
-    example: "Story: one team, two sites, and a traceable material ledger.",
+      "This isolated demo keeps its 50 provided-house records. House notes, snags, and movement history remain available from View details & history.",
+    example: "Not started → ready for start → active → closed",
   },
   {
-    title: "1. Add a house and its owner",
+    title: "1. Review houses ready for start",
     narration:
-      "Start by creating a site record so later movements can be assigned to the right house and responsible people.",
+      "The pre-start queue separates houses that still need preparation from houses ready for a survey. We will use an existing ready house so the 50-house pool stays intact.",
     instruction:
-      "Open the house form, review the example details, and click Save house. Then return to this guide and continue.",
-    example: "House DEMO-SHOW-301 · Owner Riley Example · Employee Jordan Demo",
-    action: "house",
-    actionLabel: "Open and prefill house form",
+      "Open the Ready for start list. Choose one house, click Enter survey measurements or Review survey, and save a short sample survey. The guide will use that house for the next scenes.",
+    example: "Keep the house ID visible; the remaining scenes follow that same job.",
+    action: "ready-houses",
+    actionLabel: "Show ready houses",
   },
   {
-    title: "2. Record the first warehouse pickup",
+    title: "2. Activate the surveyed house",
     narration:
-      "The first pickup records what the team actually takes from warehouse stock and places it directly on the selected house.",
+      "Once the survey is reviewed, the house can be activated. Its survey dimensions are then available to the automatic materials calculator.",
     instruction:
-      "Review the prefilled quantities and click Save movement. The warehouse and house balances will update together.",
-    example:
-      "House DEMO-SHOW-301 · Board 100mm · 12 units · Collected by Jordan Demo · Demo Retrofit Crew",
+      "Return to Ready for start, click + Activate house on the selected job, review the details, and save. Then return to the guide.",
+    example: "Activation moves one house from Ready for start to Active.",
+    action: "ready-houses",
+    actionLabel: "Return to the ready house",
+  },
+  {
+    title: "3. Show the active stage",
+    narration:
+      "The active card shows its current work stage alongside materials, checklist, notes, and snags.",
+    instruction:
+      "Open Active houses and set the selected job to Stage 2. The stage buttons use blue for Stage 1 and green for Stage 2.",
+    example: "Stage selection is saved on the house and can be changed as work progresses.",
+    action: "active-houses",
+    actionLabel: "Show active houses",
+  },
+  {
+    title: "4. Record a warehouse pickup",
+    narration:
+      "A pickup records material taken from the warehouse and places it on the selected house, with a person and team responsible.",
+    instruction:
+      "Review the prefilled quantities and save the movement. Warehouse and house balances update together.",
+    example: "Board 100mm · 12 units · Jordan Demo · Demo Retrofit Crew",
     action: "initial-pickup",
     actionLabel: "Open and prefill pickup",
   },
   {
-    title: "3. Mark a later delivery",
+    title: "5. Record an extra delivery",
     narration:
-      "When the team needs more material later, mark the pickup as an extra delivery. The ledger numbers it after the earlier delivery for that house.",
+      "When the team needs more material later, mark the pickup as an extra delivery. The ledger numbers it after the earlier delivery.",
     instruction:
-      "The extra-delivery box is preselected. Save this movement to see the numbered extra delivery in the activity and movement history.",
-    example: "House DEMO-SHOW-301 · Board 100mm · 4 units · Extra delivery",
+      "The extra-delivery box is preselected. Save the movement to see it numbered in the house history.",
+    example: "Board 100mm · 4 units · Extra delivery",
     action: "extra-pickup",
     actionLabel: "Open and prefill extra delivery",
   },
   {
-    title: "4. Return unused material",
+    title: "6. Return unused material",
     narration:
-      "Unused material can be returned to the warehouse instead of being left as an unexplained site balance.",
+      "Returning unused material updates both the house balance and the warehouse balance, leaving a clear audit trail.",
     instruction:
-      "Review the return details and save. The returned quantity is subtracted from the house and added back to warehouse stock.",
-    example: "Return 2 boards from DEMO-SHOW-301 · Recorded by Jordan Demo",
+      "Review the return details and save the movement.",
+    example: "Return 2 boards · Recorded by Jordan Demo",
     action: "return",
     actionLabel: "Open and prefill return",
   },
   {
-    title: "5. Transfer stock to another site",
+    title: "7. Transfer material to a team",
     narration:
-      "If material is moved between jobs, record both the source and destination. This keeps the balance attached to the place currently holding it.",
+      "When stock moves from a house to a crew, recording both locations keeps the quantity traceable.",
     instruction:
-      "The form is prefilled from DEMO-SHOW-301 to DEMO-202. Save the transfer to update both site balances.",
-    example:
-      "Transfer 5 boards · From DEMO-SHOW-301 · To DEMO-202 · Responsible team Demo Retrofit Crew",
+      "Review the prefilled transfer from the selected house to Demo Retrofit Crew, then save.",
+    example: "Transfer 5 boards · House → Demo Retrofit Crew",
     action: "transfer",
     actionLabel: "Open and prefill transfer",
   },
   {
-    title: "6. See balances update",
+    title: "8. Review live stock balances",
     narration:
-      "Inventory brings the movement history together into a live view of what remains in the warehouse, with teams, and across houses.",
+      "The inventory view reflects the pickup, extra delivery, return, and transfer.",
     instruction:
-      "Review the Board 100mm row. Its warehouse and on-site totals reflect the pickup, return, and transfer you recorded.",
-    example:
-      "Tip: open Houses & teams to compare the material held at each site.",
+      "Review the Board 100mm warehouse and on-site balance.",
+    example: "Each movement updates its source and destination.",
     action: "inventory",
     actionLabel: "Show updated inventory",
   },
   {
-    title: "7. Mark the job finished",
+    title: "9. Mark the job finished",
     narration:
-      "When work is complete, mark the house finished. Its history and remaining stock stay available, while it is no longer counted as active.",
+      "When work is complete, marking the house finished moves it from Active to Closed. Its history and remaining stock remain available.",
     instruction:
-      "The guide will minimize. On the house card, click Mark house finished, then click Resume presentation. You can reopen it if work starts again.",
-    example: "Finished houses remain visible for accountability.",
+      "Open the selected active house and click Mark house finished. Resume the guide when the status changes.",
+    example: "A closed house is no longer counted as active.",
     action: "finish-house",
-    actionLabel: "Show the house card",
+    actionLabel: "Show the active house",
   },
   {
-    title: "8. Explore houses, teams, and checklists",
+    title: "10. Find the house details and history",
     narration:
-      "The Houses and teams view brings house status, checklist progress, and team activity together. Houses can be searched by their details, and team cards show the houses associated with each crew.",
+      "House details bring together notes, snags, and the movement ledger, including dates and responsibility details.",
     instruction:
-      "Open Houses & teams. Search for the demonstration house or its owner, review the checklist on its card, and try the team's open or closed house count to filter the list. Checklist editing is available to administrators.",
-    example:
-      "Search by house ID, owner, employee, postcode, or team name. Open/closed team counts are based on recorded movements.",
-    action: "houses",
-    actionLabel: "Show houses & teams",
-  },
-  {
-    title: "9. Find the complete house history",
-    narration:
-      "Search the movement ledger by the demonstration house ID to review its pickups, return, transfer, responsible person, and team.",
-    instruction:
-      "The search is filled in for you. Review all matching movements and their delivery labels.",
-    example: "Search: DEMO-SHOW-301",
-    action: "history",
-    actionLabel: "Show house movement history",
+      "Open View details & history on the selected house and review its notes, snag list, and recorded movements.",
+    example: "House notes · Snag history · Material movement history",
+    action: "active-houses",
+    actionLabel: "Show the selected house",
   },
   {
     title: "Demo complete",
     narration:
-      "This walkthrough showed house setup, accountable pickups, extra deliveries, returns, site-to-site transfers, live balances, house completion, and how to find house and team information.",
+      "This walkthrough covered the house workflow, survey, stages, material accountability, notes, snags, and retained history.",
     instruction:
-      "All example data is fictional and remains in the separate demo app. The production tracker and its database were not used.",
-    example:
-      "For the matching spoken narration and recording order, open DEMO-PRESENTATION.md in the demo project.",
+      "The 50-house provided pool and its Not started count are preserved. Only the isolated demo database was used.",
+    example: "For the matching spoken narration and recording order, open DEMO-PRESENTATION.md.",
   },
 ];
 let toastTimer;
@@ -222,6 +231,10 @@ async function request(url, options = {}) {
 }
 
 function showAuthScreen(setupRequired) {
+  state.houseMapMode = false;
+  state.houseMapData = null;
+  state.selectedMapHouseId = "";
+  state.houseMapCamera = null;
   state.setupRequired = setupRequired;
   $(".app-shell").classList.add("hidden");
   $("#auth-screen").classList.remove("hidden");
@@ -270,13 +283,30 @@ function showWorkspace(user) {
   $("#auth-screen").classList.add("hidden");
   $(".app-shell").classList.remove("hidden");
   $("#account-name").textContent = user.display_name;
-  $("#account-details").textContent = `${user.username} · ${user.role === "admin" ? "Administrator" : "Employee"}`;
+  const roleNames = { admin: "Administrator", employee: "Employee", surveyor: "Surveyor" };
+  $("#account-details").textContent = `${user.username} - ${roleNames[user.role] || "Employee"}`;
+  const isSurveyor = user.role === "surveyor";
+  document.body.classList.toggle("surveyor-mode", isSurveyor);
+  $$(".nav-item[data-tab]").forEach((item) => item.classList.toggle("hidden", isSurveyor && item.dataset.tab !== "houses"));
+  $("#new-movement-top").classList.toggle("hidden", isSurveyor);
+  $("#start-presentation").classList.toggle("hidden", isSurveyor || user.role !== "admin");
+  $("#houses-teams-tabs").classList.toggle("hidden", isSurveyor);
+  $("#teams-section").classList.toggle("hidden", isSurveyor);
+  $("#open-house").classList.toggle("hidden", isSurveyor);
+  if (isSurveyor) {
+    $(".main-nav .nav-item[data-tab='houses']").click();
+    $("#houses-list-heading").textContent = "Houses ready for survey";
+    $(".page-subtitle", $("#page-houses")).textContent = "Review pre-start houses and record measurements for the calculator.";
+    loadSurveyorHouses();
+  }
   $("#account-manage-users").classList.toggle("hidden", user.role !== "admin");
+  $("#house-map-import-card").classList.toggle("hidden", user.role !== "admin");
   $("#open-stocktake").classList.toggle("hidden", user.role !== "admin");
   $("#open-material").classList.toggle("hidden", user.role !== "admin");
   $("#open-house").classList.toggle("hidden", user.role !== "admin");
   $("#open-import-empty").classList.toggle("hidden", user.role !== "admin");
   $("#start-presentation").classList.toggle("hidden", user.role !== "admin");
+  $("#go-overview").classList.add("hidden");
   updateMovementFields();
   if (user.role !== "admin") closePresentation();
 }
@@ -285,7 +315,7 @@ async function checkAuthentication() {
   const result = await request("/api/auth/status");
   if (result.user) {
     showWorkspace(result.user);
-    await refresh();
+    if (result.user.role !== "surveyor") await refresh();
   } else {
     showAuthScreen(result.setup_required);
   }
@@ -293,13 +323,29 @@ async function checkAuthentication() {
 
 function setTab(tab) {
   stickyHouses.clear();
-  $$(".nav-item").forEach((button) =>
-    button.classList.toggle("active", button.dataset.tab === tab),
-  );
+  $("#go-overview").classList.toggle("hidden", tab === "overview");
+  $$(".nav-item").forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
   $$(".page").forEach((page) =>
     page.classList.toggle("active", page.dataset.page === tab),
   );
   if (tab === "movements") renderMovementTable();
+}
+
+function goToHomeView(event) {
+  if (!state.user) return;
+  if (event) event.preventDefault();
+  if (state.user?.role === "surveyor") {
+    setTab("houses");
+    loadSurveyorHouses();
+    return;
+  }
+  setTab("overview");
+  showHousesOverview();
 }
 
 function nextPresentationHouseId() {
@@ -378,6 +424,22 @@ function openPresentationAction() {
   if (!state.presentation) return;
   const { houseId } = state.presentation;
   const action = presentationSteps[state.presentation.index].action;
+  if (["ready-houses", "active-houses", "closed-houses"].includes(action)) {
+    const status = action === "ready-houses"
+      ? "ready"
+      : action === "active-houses"
+        ? "active"
+        : "closed";
+    setTab("houses");
+    state.housesTeamsTab = "houses";
+    state.houseTeamFilter = null;
+    state.houseStatusFilter = status;
+    $("#team-search").value = "";
+    $("#house-search").value = houseId.startsWith("DEMO-SHOW-") ? "" : houseId;
+    renderHouses();
+    minimizePresentation();
+    return;
+  }
   if (action === "house") {
     setTab("houses");
     openHouseDialog();
@@ -424,29 +486,21 @@ function openPresentationAction() {
     $("input[name='person']", activeFields).value = "Jordan Demo";
     $("input[name='team']", activeFields).value = "Demo Retrofit Crew";
     if (kind === "transfer") {
-      const houseSelects = $$(".site-reference", activeFields);
-      const destination =
-        state.dashboard.house_list.find(
-          (house) => house.id === "DEMO-202" && house.id !== houseId,
-        ) || state.dashboard.house_list.find((house) => house.id !== houseId);
-      if (houseSelects.length !== 2 || !destination) {
-        showToast(
-          "Add another destination house in the demo before testing a transfer.",
-          true,
-        );
+      const blocks = $$(".transfer-block", activeFields);
+      if (blocks.length !== 2) {
+        showToast("The transfer form is missing a source or destination field.", true);
         $("#movement-dialog").close();
         return;
       }
-      houseSelects[0].value = houseId;
-      houseSelects[1].value = destination.id;
-      $(".transfer-block .location-kind", activeFields).value = "house";
-      $$(".location-kind", activeFields).forEach((select) =>
-        select.dispatchEvent(new Event("change")),
-      );
-      houseSelects[0].value = houseId;
-      houseSelects[1].value = destination.id;
+      const kinds = $$(".location-kind", activeFields);
+      kinds[0].value = "house";
+      kinds[1].value = "team";
+      kinds.forEach((select) => select.dispatchEvent(new Event("change")));
+      $("select[name='source_site']", activeFields).value = houseId;
+      $("input[name='destination_reference']", activeFields).value = "Demo Retrofit Crew";
+      $("input[name='destination_department']", activeFields).value = "Retrofit";
       $("#movement-form [name='notes']").value =
-        `Fictional presentation transfer to ${destination.id}.`;
+        "Fictional presentation transfer to Demo Retrofit Crew.";
     } else {
       $("#movement-house-id").value = houseId;
       updateHouseSelection();
@@ -544,7 +598,9 @@ function renderOverview() {
   const data = state.dashboard;
   const materials = data.materials;
   $("#stat-materials").textContent = materials.length;
-  const hs = data.house_summary || { provided: 0, active: data.houses, closed: 0, not_started: 0 };
+  const hs = data.house_summary || {
+    provided: 0, active: data.houses, closed: 0, not_started: 0,
+  };
   $("#stat-provided").textContent = hs.provided;
   $("#stat-houses").textContent = hs.active;
   $("#stat-closed").textContent = hs.closed;
@@ -720,16 +776,106 @@ function noteHtml(text) {
   return text ? `<div class="house-note"><div class="house-stock-title">Notes</div><p>${escapeHtml(text)}</p></div>` : "";
 }
 function findPlanHouse(houseId) {
-  return Object.values(planCache).flat().find((item) => item.id === houseId);
+  return Object.values(planCache).flat().find((item) => item.id === houseId) ||
+    state.houseMapData?.find((item) => item.id === houseId);
+}
+let surveyHouses = [];
+function surveyCountText(survey) {
+  if (!survey) return "Not surveyed";
+  const windows = (survey.windows || []).reduce((sum, row) => sum + row.qty, 0);
+  const doors = (survey.doors || []).reduce((sum, row) => sum + row.qty, 0);
+  return `Survey recorded · ${windows} ${windows === 1 ? "window" : "windows"} · ${doors} ${doors === 1 ? "door" : "doors"}`;
+}
+function surveyStatusBadge(survey) {
+  return survey ? '<span class="status-pill survey-complete">Survey recorded</span>' : "";
+}
+async function loadSurveyorHouses() {
+  const list = $("#houses-list");
+  list.innerHTML = `<p class="muted">Loading ready houses...</p>`;
+  try {
+    surveyHouses = (await request("/api/calculator/houses?status=ready")).houses;
+    renderSurveyorHouses();
+  } catch (error) {
+    list.innerHTML = `<p class="muted">Could not load houses: ${escapeHtml(error.message)}</p>`;
+  }
+}
+function renderSurveyorHouses() {
+  const query = $("#house-search").value.trim().toLocaleLowerCase();
+  const rows = surveyHouses.filter((h) => [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query));
+  $("#houses-list").innerHTML = rows.length ? rows.map((h) => `<article class="card house-card house-ready">
+    <div class="house-top"><span class="house-avatar">&#8962;</span><div class="house-meta"><h2>${escapeHtml(h.id)}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" - ") || "No details")}</p></div><div class="house-status-stack"><span class="status-pill ready">Ready for start</span>${surveyStatusBadge(h.survey)}</div></div>
+    <div class="house-body">${noteHtml(h.notes)}<div class="house-stock-title">Survey status</div><p>${escapeHtml(surveyCountText(h.survey))}${h.survey_updated_by ? ` - Updated by ${escapeHtml(h.survey_updated_by)}` : ""}</p></div>
+    <div class="house-card-actions"><button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="${h.survey ? "Review completed survey" : "Enter survey measurements"}">${h.survey ? "Review survey" : "Enter survey measurements"}</button></div>
+  </article>`).join("") : `<p class="muted">${query ? "No matching ready houses." : "No houses are ready for survey."}</p>`;
+}
+function surveyRow(list, value = {}) {
+  const isLength = list.endsWith("corners");
+  const row = document.createElement("div");
+  row.className = isLength ? "survey-row survey-length-row" : "survey-row survey-dimension-row";
+  if (isLength) {
+    row.innerHTML = `<label class="field">Length (m)<input type="number" min="0.01" max="100" step="0.01"></label><button class="icon-button survey-remove" type="button" aria-label="Remove measurement">&times;</button>`;
+    row.querySelector("input").value = value.length ?? "";
+  } else {
+    const quantity = Number(value.qty ?? 1);
+    const options = Array.from({ length: Math.max(20, quantity) }, (_, index) => `<option value="${index + 1}"${index + 1 === quantity ? " selected" : ""}>${index + 1}</option>`).join("");
+    row.innerHTML = `<label class="field">Width (m)<input type="number" min="0.01" max="100" step="0.01"></label><label class="field">Height (m)<input type="number" min="0.01" max="100" step="0.01"></label><label class="field">Quantity<select>${options}</select></label><button class="icon-button survey-remove" type="button" aria-label="Remove measurement">&times;</button>`;
+    row.querySelectorAll("input")[0].value = value.w ?? "";
+    row.querySelectorAll("input")[1].value = value.h ?? "";
+    row.querySelector("select").value = String(quantity);
+  }
+  $("#survey-" + list).append(row);
+}
+function openHouseSurvey(houseId) {
+  const house = surveyHouses.find((item) => item.id === houseId) || findPlanHouse(houseId);
+  if (!house) return;
+  const form = $("#house-survey-form");
+  form.dataset.houseId = houseId;
+  const survey = house.survey || {};
+  for (const key of ["windows", "doors", "house_corners"]) {
+    const target = $("#survey-" + key);
+    target.replaceChildren();
+    (survey[key] || []).forEach((item) => surveyRow(key, key.endsWith("corners") ? { length: item } : item));
+    if (!target.children.length) surveyRow(key);
+  }
+  form.elements.notes.value = survey.notes || "";
+  $("#house-survey-title").textContent = `${houseId} survey measurements`;
+  $("#survey-meta").textContent = house.survey_updated_by ? `Last saved by ${house.survey_updated_by}${house.survey_updated_at ? ` - ${new Date(house.survey_updated_at).toLocaleString()}` : ""}` : "Not surveyed yet";
+  $("#house-survey-dialog").showModal();
+}
+async function submitHouseSurvey(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("button[type='submit']", form);
+  const readRows = (id) => [...$("#survey-" + id).querySelectorAll(".survey-row")];
+  const dims = (id) => readRows(id).filter((row) => [...row.querySelectorAll("input")].every((input) => input.value.trim())).map((row) => ({ w: Number(row.querySelectorAll("input")[0].value), h: Number(row.querySelectorAll("input")[1].value), qty: Number(row.querySelector("select").value) }));
+  const lengths = (id) => readRows(id).map((row) => Number(row.querySelector("input").value)).filter(Boolean);
+  for (const id of ["windows", "doors"]) {
+    const partial = readRows(id).find((row) => {
+      const values = [...row.querySelectorAll("input")].map((input) => input.value.trim());
+      return values.some(Boolean) && !values.every(Boolean);
+    });
+    if (partial) { showToast("Complete all dimensions and quantity in each window or door row.", true); partial.querySelector("input").focus(); return; }
+  }
+  const survey = { windows: dims("windows"), doors: dims("doors"), house_corners: lengths("house_corners"), notes: form.elements.notes.value.trim() };
+  button.disabled = true;
+  try {
+    await request("/api/house-survey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ house_id: form.dataset.houseId, survey }) });
+    $("#house-survey-dialog").close();
+    showToast(`Survey for ${form.dataset.houseId} saved.`);
+    if (state.user.role === "surveyor") await loadSurveyorHouses();
+    else { planStale.add("ready"); await refresh(); }
+  } catch (error) { showToast(error.message, true); }
+  finally { button.disabled = false; }
 }
 async function renderNotStartedHouses(query, mode = "not_started") {
   const list = $("#houses-list");
   list.classList.remove("house-grid-scrollable");
+  const cacheKey = mode;
   const loadPlan = async () => {
-    planCache[mode] = (await request(`/api/calculator/houses?status=${mode}`)).houses;
-    planStale.delete(mode);
+    planCache[cacheKey] = (await request(`/api/calculator/houses?status=${mode}`)).houses;
+    planStale.delete(cacheKey);
   };
-  if (!planCache[mode]) {
+  if (!planCache[cacheKey]) {
     list.innerHTML = `<p class="muted">Loading SEAI houses…</p>`;
     delete list.dataset.planHtml;
     try {
@@ -739,13 +885,13 @@ async function renderNotStartedHouses(query, mode = "not_started") {
       return;
     }
     if (state.houseStatusFilter !== mode) return;
-  } else if (planStale.has(mode)) {
+  } else if (planStale.has(cacheKey)) {
     // Keep the current cards on screen while a background refresh runs.
-    planStale.delete(mode);
-    const before = JSON.stringify(planCache[mode]);
+    planStale.delete(cacheKey);
+    const before = JSON.stringify(planCache[cacheKey]);
     loadPlan()
       .then(() => {
-        if (state.houseStatusFilter === mode && JSON.stringify(planCache[mode]) !== before) {
+        if (state.houseStatusFilter === mode && JSON.stringify(planCache[cacheKey]) !== before) {
           renderNotStartedHouses($("#house-search").value.trim().toLocaleLowerCase(), mode);
         }
       })
@@ -753,27 +899,54 @@ async function renderNotStartedHouses(query, mode = "not_started") {
   }
   const isReady = mode === "ready";
   const canManageHouses = state.user?.role === "admin";
-  const rows = planCache[mode].filter((h) =>
+  list.classList.toggle("house-grid-ready", isReady);
+  const rows = planCache[cacheKey].filter((h) =>
     [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query),
   );
   const html = rows.length
     ? rows
         .map((h) => {
           const id = escapeHtml(h.id);
-          return `<article class="card house-card ${isReady ? "house-ready" : "house-pending"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" · ") || "No details")}</p></div><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span></div>
-        <div class="house-body">${noteHtml(h.notes)}${snagsHtml(h)}<div class="house-checklist-card"><div class="house-stock-title">House checklist</div>${planChecklistHtml(h)}</div></div>
+            const workflowStep = isReady ? 2 : 1;
+            const locationDetails = [h.owner_name, h.address, h.postcode]
+              .filter(Boolean)
+              .join(" · ");
+            const propertyDetails = [
+              Number.isFinite(Number(h.area_m2)) && h.area_m2 !== null
+                ? `${formatQuantity(h.area_m2)} m²`
+                : "",
+              Number.isFinite(Number(h.perimeter_m)) && h.perimeter_m !== null
+                ? `${formatQuantity(h.perimeter_m)} m perimeter`
+                : "",
+            ].filter(Boolean);
+            return `<article class="card house-card ${isReady ? "house-ready" : "house-pending"}">
+          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey) : ""}</div></div>
+          <div class="house-body">
+            <div class="house-workflow" aria-label="House workflow progress">
+              <div class="house-workflow-heading"><strong>Workflow</strong><span>Step ${workflowStep} of 3</span></div>
+              <ol class="house-workflow-steps">
+                <li class="${workflowStep === 1 ? "current" : "complete"}"><span>1</span><small>Not started</small></li>
+                <li class="${workflowStep === 2 ? "current" : ""}"><span>2</span><small>Ready</small></li>
+                <li><span>3</span><small>Active</small></li>
+              </ol>
+              ${!isReady ? `<p class="house-workflow-hint">Mark ready when pre-start checks can begin. Stage 1/2 work stages appear after activation.</p>` : ""}
+            </div>
+            ${noteHtml(h.notes)}${isReady ? snagsHtml(h) : ""}
+            <div class="house-checklist-card"><div class="house-stock-title">Pre-start checklist</div>${planChecklistHtml(h)}</div>
+          </div>
         <div class="house-card-actions">
-          ${isReady ? `<button class="text-button seai-activate" type="button" data-house-id="${id}">＋ Activate house</button>` : ""}
-          <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="${isReady ? "false" : "true"}">${isReady ? "Back to not started" : "Mark ready for start"}</button>
-          <button class="text-button house-note-open" type="button" data-house-id="${id}">${h.notes ? "Edit note" : "Add note"}</button>
-          <button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>
-          ${canManageHouses ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button>` : ""}
+          ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${h.notes ? "Edit note" : "Add note"}</button>` : `
+            <button class="text-button seai-activate" type="button" data-house-id="${id}">&#43; Activate house</button>
+            <button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${h.survey ? "Review completed survey" : "Enter survey measurements"}">${h.survey ? "Review survey" : "Enter survey measurements"}</button>
+            <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>
+            <button class="text-button house-note-open" type="button" data-house-id="${id}">${h.notes ? "Edit note" : "Add note"}</button>
+            ${canManageHouses ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history <span>→</span></button><button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button>` : ""}`}
         </div>
       </article>`;
         })
         .join("")
     : `<p class="muted">${isReady ? "No houses are ready for start yet." : "No SEAI houses waiting to start."}</p>`;
+  list.classList.toggle("house-grid-compact", !isReady);
   if (list.dataset.planHtml !== html) {
     const scroll = list.scrollTop;
     list.innerHTML = html;
@@ -829,7 +1002,219 @@ async function toggleHouseReady(houseId, ready) {
   }
 }
 
+const HOUSE_MAP_TILE_SIZE = 256;
+
+function projectMapPoint(latitude, longitude, zoom) {
+  const scale = HOUSE_MAP_TILE_SIZE * 2 ** zoom;
+  const safeLatitude = Math.max(-85.0511, Math.min(85.0511, latitude));
+  const sinLatitude = Math.sin((safeLatitude * Math.PI) / 180);
+  return {
+    x: ((longitude + 180) / 360) * scale,
+    y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale,
+  };
+}
+
+function mapHouseStatusLabel(house) {
+  if (house.status === "active") return `Active · Stage ${house.stage || 1}`;
+  return {
+    not_started: "Not started",
+    ready: "Ready for start",
+    closed: "Closed",
+  }[house.status] || house.status;
+}
+
+function mapHouseStatusClass(house) {
+  if (house.status === "active") return "active";
+  return house.status || "not_started";
+}
+
+function fitHouseMap() {
+  const houses = (state.houseMapData || []).filter(
+    (house) => Number.isFinite(Number(house.latitude)) &&
+      Number.isFinite(Number(house.longitude)) &&
+      house.latitude !== null && house.longitude !== null,
+  );
+  if (!houses.length) {
+    state.houseMapCamera = null;
+    renderHouseMapCanvas();
+    return;
+  }
+  const canvas = $("#house-map-canvas");
+  const width = canvas.clientWidth || 720;
+  const height = canvas.clientHeight || 520;
+  const bounds = houses.map((house) =>
+    projectMapPoint(Number(house.latitude), Number(house.longitude), 15),
+  );
+  const xs = bounds.map((point) => point.x);
+  const ys = bounds.map((point) => point.y);
+  const spanX = Math.max(1, Math.max(...xs) - Math.min(...xs));
+  const spanY = Math.max(1, Math.max(...ys) - Math.min(...ys));
+  const zoom = Math.max(
+    4,
+    Math.min(15, Math.floor(Math.log2(Math.min((width * 0.78) / spanX, (height * 0.78) / spanY))) + 15),
+  );
+  const center = projectMapPoint(
+    houses.reduce((sum, house) => sum + Number(house.latitude), 0) / houses.length,
+    houses.reduce((sum, house) => sum + Number(house.longitude), 0) / houses.length,
+    zoom,
+  );
+  state.houseMapCamera = { ...center, zoom };
+  renderHouseMapCanvas();
+}
+
+function zoomHouseMap(change) {
+  if (!state.houseMapCamera) {
+    fitHouseMap();
+    return;
+  }
+  const oldZoom = state.houseMapCamera.zoom;
+  const zoom = Math.max(4, Math.min(18, oldZoom + change));
+  if (zoom === oldZoom) return;
+  const factor = 2 ** (zoom - oldZoom);
+  state.houseMapCamera.x *= factor;
+  state.houseMapCamera.y *= factor;
+  state.houseMapCamera.zoom = zoom;
+  renderHouseMapCanvas();
+}
+
+function renderHouseMapCanvas() {
+  const canvas = $("#house-map-canvas");
+  const tiles = $("#house-map-tiles");
+  const markers = $("#house-map-markers");
+  if (!canvas || !tiles || !markers) return;
+  const width = canvas.clientWidth || 720;
+  const height = canvas.clientHeight || 520;
+  tiles.replaceChildren();
+  markers.replaceChildren();
+  const mappedHouses = (state.houseMapData || []).filter(
+    (house) => Number.isFinite(Number(house.latitude)) &&
+      Number.isFinite(Number(house.longitude)) &&
+      house.latitude !== null && house.longitude !== null,
+  );
+  if (!state.houseMapCamera || !mappedHouses.length) {
+    const empty = document.createElement("div");
+    empty.className = "house-map-empty";
+    const total = (state.houseMapData || []).length;
+    empty.textContent = total
+      ? `${total} active or ready house${total === 1 ? "" : "s"} shown in the list. Import approved Eircodes and coordinates to place them on the map.`
+      : "No active or ready houses to show on the map yet.";
+    tiles.append(empty);
+    return;
+  }
+  const { x: centerX, y: centerY, zoom } = state.houseMapCamera;
+  const tileCount = 2 ** zoom;
+  const firstTileX = Math.floor((centerX - width / 2) / HOUSE_MAP_TILE_SIZE);
+  const lastTileX = Math.floor((centerX + width / 2) / HOUSE_MAP_TILE_SIZE);
+  const firstTileY = Math.max(0, Math.floor((centerY - height / 2) / HOUSE_MAP_TILE_SIZE));
+  const lastTileY = Math.min(tileCount - 1, Math.floor((centerY + height / 2) / HOUSE_MAP_TILE_SIZE));
+  for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
+    for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
+      const image = document.createElement("img");
+      const wrappedX = ((tileX % tileCount) + tileCount) % tileCount;
+      image.className = "house-map-tile";
+      image.alt = "";
+      image.draggable = false;
+      image.src = `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${tileY}.png`;
+      image.style.left = `${tileX * HOUSE_MAP_TILE_SIZE - centerX + width / 2}px`;
+      image.style.top = `${tileY * HOUSE_MAP_TILE_SIZE - centerY + height / 2}px`;
+      tiles.append(image);
+    }
+  }
+  mappedHouses.forEach((house) => {
+    const point = projectMapPoint(
+      Number(house.latitude),
+      Number(house.longitude),
+      zoom,
+    );
+    const marker = document.createElement("button");
+    const statusClass = mapHouseStatusClass(house);
+    const activeStage = house.status === "active" ? ` · Stage ${house.stage || 1}` : "";
+    marker.type = "button";
+    marker.className = `house-map-marker map-status-${statusClass}${house.id === state.selectedMapHouseId ? " selected" : ""}`;
+    marker.dataset.mapHouseId = house.id;
+    if (house.status === "active") marker.dataset.stage = String(house.stage || 1);
+    marker.style.left = `${point.x - centerX + width / 2}px`;
+    marker.style.top = `${point.y - centerY + height / 2}px`;
+    marker.textContent = house.status === "active" ? String(house.stage || 1) : "R";
+    marker.setAttribute(
+      "aria-label",
+      `${house.id}, ${mapHouseStatusLabel(house)}${activeStage}${house.source === "map_test" ? ", test only, synthetic coordinates" : ""}`,
+    );
+    marker.title = `${house.id} · ${mapHouseStatusLabel(house)}${house.source === "map_test" ? " · TEST ONLY: synthetic coordinates" : ""}`;
+    markers.append(marker);
+  });
+}
+
+function mapHouseActions(house) {
+  const id = escapeHtml(house.id);
+  const admin = state.user?.role === "admin";
+  if (house.status === "not_started") {
+    return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button>`;
+  }
+  if (house.status === "ready") {
+    return `<button class="text-button seai-activate" type="button" data-house-id="${id}">＋ Activate house</button><button class="text-button house-survey-open ${house.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}">${house.survey ? "Review survey" : "Enter survey measurements"}</button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button>` : ""}`;
+  }
+  if (house.status === "closed") {
+    return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
+  }
+  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button><span class="stage-switch" role="group" aria-label="Stage">${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>${admin ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
+}
+
+function selectMapHouse(houseId) {
+  const house = state.houseMapData?.find((item) => item.id === houseId);
+  if (!house) return;
+  state.selectedMapHouseId = houseId;
+  const tracked = state.dashboard.house_list.find((item) => item.id === houseId);
+  const displayHouse = { ...tracked, ...house };
+  const address = [house.address, house.postcode].filter(Boolean).join(" · ");
+  const testNotice = house.source === "map_test"
+    ? '<p class="map-test-warning">Test record only: these map coordinates are synthetic and do not identify the Eircode location.</p>'
+    : "";
+  const measures = [
+    house.area_m2 === null ? "" : `${formatQuantity(house.area_m2)} m²`,
+    house.perimeter_m === null ? "" : `${formatQuantity(house.perimeter_m)} m perimeter`,
+  ].filter(Boolean).join(" · ");
+  $("#house-map-selection").innerHTML = `
+    <div class="house-map-selected-heading"><div><strong>${escapeHtml(house.id)}</strong><span class="status-pill ${house.status === "active" ? "active" : house.status === "ready" ? "ready" : house.status === "closed" ? "finished" : "pending"}">${escapeHtml(mapHouseStatusLabel(house))}</span></div><p>${escapeHtml([house.owner_name, address, measures].filter(Boolean).join(" · ") || "No location details recorded")}</p>${testNotice}</div>
+    <div class="house-card-actions">${mapHouseActions(displayHouse)}</div>`;
+  $("#house-map-house-list").querySelectorAll("[data-map-house-id]").forEach((button) =>
+    button.classList.toggle("selected", button.dataset.mapHouseId === houseId),
+  );
+  renderHouseMapCanvas();
+}
+
+function renderHouseMapList() {
+  const houses = state.houseMapData || [];
+  const list = $("#house-map-house-list");
+  list.innerHTML = houses.map((house) => `
+    <button class="house-map-list-item${house.id === state.selectedMapHouseId ? " selected" : ""}" type="button" data-map-house-id="${escapeHtml(house.id)}">
+      <span><strong>${escapeHtml(house.id)}</strong><small>${escapeHtml([house.address, house.postcode].filter(Boolean).join(" · ") || "Location details missing")}${house.source === "map_test" ? '<br><b class="map-test-warning">TEST ONLY · synthetic coordinates</b>' : ""}</small></span>
+      <span class="house-map-list-status map-list-status-${mapHouseStatusClass(house)}"${house.status === "active" ? ` data-stage="${house.stage || 1}"` : ""}>${escapeHtml(mapHouseStatusLabel(house))}</span>
+    </button>`).join("");
+}
+
+async function loadHouseMap() {
+  try {
+    const result = await request("/api/calculator/houses?status=map");
+    if (!state.houseMapMode) return;
+    state.houseMapData = result.houses;
+    renderHouseMapList();
+    if (!state.houseMapCamera) fitHouseMap();
+    else renderHouseMapCanvas();
+    if (state.selectedMapHouseId) selectMapHouse(state.selectedMapHouseId);
+    else $("#house-map-selection").innerHTML = "<strong>Select a house</strong><p>Choose a marker or an address from the list below.</p>";
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
 function renderHouses() {
+  if (state.houseMapMode) {
+    $("#houses-overview").classList.add("hidden");
+    $("#house-map-view").classList.remove("hidden");
+    loadHouseMap();
+    return;
+  }
   const data = state.dashboard;
   const canManageHouses = state.user?.role === "admin";
   const query = $("#house-search").value.trim().toLocaleLowerCase();
@@ -865,7 +1250,8 @@ function renderHouses() {
   const matchingHouses = data.house_list.filter((house) =>
     (!filteredHouseIds || filteredHouseIds.includes(house.id)) &&
     (!teamFilter || Boolean(house.is_finished) === (teamFilter.status === "closed")) &&
-    (!statusFilter || stickyHouses.has(house.id) || Boolean(house.is_finished) === (statusFilter === "closed")) &&
+    (!statusFilter || stickyHouses.has(house.id) ||
+      (statusFilter === "closed" ? Boolean(house.is_finished) : statusFilter === "active" ? !house.is_finished : true)) &&
     [house.id, house.owner_name, house.employee_name, house.postcode]
       .filter(Boolean)
       .join(" ")
@@ -922,28 +1308,41 @@ function renderHouses() {
     });
     const hasNegative = held.some((item) => item.qty < 0);
     const assignedTeams = houseTeams.get(house.id) || [];
+    const propertyDetails = [
+      house.address,
+      Number.isFinite(Number(house.area_m2)) && house.area_m2 !== null
+        ? `${formatQuantity(house.area_m2)} m²`
+        : "",
+      Number.isFinite(Number(house.perimeter_m)) && house.perimeter_m !== null
+        ? `${formatQuantity(house.perimeter_m)} m perimeter`
+        : "",
+    ].filter(Boolean);
     return `
       <article class="card house-card ${house.is_finished ? "house-finished" : "house-active"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-body"><div class="house-stock"><div class="house-stock-title">Materials on site</div>
-          ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
+          ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) || house.is_finished ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${!house.is_finished && held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
-        ${noteHtml(house.notes)}${snagsHtml(house)}
+        ${noteHtml(house.notes)}${house.is_finished ? "" : snagsHtml(house)}
         <div class="house-checklist-card">
           <div class="house-stock-title">House checklist</div>
           ${checklist.map(([label, status, value]) => `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></div>`).join("")}
         </div>
         </div>
         <div class="house-card-actions">
-          <button class="text-button house-record-movement${house.is_finished ? " ghost" : ""}" type="button" data-house-id="${escapeHtml(house.id)}"${house.is_finished ? ' aria-hidden="true" tabindex="-1"' : ""}>＋ Record movement</button>
+          ${house.is_finished ? `
+            <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="true">Reopen house</button>
+            ${canManageHouses ? `<button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>` : ""}
+          ` : `
+          <button class="text-button house-record-movement" type="button" data-house-id="${escapeHtml(house.id)}">＋ Record movement</button>
           <button class="text-button house-note-open" type="button" data-house-id="${escapeHtml(house.id)}">${house.notes ? "Edit note" : "Add note"}</button>
           <span class="stage-switch" role="group" aria-label="Stage">${[1, 2].map((n) => `<button class="stage-btn${(Number(house.stage) || 1) === n ? " on" : ""}" type="button" data-house-id="${escapeHtml(house.id)}" data-stage="${n}" aria-pressed="${(Number(house.stage) || 1) === n}"${house.is_finished ? " disabled" : ""}>Stage ${n}</button>`).join("")}</span>
           <button class="text-button house-snags-open" type="button" data-house-id="${escapeHtml(house.id)}">Snags</button>
           ${canManageHouses ? `
             <button class="text-button house-checklist-open" type="button" data-house-id="${escapeHtml(house.id)}">Edit checklist</button>
             <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
-            ${house.is_finished && held.some((item) => Math.abs(item.qty) > 1e-9) ? `<button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-action="closeout">Close out remaining stock</button>` : ""}
-            <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="${house.is_finished ? "true" : "false"}">${house.is_finished ? "Reopen house" : "Mark house finished"}</button>` : ""}
+            <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="false">Mark house finished</button>` : ""}
+          `}
         </div>
       </article>`;
   });
@@ -1131,16 +1530,25 @@ async function submitHouseChecklist(event) {
 
 function renderHouseDetail(result) {
   const { house, movements } = result;
+  const statusLabel = {
+    not_started: "Not started",
+    ready: "Ready for start",
+    active: "Active",
+    closed: "Closed",
+  }[house.status] || (house.is_finished ? "Closed" : "Active");
   $("#house-detail-title").textContent = house.id;
   $("#house-detail-subtitle").textContent =
-    [house.owner_name, house.employee_name, house.postcode]
+    [house.owner_name, house.employee_name, house.postcode, house.address]
       .filter(Boolean)
       .join(" · ") || "House details have not been recorded.";
   $("#house-detail-facts").innerHTML = [
     ["Owner", house.owner_name],
     ["Assigned employee", house.employee_name],
     ["Postcode / Eircode", house.postcode],
-    ["Status", house.is_finished ? "Finished" : "Active"],
+    ["Address", house.address],
+    ["Floor area", house.area_m2 === null ? "" : `${formatQuantity(house.area_m2)} m²`],
+    ["Perimeter", house.perimeter_m === null ? "" : `${formatQuantity(house.perimeter_m)} m`],
+    ["Status", statusLabel],
   ]
     .map(
       ([label, value]) => `
@@ -1150,6 +1558,39 @@ function renderHouseDetail(result) {
         </article>`,
     )
     .join("");
+
+  const noteRows = [
+    ["House note", house.notes],
+    ["Survey note", house.survey_notes],
+  ].filter(([, text]) => text);
+  $("#house-detail-notes").innerHTML = noteRows.length
+    ? noteRows
+        .map(
+          ([label, text]) => `
+            <article class="house-detail-note">
+              <strong>${escapeHtml(label)}</strong>
+              <p>${escapeHtml(text)}</p>
+            </article>`,
+        )
+        .join("")
+    : `<p class="muted">No notes recorded.</p>`;
+  const snags = house.snags || [];
+  $("#house-detail-snags").innerHTML = snags.length
+    ? snags
+        .map((snag) => {
+          const createdAt = Number(snag.created_at);
+          const date = Number.isFinite(createdAt) && createdAt > 0
+            ? new Date(createdAt * 1000).toLocaleDateString()
+            : "Date not recorded";
+          return `
+            <article class="house-detail-snag${snag.done ? " done" : ""}">
+              <span class="house-detail-snag-status">${snag.done ? "Done" : "Open"}</span>
+              <p>${escapeHtml(snag.text)}</p>
+              <small>Added ${escapeHtml(date)}</small>
+            </article>`;
+        })
+        .join("")
+    : `<p class="muted">No snags recorded.</p>`;
 
   const used = new Map();
   movements
@@ -1244,6 +1685,8 @@ async function loadHouseDetail(houseId) {
 }
 
 function openHouseDetail(houseId) {
+  state.houseMapMode = false;
+  $("#house-map-view").classList.add("hidden");
   state.viewingHouseId = houseId;
   $("#houses-overview").classList.add("hidden");
   $("#house-detail").classList.remove("hidden");
@@ -1251,6 +1694,8 @@ function openHouseDetail(houseId) {
   $("#house-detail-subtitle").textContent = "Loading house record…";
   $("#house-detail-facts").innerHTML = "";
   $("#house-detail-stock").innerHTML = "";
+  $("#house-detail-notes").innerHTML = "";
+  $("#house-detail-snags").innerHTML = "";
   $("#house-movement-history").innerHTML = "";
   $("#house-detail-usage-card").classList.add("hidden");
   $("#house-history-empty").classList.add("hidden");
@@ -1259,8 +1704,10 @@ function openHouseDetail(houseId) {
 }
 
 function showHousesOverview() {
+  state.houseMapMode = false;
   state.viewingHouseId = "";
   state.houseDetailRequest += 1;
+  $("#house-map-view").classList.add("hidden");
   $("#house-detail").classList.add("hidden");
   $("#houses-overview").classList.remove("hidden");
 }
@@ -1435,7 +1882,10 @@ function fillSeaiHouse(h) {
     ["Perimeter", fmt(h.perimeter_m, "m")],
   ]
     .map(([k, v]) => `<span>${k}: <b>${escapeHtml(String(v))}</b></span>`)
-    .join("");
+    .join("") +
+    (h.source === "map_test"
+      ? '<span class="map-test-warning"><b>TEST ONLY</b> · synthetic address, area, perimeter, and map coordinates</span>'
+      : "");
   $("#seai-info").classList.remove("hidden");
   $("#seai-results").classList.add("hidden");
   $("#seai-search").value = "";
@@ -1694,11 +2144,24 @@ async function toggleHouseFinished(event) {
   }
   const activateButton = event.target.closest(".seai-activate");
   if (activateButton) {
+    if (state.presentation) {
+      state.presentation.houseId = activateButton.dataset.houseId;
+      renderPresentationGuide();
+    }
     const h = findPlanHouse(activateButton.dataset.houseId);
     if (h) {
       openHouseDialog();
       fillSeaiHouse(h);
     }
+    return;
+  }
+  const surveyButton = event.target.closest(".house-survey-open");
+  if (surveyButton) {
+    if (state.presentation) {
+      state.presentation.houseId = surveyButton.dataset.houseId;
+      renderPresentationGuide();
+    }
+    openHouseSurvey(surveyButton.dataset.houseId);
     return;
   }
   const readyButton = event.target.closest(".plan-ready-toggle");
@@ -1778,7 +2241,9 @@ async function toggleHouseFinished(event) {
       summary.active += finished ? -1 : 1;
       summary.closed += finished ? 1 : -1;
     }
-    state.dashboard.houses = state.dashboard.house_list.filter((item) => !item.is_finished).length;
+    state.dashboard.houses = state.dashboard.house_list.filter(
+      (item) => !item.is_finished,
+    ).length;
     renderOverview();
     renderHouses();
   }
@@ -1811,7 +2276,9 @@ async function toggleHouseFinished(event) {
     if (house) {
       house.is_finished = previous;
       if (previousSummary) state.dashboard.house_summary = previousSummary;
-      state.dashboard.houses = state.dashboard.house_list.filter((item) => !item.is_finished).length;
+      state.dashboard.houses = state.dashboard.house_list.filter(
+        (item) => !item.is_finished,
+      ).length;
       renderOverview();
       renderHouses();
     }
@@ -1879,6 +2346,34 @@ async function submitImport(event) {
   }
 }
 
+async function submitHouseLocations(event) {
+  event.preventDefault();
+  const file = $("#house-locations-file").files[0];
+  if (!file) {
+    showToast("Choose the approved SEAI house-location CSV.", true);
+    return;
+  }
+  const button = $("button[type='submit']", event.currentTarget);
+  button.disabled = true;
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const result = await request("/api/houses/import", {
+      method: "POST",
+      body: formData,
+    });
+    state.houseMapCamera = null;
+    await refresh();
+    showToast(
+      `Imported ${result.imported} houses and updated ${result.updated}. ${result.total} provided houses are available.`,
+    );
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function submitAuthentication(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1909,6 +2404,7 @@ async function submitAuthentication(event) {
     );
     form.reset();
     showWorkspace(result.user);
+    if (result.user.role === "surveyor") return;
     try {
       await refresh();
     } catch (error) {
@@ -1936,7 +2432,7 @@ async function loadUsers() {
       (user) => `
         <div class="user-row">
           <span><strong>${escapeHtml(user.display_name)}</strong><small>${escapeHtml(user.username)}</small></span>
-          <span>${user.role === "admin" ? "Administrator" : "Employee"}${user.is_active ? "" : " · Disabled"}</span>
+          <span>${({ admin: "Administrator", employee: "Employee", surveyor: "Surveyor" })[user.role] || "Employee"}${user.is_active ? "" : " (Disabled)"}</span>
         </div>`,
     )
     .join("");
@@ -1961,7 +2457,7 @@ async function submitEmployee(event) {
     });
     formElement.reset();
     await loadUsers();
-    showToast("Employee account created.");
+    showToast(values.role === "surveyor" ? "Surveyor account created." : "Employee account created.");
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -2057,9 +2553,13 @@ function bindEvents() {
     "click",
     openPresentationAction,
   );
+  $$(".brand, .mobile-brand").forEach((link) =>
+    link.addEventListener("click", goToHomeView),
+  );
   $$(".nav-item[data-tab]").forEach((button) =>
     button.addEventListener("click", () => setTab(button.dataset.tab)),
   );
+  $("#go-overview").addEventListener("click", goToHomeView);
   $$("[data-house-view]").forEach((tile) =>
     tile.addEventListener("click", () => {
       state.houseTeamFilter = null;
@@ -2067,6 +2567,16 @@ function bindEvents() {
       stickyHouses.clear();
       state.housesTeamsTab = "houses";
       $("#house-search").value = "";
+      if (tile.dataset.houseView === "") {
+        state.houseMapMode = true;
+        state.selectedMapHouseId = "";
+        state.houseMapCamera = null;
+        setTab("houses");
+        renderHouses();
+        return;
+      }
+      state.houseMapMode = false;
+      showHousesOverview();
       setTab("houses");
       renderHouses();
     }),
@@ -2176,6 +2686,61 @@ function bindEvents() {
   $("#seai-search").addEventListener("focus", searchSeaiHouses);
   $("#seai-results").addEventListener("click", pickSeaiHouse);
   $("#houses-list").addEventListener("click", toggleHouseFinished);
+  $("#house-map-list-view").addEventListener("click", () => {
+    showHousesOverview();
+    renderHouses();
+  });
+  $("#house-map-house-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-map-house-id]");
+    if (button) selectMapHouse(button.dataset.mapHouseId);
+  });
+  $("#house-map-markers").addEventListener("click", (event) => {
+    const marker = event.target.closest("[data-map-house-id]");
+    if (marker) selectMapHouse(marker.dataset.mapHouseId);
+  });
+  $("#house-map-selection").addEventListener("click", toggleHouseFinished);
+  $("#house-map-selection").addEventListener("click", (event) => {
+    const button = event.target.closest(".house-checklist-open");
+    if (button) openHouseChecklist(button.dataset.houseId);
+  });
+  $("#house-map-zoom-in").addEventListener("click", () => zoomHouseMap(1));
+  $("#house-map-zoom-out").addEventListener("click", () => zoomHouseMap(-1));
+  $("#house-map-fit").addEventListener("click", fitHouseMap);
+  $("#house-locations-import").addEventListener("submit", submitHouseLocations);
+  $("#house-locations-file").addEventListener("change", (event) => {
+    $("#house-locations-file-name").textContent =
+      event.currentTarget.files[0]?.name || "No file selected";
+  });
+  const mapCanvas = $("#house-map-canvas");
+  let mapDrag = null;
+  mapCanvas.addEventListener("pointerdown", (event) => {
+    if (!state.houseMapCamera || event.target.closest("button, a")) return;
+    mapDrag = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      cameraX: state.houseMapCamera.x,
+      cameraY: state.houseMapCamera.y,
+    };
+    mapCanvas.setPointerCapture(event.pointerId);
+  });
+  mapCanvas.addEventListener("pointermove", (event) => {
+    if (!mapDrag || mapDrag.pointerId !== event.pointerId) return;
+    const scale = HOUSE_MAP_TILE_SIZE * 2 ** state.houseMapCamera.zoom;
+    state.houseMapCamera.x = mapDrag.cameraX - (event.clientX - mapDrag.x);
+    state.houseMapCamera.y = mapDrag.cameraY - (event.clientY - mapDrag.y);
+    state.houseMapCamera.y = Math.max(0, Math.min(scale, state.houseMapCamera.y));
+    renderHouseMapCanvas();
+  });
+  mapCanvas.addEventListener("pointerup", () => {
+    mapDrag = null;
+  });
+  mapCanvas.addEventListener("pointercancel", () => {
+    mapDrag = null;
+  });
+  window.addEventListener("resize", () => {
+    if (state.houseMapMode && state.houseMapCamera) renderHouseMapCanvas();
+  });
   $("#teams-list").addEventListener("click", (event) => {
     const button = event.target.closest(".team-house-count");
     if (!button || button.disabled) return;
@@ -2201,6 +2766,13 @@ function bindEvents() {
   });
   $("#house-checklist-form").addEventListener("submit", submitHouseChecklist);
   $("#house-note-form").addEventListener("submit", submitHouseNote);
+  $("#house-survey-form").addEventListener("submit", submitHouseSurvey);
+  $("#house-survey-dialog").addEventListener("click", (event) => {
+    const add = event.target.closest(".survey-add-row");
+    if (add) surveyRow(add.dataset.surveyList);
+    const remove = event.target.closest(".survey-remove");
+    if (remove) remove.closest(".survey-row").remove();
+  });
   $("#house-snag-list").addEventListener("click", (event) => {
     const remove = event.target.closest(".snag-del");
     if (remove) {
@@ -2223,7 +2795,7 @@ function bindEvents() {
   $("#stocktake-form").addEventListener("submit", submitStocktake);
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
-  $("#house-search").addEventListener("input", renderHouses);
+  $("#house-search").addEventListener("input", () => state.user?.role === "surveyor" ? renderSurveyorHouses() : renderHouses());
   $("#team-search").addEventListener("input", renderHouses);
   $("#clear-house-team-filter").addEventListener("click", () => {
     state.houseTeamFilter = null;

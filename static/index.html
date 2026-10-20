@@ -32,7 +32,7 @@
         </a>
         <div class="workspace-label">WORKSPACE</div>
         <nav class="main-nav" aria-label="Main navigation">
-          <button class="nav-item active" data-tab="overview"><span class="nav-icon">◫</span>Overview</button>
+          <button class="nav-item active" data-tab="overview" aria-current="page"><span class="nav-icon">◫</span>Overview</button>
           <button class="nav-item" data-tab="inventory"><span class="nav-icon">▤</span>Inventory</button>
           <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span>Houses &amp; teams</button>
           <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
@@ -47,6 +47,7 @@
       <main class="main-content">
         <header class="topbar">
           <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists"></a>
+          <button class="button button-secondary overview-shortcut" id="go-overview" type="button" aria-label="Return to Overview">← Overview</button>
           <div class="topbar-spacer"></div>
           <button class="button button-secondary" id="account-button">Account</button>
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
@@ -59,7 +60,7 @@
             <span class="date-chip" id="today-label"></span>
           </div>
           <div class="kpi-row">
-            <button type="button" class="kpi seai" data-house-view="" title="View all houses"><span class="kpi-label">From SEAI</span><span class="kpi-value" id="stat-provided">—</span></button>
+            <button type="button" class="kpi seai" data-house-view="" title="View all provided houses on the map"><span class="kpi-label">From SEAI</span><span class="kpi-value" id="stat-provided">—</span></button>
             <button type="button" class="kpi active" data-house-view="active" title="View active houses"><span class="kpi-label">Active houses</span><span class="kpi-value" id="stat-houses">—</span></button>
             <button type="button" class="kpi closed" data-house-view="closed" title="View closed houses"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="stat-closed">—</span></button>
             <button type="button" class="kpi pending" data-house-view="not_started" title="View SEAI houses not started yet"><span class="kpi-label">Not started</span><span class="kpi-value" id="stat-not-started">—</span></button>
@@ -128,6 +129,44 @@
               <div class="empty-state card hidden" id="teams-no-results"><strong>No matching teams</strong><p>Try another team name.</p></div>
             </section>
           </div>
+          <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
+            <div class="page-heading houses-list-toolbar">
+              <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Showing houses that are Ready for start or Active. Select a marker or list entry to review its available workflow actions.</p></div>
+              <button class="button button-secondary" id="house-map-list-view" type="button">Back to house list</button>
+            </div>
+            <article class="card house-map-import hidden" id="house-map-import-card">
+              <div><strong>Load approved SEAI locations</strong><p>Import an approved CSV with actual Eircodes and latitude/longitude. We will not invent a residential postcode or geocode a house without your approved location data. OpenStreetMap receives tile requests for the map area currently in view.</p></div>
+              <form id="house-locations-import" class="import-form">
+                <label class="file-picker"><input type="file" id="house-locations-file" accept=".csv,text/csv" required><span>Choose locations CSV</span></label>
+                <span class="file-name" id="house-locations-file-name">No file selected</span>
+                <button class="button button-secondary" type="submit">Import locations</button>
+              </form>
+              <small>Required columns: house_id, eircode, latitude, longitude. Optional: address, owner_name, area_m2, perimeter_m. Imported files should be from an approved source.</small>
+            </article>
+            <div class="house-map-layout">
+              <div class="house-map card">
+                <div id="house-map-canvas" class="house-map-canvas" role="application" aria-label="Map of SEAI houses">
+                  <div id="house-map-tiles" class="house-map-tiles"></div>
+                  <div id="house-map-markers" class="house-map-markers"></div>
+                  <div class="house-map-controls" aria-label="Map controls">
+                    <button type="button" id="house-map-zoom-in" aria-label="Zoom in">+</button>
+                    <button type="button" id="house-map-zoom-out" aria-label="Zoom out">−</button>
+                    <button type="button" id="house-map-fit" aria-label="Fit all houses">Fit</button>
+                  </div>
+                  <a class="house-map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>
+                </div>
+              </div>
+              <aside class="card house-map-side">
+                <div class="house-map-legend">
+                  <span><i class="map-status-ready"></i>Ready for start</span>
+                  <span><i class="map-status-active" data-stage="1"></i>Active · Stage 1</span>
+                  <span><i class="map-status-active" data-stage="2"></i>Active · Stage 2</span>
+                </div>
+                <div id="house-map-selection" class="house-map-selection"><strong>Select a house</strong><p>Choose a marker or an address from the list below.</p></div>
+                <div id="house-map-house-list" class="house-map-house-list" aria-label="Houses on map"></div>
+              </aside>
+            </div>
+          </section>
           <section id="house-detail" class="hidden" aria-labelledby="house-detail-title">
             <button class="text-button back-button house-back" id="back-to-houses" type="button">← Back to houses &amp; teams</button>
             <div class="page-heading house-detail-heading"><div><div class="eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div><h1 id="house-detail-title"></h1><p class="page-subtitle" id="house-detail-subtitle"></p></div></div>
@@ -139,6 +178,13 @@
             <article class="card house-detail-stock-card">
               <div class="card-heading"><div><h2>Materials currently on site</h2><p>Balances reflect all recorded movements and stock counts.</p></div></div>
               <div id="house-detail-stock" class="house-detail-stock"></div>
+            </article>
+            <article class="card house-detail-records-card">
+              <div class="card-heading"><div><h2>Notes &amp; snag history</h2><p>House notes, survey notes, and both open and completed snags.</p></div></div>
+              <div class="house-detail-records-grid">
+                <section><h3>Notes</h3><div id="house-detail-notes"></div></section>
+                <section><h3>Snag history</h3><div id="house-detail-snags"></div></section>
+              </div>
             </article>
             <article class="card house-history-card">
               <div class="card-heading"><div><h2>Complete movement history</h2><p>Includes records where this house was either the source or destination.</p></div></div>
@@ -184,6 +230,19 @@
           <button class="button button-secondary close-dialog" type="button">Cancel</button>
           <button class="button button-primary" type="submit">Save note</button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="house-survey-dialog" class="dialog">
+      <form id="house-survey-form" class="survey-form">
+        <div class="dialog-heading"><div><div class="eyebrow">PRE-START HOUSE SURVEY</div><h2 id="house-survey-title">Survey measurements</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">&times;</button></div>
+        <p class="helper-text">Enter measurements once. The calculator will use these values automatically when this house is selected. Window corner lengths are calculated from each window's width and two sides (2 x height).</p>
+        <h3>Windows <button class="text-button survey-add-row" type="button" data-survey-list="windows">+ Add window size</button></h3><div id="survey-windows" class="survey-rows"></div>
+        <h3>Doors <button class="text-button survey-add-row" type="button" data-survey-list="doors">+ Add door size</button></h3><div id="survey-doors" class="survey-rows"></div>
+        <div class="form-grid survey-corners"><div><h3>House corner lengths <button class="text-button survey-add-row" type="button" data-survey-list="house_corners">+ Add length</button></h3><div id="survey-house_corners" class="survey-rows"></div></div></div>
+        <label class="field full">Survey note<textarea name="notes" rows="3" maxlength="2000" placeholder="Access, measurement assumptions or other survey notes"></textarea></label>
+        <div id="survey-meta" class="helper-text"></div>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save survey</button></div>
       </form>
     </dialog>
 
@@ -326,6 +385,7 @@
           <div class="form-grid">
             <label class="field">Display name<input name="display_name" maxlength="120" required autocomplete="name"></label>
             <label class="field">Username<input name="username" maxlength="64" required autocomplete="off"></label>
+            <label class="field">Account role<select name="role"><option value="employee">Employee</option><option value="surveyor">Surveyor</option></select></label>
             <label class="field">6-digit PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
             <label class="field">Confirm PIN<input name="pin_confirm" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
           </div>

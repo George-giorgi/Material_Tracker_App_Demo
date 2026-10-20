@@ -582,6 +582,41 @@ body>main.calculator-main{
   background:#fafbfa;
 }
 .calculator-main .window-group button{white-space:normal}
+.calculator-main .measurement-section{
+  margin-top:0;
+  padding:13px 0;
+  border:0;
+  border-top:1px solid #e7ece8;
+  border-radius:0;
+  background:transparent;
+}
+.calculator-main .measurement-section:first-of-type{padding-top:2px;border-top:0}
+.calculator-main .measurement-section-heading{display:flex;align-items:center;gap:9px}
+.calculator-main .measurement-section-heading .sub-title{margin:0;padding:0;border:0}
+.calculator-main .measurement-badge{flex:0 0 auto;color:#648071;font-size:9px;font-weight:600}
+.calculator-main .measurement-section>.muted{margin:5px 0 10px}
+.calculator-main .measurement-section .window-group{margin:0;padding:10px 0;border:0;border-radius:0;background:transparent}
+.calculator-main .window-group button{min-height:38px}
+.calculator-main .measurement-list{display:grid;gap:7px}
+.calculator-main .measurement-list:empty{display:none}
+.calculator-main .measurement-actions{margin-top:9px}
+.calculator-main .measurement-list .row{margin:0;padding:9px 0;border-color:#edf0ed}
+.calculator-main .measurement-list .row input{min-height:38px}
+.calculator-main .measurement-list .window-group-row{grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:8px 10px;border:1px solid #e7ece8;border-radius:7px;background:#fff}
+.calculator-main .window-group-details{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 10px}
+.calculator-main .window-group-details strong{font-size:12px;color:#263b32}
+.calculator-main .window-group-details span{font-size:11px;color:#68786f}
+.calculator-main .measurement-list .window-group-row button{min-height:32px;padding:6px 10px;font-size:10px}
+.calculator-main .corners-section .two{align-items:stretch}
+.calculator-main .corner-entry,.calculator-main .corner-summary{min-width:0;padding:10px 12px;border:1px solid #e7ece8;border-radius:7px;background:#fff}
+.calculator-main .corner-entry h3{margin:0;color:#304d3f;font:700 12px Manrope,sans-serif}
+.calculator-main .corner-entry>.muted{margin:4px 0 8px}
+.calculator-main .corner-entry .measurement-list .row{grid-template-columns:minmax(0,1fr) auto}
+.calculator-main .corner-summary{display:flex;flex-direction:column;justify-content:center;gap:6px;background:#f6f9f7}
+.corner-summary-title{color:#304d3f;font-size:12px;font-weight:700}
+.corner-summary-count{color:#21816b;font-size:24px;font-weight:800;line-height:1.1}
+.corner-summary-count small{font-size:11px;font-weight:600}
+.corner-summary-detail{color:#6b7c72;font-size:10px;line-height:1.5}
 .calculator-main .row{border-color:#edf0ed}
 .calculator-main .two{gap:18px}
 .calculator-main .result{
@@ -617,6 +652,23 @@ body>main.calculator-main{
 .calculator-main .manual.extra{padding-top:0;border-top:0;background:#f7faf8;border-radius:6px}
 .calculator-main .manual.extra>label{color:#9aa6a0;font-weight:400}
 .calculator-main .manual input,.calculator-main .manual select{min-height:34px}
+.survey-readonly{margin:6px 0 2px;color:#31483c}
+.survey-summary-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.survey-summary-heading strong{font-size:13px;color:#263b32}
+.survey-summary-heading span{color:#728178;font-size:10px}
+.survey-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.survey-summary-section{min-width:0;padding:10px 11px;border:1px solid #e5ebe6;border-radius:8px;background:#fff}
+.survey-summary-section.window-corners{grid-column:1/-1;background:#f5f8f6}
+.survey-summary-title{margin-bottom:6px;color:#78867d;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.survey-summary-values{display:grid;gap:5px}
+.survey-summary-item{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:3px 8px}
+.survey-summary-item strong{color:#304b3c;font-size:11px}
+.survey-summary-item span{color:#627268;font-size:10px}
+.survey-summary-empty{color:#87938b;font-size:10px}
+.survey-length-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.survey-length-chips span{padding:3px 6px;border-radius:5px;background:#f1f5f2;color:#52655a;font-size:9px}
+.survey-note{margin-top:8px;padding:9px 11px;border-left:3px solid #cbd8ce;border-radius:4px;background:#f8faf8;color:#5c6e62;font-size:10px;white-space:pre-wrap}
+.measurement-entry[hidden],.survey-readonly[hidden]{display:none}
 .calculator-main>section:last-child{
   border-color:var(--tracker-line);
   background:var(--tracker-paper);
@@ -717,8 +769,15 @@ body>main.calculator-main{min-height:0;padding:16px 28px 28px}
   .brand-header .header-subtitle{font-size:10px}
   body>main.calculator-main{min-height:calc(100vh - 61px);margin:0;padding:18px 14px 82px}
   .calculator-main .card{margin-bottom:12px;padding:16px 14px}
+  .survey-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .survey-summary-section{padding:9px}
+  .survey-summary-section.window-corners{grid-column:1/-1}
+  .survey-summary-heading{align-items:flex-start;flex-direction:column;gap:3px}
   .calculator-main .card h2{font-size:14px}
   .calculator-main .grid,.calculator-main .two{grid-template-columns:1fr;gap:13px}
+  .calculator-main .measurement-section{padding:11px 0}
+  .calculator-main .window-group{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .calculator-main .window-group button{grid-column:1/-1}
   .calculator-main .row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px}
   .calculator-main .row button{grid-column:1/-1;width:100%}
   .calculator-main .manual{grid-template-columns:minmax(0,1fr) 84px;gap:6px;padding:9px 0}
@@ -820,10 +879,12 @@ body>main.calculator-main{min-height:0;padding:16px 28px 28px}
 <div><label>Finish colour</label><select id="colour"><option>White</option><option>Light grey 0938</option><option>Light cream 0198</option><option>Dark cream 0298</option><option>Other</option></select></div>
 <div><label>Finish texture</label><select id="texture"><option value="2.9">K2 — 2.9 kg/m²</option><option value="2.5">K1.5 — 2.5 kg/m²</option><option value="3.9">K3 — 3.9 kg/m²</option><option value="2.6">R2 — 2.6 kg/m²</option><option value="3.6">R3 — 3.6 kg/m²</option></select></div>
 </div></section>
-<section class="card">
+<section class="card measurement-card">
 <h2>2. Windows, doors &amp; corners</h2>
-<h3 class="sub-title">Windows</h3>
-<p class="muted">For common windows, choose the quantity and enter the same width and height. You can still add individual windows with different sizes below.</p>
+<div id="surveyReadOnly" class="survey-readonly" hidden></div><div class="measurement-entry">
+<section class="measurement-section">
+<div class="measurement-section-heading"><h3 class="sub-title">Windows</h3><span class="measurement-badge">GROUP BY SIZE</span></div>
+<p class="muted">Add matching windows together, or enter a window individually. Width and height are in metres.</p>
 <div class="window-group no-print">
   <div>
     <label>Quantity</label>
@@ -838,7 +899,7 @@ body>main.calculator-main{min-height:0;padding:16px 28px 28px}
     </select>
   </div>
   <div>
-    <label>Common size</label>
+    <label>Quick-fill size</label>
     <select id="windowPreset" onchange="applyWindowPreset()">
       <option value="">Custom size</option>
       <option value="0.9|1.2">0.90 × 1.20 m</option>
@@ -849,15 +910,28 @@ body>main.calculator-main{min-height:0;padding:16px 28px 28px}
       <option value="2.0|1.2">2.00 × 1.20 m</option>
     </select>
   </div>
-  <div><label>Width (m)</label><input id="windowGroupW" type="number" min="0" step=".01" placeholder="e.g. 1.20"></div>
-  <div><label>Height (m)</label><input id="windowGroupH" type="number" min="0" step=".01" placeholder="e.g. 1.20"></div>
-  <button class="no-print" onclick="addWindowGroup()">+ Add same-size windows</button>
+  <div><label for="windowGroupW">Width (m)</label><input id="windowGroupW" type="number" min="0.01" max="100" step=".01" inputmode="decimal" placeholder="e.g. 1.20" required></div>
+  <div><label for="windowGroupH">Height (m)</label><input id="windowGroupH" type="number" min="0.01" max="100" step=".01" inputmode="decimal" placeholder="e.g. 1.20" required></div>
+  <button class="no-print" type="button" onclick="addWindowGroup()">+ Add window group</button>
 </div>
-<div id="windows"></div>
-<button class="secondary no-print" onclick="addOpen('windows','Window')">+ Add individual window</button>
-<h3 class="sub-title">Doors</h3><div id="doors"></div><button class="secondary no-print" onclick="addOpen('doors','Door')">+ Add door</button><h3 class="sub-title">Corner measurements</h3><p class="muted">Enter actual lengths. The calculator uses 2.5m pieces and reuses suitable individual leftovers.</p>
-<div class="two"><div><h3>House corners</h3><div id="hc"></div><button class="secondary no-print" onclick="addCorner('hc')">+ Add house corner</button></div>
-<div><h3>Window / door corners</h3><div id="oc"></div><button class="secondary no-print" onclick="addCorner('oc')">+ Add opening corner</button></div></div></section>
+<div id="windows" class="measurement-list" aria-live="polite"></div>
+<div class="measurement-actions"><button class="secondary no-print" type="button" onclick="addOpen('windows','Window')">+ Add one window</button></div>
+</section>
+<section class="measurement-section">
+<div class="measurement-section-heading"><h3 class="sub-title">Doors</h3><span class="measurement-badge">INDIVIDUAL SIZES</span></div>
+<p class="muted">Add each door size. Its area is deducted from the wall area automatically.</p>
+<div id="doors" class="measurement-list" aria-live="polite"></div>
+<div class="measurement-actions"><button class="secondary no-print" type="button" onclick="addOpen('doors','Door')">+ Add door</button></div>
+</section>
+<section class="measurement-section corners-section">
+<div class="measurement-section-heading"><h3 class="sub-title">Corners</h3><span class="measurement-badge">AUTO-CALCULATED</span></div>
+<p class="muted">Window corners include each window width and both sides. Add only measured house-corner lengths below.</p>
+<div class="two">
+  <div class="corner-entry"><h3>House corners</h3><p class="muted">Enter actual lengths. Suitable offcuts from 2.5 m pieces are reused.</p><div id="hc" class="measurement-list" aria-live="polite"></div><button class="secondary no-print" type="button" onclick="addCorner('hc')">+ Add house corner</button></div>
+  <div class="corner-summary" id="cornerSummary" aria-live="polite"></div>
+</div>
+</section>
+</div></section>
 <section class="card"><h2>3. Automatic calculation</h2><div id="out"></div></section>
 <section class="card manual-card"><details id="manualDetails"><summary><h2>4. Manual materials <span id="manualCount" class="manual-count">click to expand</span></h2></summary><p class="muted">All other STOCK materials are entered by hand. Use + to add another type of the same material with its own quantity.</p><div id="manual"></div></details></section>
 <section class="card action-bar"><div class="notes-field"><label for="notes">Delivery notes</label><input id="notes" placeholder="Optional notes for the request"></div><div class="actions no-print"><button onclick="calc()">Calculate</button><button class="secondary" onclick="printDelivery()">Print / Save PDF</button><button onclick="emailReq()">Create email request</button><button id="saveToHouse" class="secondary" onclick="saveToHouse()">Assigned to house</button></div><p id="saveStatus" class="muted no-print"></p></section>
@@ -887,23 +961,25 @@ function applyWindowPreset(){
 }
 function addWindowGroup(){
   const q=+document.getElementById("windowQty").value||0;
-  const w=+document.getElementById("windowGroupW").value||0;
-  const h=+document.getElementById("windowGroupH").value||0;
-  if(!q||!w||!h){alert("Please choose quantity and enter window width and height.");return}
+  const width=document.getElementById("windowGroupW"),height=document.getElementById("windowGroupH");
+  if(!width.checkValidity()){width.reportValidity();width.focus();return}
+  if(!height.checkValidity()){height.reportValidity();height.focus();return}
+  const w=+width.value,h=+height.value;
+  if(!q)return;
   const d=document.createElement("div");
   d.className="row window-group-row";
   d.dataset.qty=q; d.dataset.w=w; d.dataset.h=h;
-  d.innerHTML=`<div><label>${q} × Window</label><input value="${w.toFixed(2)} m" disabled></div>
-    <div><label>Size</label><input value="${w.toFixed(2)} × ${h.toFixed(2)} m" disabled></div>
-    <div><label>Quantity</label><input value="${q}" disabled></div>
-    <button class="danger no-print" onclick="this.parentElement.remove();calc()">Remove</button>`;
+  d.innerHTML=`<div class="window-group-details"><strong>${q} ${q===1?"window":"windows"}</strong><span>${w.toFixed(2)} m wide × ${h.toFixed(2)} m high</span></div>
+    <button class="danger no-print" type="button" aria-label="Remove group of ${q} windows" onclick="this.parentElement.remove();calc()">Remove</button>`;
   document.getElementById("windows").appendChild(d);
+  width.value="";height.value="";
+  document.getElementById("windowPreset").value="";
   calc();
 }
-function addOpen(id,label){let d=document.createElement("div");d.className="row";d.innerHTML=`<div><label>${label} width (m)</label><input class="w" type="number" step=".01" oninput="calc()"></div><div><label>${label} height (m)</label><input class="h" type="number" step=".01" oninput="calc()"></div><button class="danger no-print" onclick="this.parentElement.remove();calc()">Remove</button>`;document.getElementById(id).appendChild(d)}
-function addCorner(id){let d=document.createElement("div");d.className="row";d.innerHTML=`<div><label>Length (m)</label><input class="cl" type="number" step=".01" oninput="calc()"></div><div></div><button class="danger no-print" onclick="this.parentElement.remove();calc()">Remove</button>`;document.getElementById(id).appendChild(d)}
+function addOpen(id,label,focus=true){let d=document.createElement("div");d.className="row opening-row";d.innerHTML=`<div><label>${label} width (m)</label><input class="w" type="number" min="0.01" max="100" step=".01" inputmode="decimal" placeholder="e.g. 1.20" aria-label="${label} width in metres" oninput="calc()"></div><div><label>${label} height (m)</label><input class="h" type="number" min="0.01" max="100" step=".01" inputmode="decimal" placeholder="e.g. 2.00" aria-label="${label} height in metres" oninput="calc()"></div><button class="danger no-print" type="button" aria-label="Remove ${label.toLowerCase()}" onclick="this.parentElement.remove();calc()">Remove</button>`;document.getElementById(id).appendChild(d);if(focus)d.querySelector(".w").focus()}
+function addCorner(id,focus=true){let d=document.createElement("div");d.className="row corner-row";d.innerHTML=`<div><label>Length (m)</label><input class="cl" type="number" min="0.01" max="100" step=".01" inputmode="decimal" placeholder="e.g. 2.40" aria-label="House corner length in metres" oninput="calc()"></div><button class="danger no-print" type="button" aria-label="Remove house corner length" onclick="this.parentElement.remove();calc()">Remove</button>`;document.getElementById(id).appendChild(d);if(focus)d.querySelector(".cl").focus()}
 function opens(id){
-  const rows=[...document.querySelectorAll("#"+id+" .row:not(.window-group-row)")].map(r=>({w:+r.querySelector(".w").value||0,h:+r.querySelector(".h").value||0}));
+  const rows=[...document.querySelectorAll("#"+id+" .row:not(.window-group-row)")].map(r=>({w:+r.querySelector(".w").value||0,h:+r.querySelector(".h").value||0})).filter(r=>r.w>0&&r.h>0);
   const groups=[...document.querySelectorAll("#"+id+" .window-group-row")].flatMap(r=>{
     const w=+r.dataset.w||0,h=+r.dataset.h||0,q=+r.dataset.qty||0;
     return Array.from({length:q},()=>({w,h}));
@@ -948,19 +1024,30 @@ async function loadStock(){
     refreshManualStock();calc()
   }catch(e){}
 }
-function calc(){
-let A=+wall.value||0,P=+per.value||0,H=+plinth.value||0,W=opens("windows"),D=opens("doors"),O=W.concat(D);
-let wa=W.reduce((s,x)=>s+x.w*x.h,0),da=D.reduce((s,x)=>s+x.w*x.h,0),net=Math.max(0,A-wa-da);
+function calculateMaterialQuantities({wall=0,perimeter=0,plinth=0,texture=0,windows=[],doors=[],houseCorners=[]}){
+let A=+wall||0,P=+perimeter||0,H=+plinth||0,W=windows.filter(x=>x.w>0&&x.h>0),D=doors.filter(x=>x.w>0&&x.h>0),O=W.concat(D);
+let wa=W.reduce((s,x)=>s+x.w*x.h,0),da=D.reduce((s,x)=>s+x.w*x.h,0),netWallArea=Math.max(0,A-wa-da);
+let net=netWallArea;
 let plinthArea=P*H;
-let net100=Math.max(0,net-plinthArea);
+let net100=Math.max(0,netWallArea-plinthArea);
 let b100=up(net100/.72),b60=up(plinthArea/.72),b20=up(O.reduce((s,x)=>s+(x.w+2*x.h)/2.4,0));
-let mortarBags=up((b100+b60)/4);
-let glue=up((b100+b60)/4),pin100=up(b100*2.5/100),pin60=up(b60*3/100),starter=up(P/2);
-let profile=up(O.reduce((s,x)=>s+x.w+2*x.h,0)/2.4),mesh=up(net/50),primer=up(net/125),finish=up(net*(+texture.value)/25);
-let cb=corner(vals("#hc .cl").concat(vals("#oc .cl")));
-let rows=[["100mm Board",b100+" boards / "+up(b100/6)+" bales","Board 100mm",b100],["60mm Board ("+document.getElementById("b60").value+")",b60+" boards / "+up(b60/10)+" packs",document.getElementById("b60").value==="Pink"?"Board 60mm Pink":"Board 60mm",b60],["20mm Board (approx.)",b20+" boards","Board 20mm white",b20],["Mortar bags (Glue)",glue+" bags","Mortage bags(Glue)",glue],["Pins 155mm",pin100+" boxes (100/box)","Pins 155mm",pin100],["Pins 95mm",pin60+" boxes (100/box)","Pins 95mm",pin60],["Starter track 100mm",starter+" pieces","Starter track 100mm (2m)",starter],["Window profile",profile+" pieces","Window profile (2.4m)",profile],["Mesh",mesh+" rolls","Mesh",mesh],["Corner bit",cb+" pieces","Corner bit (2.5m)",cb],["Primer",primer+" buckets","Primer",primer],["Finish coat – "+colour.value,finish+" buckets","Finish cout ("+colour.value+")",finish]];
+let boardBasedMortarBags=up((b100+b60)/4),areaBasedMortarBags=up(netWallArea*18/100);
+let mortarBags=boardBasedMortarBags+areaBasedMortarBags;
+let pin100=up(b100*2.5/100),pin60=up(b60*3/100),starter=up(P/2);
+let profile=up(O.reduce((s,x)=>s+x.w+2*x.h,0)/2.4),mesh=up(net/50),primer=up(net/125),finish=up(net*(+texture||0)/25);
+let windowCornerLengths=W.flatMap(x=>[x.w,x.h,x.h]);
+let houseCornerLengths=houseCorners.filter(Boolean),cb=corner(houseCornerLengths.concat(windowCornerLengths));
+return {A,P,H,W,D,O,wa,da,net,netWallArea,plinthArea,net100,b100,b60,b20,boardBasedMortarBags,areaBasedMortarBags,mortarBags,pin100,pin60,starter,profile,mesh,primer,finish,windowCornerLengths,houseCornerLengths,cb};
+}
+function calc(){
+const {A,P,H,W,D,O,wa,da,net,netWallArea,plinthArea,net100,b100,b60,b20,boardBasedMortarBags,areaBasedMortarBags,mortarBags,pin100,pin60,starter,profile,mesh,primer,finish,windowCornerLengths,houseCornerLengths,cb}=calculateMaterialQuantities({
+  wall:wall.value,perimeter:per.value,plinth:plinth.value,texture:texture.value,
+  windows:opens("windows"),doors:opens("doors"),houseCorners:vals("#hc .cl"),
+});
+document.getElementById("cornerSummary").innerHTML=`<div class="corner-summary-title">Corner bit estimate</div><div class="corner-summary-count">${cb} <small>${cb===1?"piece":"pieces"}</small></div><div class="corner-summary-detail">${W.length} ${W.length===1?"window":"windows"} → ${windowCornerLengths.length} automatic window lengths (width + 2 sides)<br>${houseCornerLengths.length} ${houseCornerLengths.length===1?"house length":"house lengths"} entered<br>Based on 2.5 m corner pieces with suitable offcuts reused.</div>`;
+let rows=[["100mm Board",b100+" boards / "+up(b100/6)+" bales","Board 100mm",b100],["60mm Board ("+document.getElementById("b60").value+")",b60+" boards / "+up(b60/10)+" packs",document.getElementById("b60").value==="Pink"?"Board 60mm Pink":"Board 60mm",b60],["20mm Board (approx.)",b20+" boards","Board 20mm white",b20],["Mortar bags (Glue)",mortarBags+" bags","Mortage bags(Glue)",mortarBags],["Pins 155mm",pin100+" boxes (100/box)","Pins 155mm",pin100],["Pins 95mm",pin60+" boxes (100/box)","Pins 95mm",pin60],["Starter track 100mm",starter+" pieces","Starter track 100mm (2m)",starter],["Window profile",profile+" pieces","Window profile (2.4m)",profile],["Mesh",mesh+" rolls","Mesh",mesh],["Corner bit",cb+" pieces","Corner bit (2.5m)",cb],["Primer",primer+" buckets","Primer",primer],["Finish coat – "+colour.value,finish+" buckets","Finish cout ("+colour.value+")",finish]];
 window.lastRows=rows;
-out.innerHTML=`<div class="result"><b>Wall area after windows/doors</b><strong>${net.toFixed(2)} m²</strong><br><small>${A.toFixed(2)} − windows ${wa.toFixed(2)} − doors ${da.toFixed(2)}</small></div><div class="result"><b>60mm plinth area</b><strong>${plinthArea.toFixed(2)} m²</strong><br><small>This area is also subtracted from the 100mm board area.</small></div><div class="result"><b>100mm board area</b><strong>${net100.toFixed(2)} m²</strong><br><small>${net.toFixed(2)} − ${plinthArea.toFixed(2)} m² plinth</small></div><div class="result"><b>Mortar / Glue</b><strong>${mortarBags} bags</strong><br><small>1 bag per 4 boards (100mm + 60mm)</small></div><table><tr><th>Material</th><th>Required</th><th class="no-print">Warehouse</th></tr>${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="no-print">${stockTag(r[2],r[3])}</td></tr>`).join("")}</table>`
+out.innerHTML=`<div class="result"><b>Wall area after windows/doors</b><strong>${netWallArea.toFixed(2)} m²</strong><br><small>${A.toFixed(2)} − windows ${wa.toFixed(2)} − doors ${da.toFixed(2)}</small></div><div class="result"><b>60mm plinth area</b><strong>${plinthArea.toFixed(2)} m²</strong><br><small>This area is also subtracted from the 100mm board area.</small></div><div class="result"><b>100mm board area</b><strong>${net100.toFixed(2)} m²</strong><br><small>${netWallArea.toFixed(2)} − ${plinthArea.toFixed(2)} m² plinth</small></div><div class="result"><b>Mortar / Glue</b><strong>${mortarBags} bags</strong><br><small>Both estimates use ${netWallArea.toFixed(2)} m² after subtracting windows (${wa.toFixed(2)} m²) and doors (${da.toFixed(2)} m²): ${boardBasedMortarBags} existing board-based (${b100}+${b60} boards at 1 bag/4 boards) + ${areaBasedMortarBags} area-based (18 bags/100 m²).</small></div><table><tr><th>Material</th><th>Required</th><th class="no-print">Warehouse</th></tr>${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="no-print">${stockTag(r[2],r[3])}</td></tr>`).join("")}</table>`
 }
 
 function printDelivery(){
@@ -1043,17 +1130,95 @@ async function searchHouses(){
   }catch(e){if(seq===houseSeq)renderHouseResults([],"House database unavailable. Open this page from the tracker server.")}
 }
 function setIf(id,v){if(v!=null&&v!=="")document.getElementById(id).value=v}
+function loadSurveyMeasurements(survey){
+  for(const id of ["windows","doors","hc"])document.getElementById(id).replaceChildren();
+  for(const item of survey.windows||[]){
+    const row=document.createElement("div");row.className="row window-group-row";
+    row.dataset.qty=item.qty;row.dataset.w=item.w;row.dataset.h=item.h;
+    row.innerHTML=`<div><label>${item.qty} x Window</label><input value="${item.w.toFixed(2)} m" disabled></div><div><label>Size</label><input value="${item.w.toFixed(2)} x ${item.h.toFixed(2)} m" disabled></div><div><label>Quantity</label><input value="${item.qty}" disabled></div>`;
+    document.getElementById("windows").append(row);
+  }
+  for(const item of survey.doors||[]){
+    for(let i=0;i<item.qty;i++){
+      addOpen("doors","Door",false);
+      const row=document.querySelector("#doors .row:last-child");
+      row.querySelector(".w").value=item.w;row.querySelector(".h").value=item.h;
+    }
+  }
+  for(const length of survey.house_corners||[]){
+    addCorner("hc",false);document.querySelector("#hc .row:last-child .cl").value=length;
+  }
+  const windows=survey.windows||[],doors=survey.doors||[],houseCorners=survey.house_corners||[];
+  const windowCornerLengths=windows.flatMap(item=>Array.from({length:item.qty},()=>[item.w,item.h,item.h])).flat();
+  const display=document.getElementById("surveyReadOnly");
+  display.replaceChildren();
+  const heading=document.createElement("div");heading.className="survey-summary-heading";
+  const title=document.createElement("strong");title.textContent="Survey measurements";
+  const caption=document.createElement("span");caption.textContent="Loaded from the selected house";
+  heading.append(title,caption);display.append(heading);
+  const grid=document.createElement("div");grid.className="survey-summary-grid";display.append(grid);
+  const section=(label,items,className="")=>{
+    const card=document.createElement("section");card.className=`survey-summary-section ${className}`.trim();
+    const name=document.createElement("div");name.className="survey-summary-title";name.textContent=label;card.append(name);
+    const values=document.createElement("div");values.className="survey-summary-values";card.append(values);grid.append(card);
+    if(!items.length){const empty=document.createElement("span");empty.className="survey-summary-empty";empty.textContent="None recorded";values.append(empty)}
+    return values;
+  };
+  const addDimensionGroups=(label,items,noun)=>{
+    const values=section(label,items);
+    for(const item of items){
+      const row=document.createElement("div");row.className="survey-summary-item";
+      const count=document.createElement("strong");count.textContent=`${item.qty} ${item.qty===1?noun:`${noun}s`}`;
+      const size=document.createElement("span");size.textContent=`${item.w.toFixed(2)} × ${item.h.toFixed(2)} m`;
+      row.append(count,size);values.append(row);
+    }
+  };
+  addDimensionGroups("Windows",windows,"window");
+  addDimensionGroups("Doors",doors,"door");
+  const houseValues=section("House corners",houseCorners);
+  if(houseCorners.length){
+    const total=houseCorners.reduce((sum,length)=>sum+length,0);
+    const summary=document.createElement("span");summary.className="survey-summary-empty";
+    summary.textContent=`${houseCorners.length} ${houseCorners.length===1?"length":"lengths"} · ${total.toFixed(2)} m total`;
+    houseValues.append(summary);
+    const list=document.createElement("div");list.className="survey-length-chips";
+    for(const length of houseCorners){const chip=document.createElement("span");chip.textContent=`${Number(length).toFixed(2)} m`;list.append(chip)}
+    houseValues.append(list);
+  }
+  const cornerValues=section("Window corners · calculated",windows,"window-corners");
+  if(windows.length){
+    for(const item of windows){
+      const row=document.createElement("div");row.className="survey-summary-item";
+      const formula=document.createElement("strong");formula.textContent=`${item.qty} × (${item.w.toFixed(2)} + 2 × ${item.h.toFixed(2)})`;
+      const total=document.createElement("span");total.textContent=`${(item.qty*(item.w+2*item.h)).toFixed(2)} m`;
+      row.append(formula,total);cornerValues.append(row);
+    }
+    const detail=document.createElement("span");detail.className="survey-summary-empty";
+    detail.textContent=`${windowCornerLengths.length} individual lengths · ${windowCornerLengths.reduce((sum,length)=>sum+length,0).toFixed(2)} m total. Each length is considered separately when reusing 2.5 m pieces.`;
+    cornerValues.append(detail);
+  }
+  if(survey.notes){
+    const note=document.createElement("div");note.className="survey-note";
+    const label=document.createElement("strong");label.textContent="Survey note: ";
+    note.append(label,document.createTextNode(survey.notes));display.append(note);
+  }
+  display.hidden=false;document.querySelector(".measurement-entry").hidden=true;
+}
 function chooseHouse(h){
   selectedHouse=h;
+  document.querySelector(".measurement-entry").hidden=false;
+  document.getElementById("surveyReadOnly").hidden=true;
   setIf("job",h.id);
   setIf("address",[h.address,h.postcode].filter(Boolean).join(", "));
   setIf("wall",h.area_m2);setIf("per",h.perimeter_m);
+  if(h.survey)loadSurveyMeasurements(h.survey);
+  else for(const id of ["windows","doors","hc"])document.getElementById(id).replaceChildren();
   hs.value="";closeHouseResults();
   hc.innerHTML="";
   [["House",h.id],["Owner",h.owner_name||"—"],["Postcode",h.postcode||"—"],["Area",fmt(h.area_m2,"m²")],["Perimeter",fmt(h.perimeter_m,"m")]].forEach(([k,v])=>{
     const s=document.createElement("span"),b=document.createElement("b");b.textContent=v;s.append(k+": ",b);hc.appendChild(s)});
-  const c=document.createElement("button");c.type="button";c.className="secondary";c.textContent="Change house";c.onclick=()=>{selectedHouse=null;hc.hidden=true;hs.focus()};hc.appendChild(c);
-  hc.hidden=false;hstat.textContent=h.source==="fictional_sample"?"Fictional sample data for testing only — replace with verified SEAI house measurements before planning a real job.":"Details loaded from the database. You can still edit any field.";
+  const c=document.createElement("button");c.type="button";c.className="secondary";c.textContent="Change house";c.onclick=()=>{selectedHouse=null;hc.hidden=true;document.querySelector(".measurement-entry").hidden=false;document.getElementById("surveyReadOnly").hidden=true;for(const id of ["windows","doors","hc"])document.getElementById(id).replaceChildren();calc();hs.focus()};hc.appendChild(c);
+  hc.hidden=false;hstat.textContent=h.source==="fictional_sample"?"Fictional sample data for testing only - replace with verified SEAI house measurements before planning a real job.":h.survey?`Survey measurements loaded${h.survey_updated_by?` (by ${h.survey_updated_by})`:""}.`:"Details loaded from the database. You can still edit any field.";
   calc()
 }
 hs.addEventListener("input",()=>{clearTimeout(houseTimer);houseTimer=setTimeout(searchHouses,200)});
@@ -1076,7 +1241,7 @@ async function saveToHouse(){
   const lens=sel=>vals(sel).filter(Boolean);
   const auto=[...document.querySelectorAll("#out table tr")].slice(1).map(tr=>[...tr.children].map(c=>c.textContent));
   const manualItems=[...document.querySelectorAll("#manual .manual")].map(r=>({material:(r.querySelector(".mv")||{}).value||r.dataset.fam,qty:r.querySelector(".mq").value.trim(),unit:r.querySelector(".mu").value,note:r.querySelector(".mn").value.trim()})).filter(x=>x.qty);
-  const data={job:g("job"),address:g("address"),wall_m2:+g("wall")||0,perimeter_m:+g("per")||0,plinth_m:+g("plinth")||0,board60:g("b60"),colour:g("colour"),texture:document.getElementById("texture").selectedOptions[0].text,windows:pairs("#windows .row"),doors:pairs("#doors .row"),house_corners:lens("#hc .cl"),opening_corners:lens("#oc .cl"),automatic:auto,items:(window.lastRows||[]).map(x=>({label:x[0],required:x[1],material:x[2],qty:x[3]})),manual:manualItems};
+  const data={job:g("job"),address:g("address"),wall_m2:+g("wall")||0,perimeter_m:+g("per")||0,plinth_m:+g("plinth")||0,board60:g("b60"),colour:g("colour"),texture:document.getElementById("texture").selectedOptions[0].text,windows:opens("windows"),doors:opens("doors"),house_corners:lens("#hc .cl"),automatic:auto,items:(window.lastRows||[]).map(x=>({label:x[0],required:x[1],material:x[2],qty:x[3]})),manual:manualItems};
   const btn=document.getElementById("saveToHouse");btn.disabled=true;st.textContent="Assigning…";
   try{
     const res=await fetch("/api/calculator/requests",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({house_id:selectedHouse.id,notes:g("notes"),data})});
@@ -1092,7 +1257,7 @@ function emailReq(){calc();location.href="mailto:?subject="+encodeURIComponent("
 const full=["Rockwool","Spacers","Gun foam","Caping 100mm","Caping joiner","Corner","End cap","Silicone","Downpipe","45° connector","Downpipe bracket long","Downpipe bracket short","Downpipe shoe","Screw"];
 const units=["pcs","bags","packs","rolls","buckets","m"];
 manual.innerHTML=stock.map(([name,opts])=>`<div class="manual" data-fam="${name}"><label>${name}<small class="mstock"></small></label>${opts?`<select class="mv" aria-label="${name} type">${opts.map(o=>`<option value="${full.includes(name)?name+" "+o:o}">${o}</option>`).join("")}</select>`:"<span></span>"}<input class="mq" type="number" min="0" step="any" placeholder="Qty" aria-label="${name} quantity"><select class="mu" aria-label="${name} unit">${units.map(u=>`<option>${u}</option>`).join("")}</select><input class="mn" placeholder="Notes" aria-label="${name} notes">${opts?`<button type="button" class="secondary row-add" aria-label="Add another ${name} type" title="Add another type of ${name} with a different quantity">+</button>`:"<span></span>"}</div>`).join("");
-addOpen("windows","Window");addOpen("doors","Door");calc();
+calc();
 manual.addEventListener("input",refreshManualStock);
 refreshManualStock();
 manual.addEventListener("click",e=>{

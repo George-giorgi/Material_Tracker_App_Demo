@@ -57,7 +57,7 @@ def seed_provided_houses(count=40):
                 """
                 INSERT INTO provided_houses
                     (id, postcode, address, owner_name, area_m2, perimeter_m, source)
-                VALUES (?, ?, ?, ?, ?, ?, 'government')
+                VALUES (?, ?, ?, ?, ?, ?, 'fictional_sample')
                 ON CONFLICT(id) DO UPDATE SET
                     address = CASE WHEN provided_houses.address = ''
                                    THEN excluded.address ELSE provided_houses.address END,

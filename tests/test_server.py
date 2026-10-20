@@ -1,5 +1,6 @@
 import http.client
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -1093,6 +1094,179 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_surveyor_can_only_access_ready_house_surveys(self):
+        httpd, thread = self.start_test_server()
+        try:
+            _, _, admin_cookie = self.http_request(
+                httpd, "POST", "/api/auth/setup",
+                {"username": "admin1", "display_name": "Admin", "pin": "123456"},
+            )
+            status, _, _ = self.http_request(
+                httpd, "POST", "/api/users",
+                {"username": "survey1", "display_name": "Surveyor", "pin": "234567", "role": "surveyor"},
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, survey_cookie = self.http_request(
+                httpd, "POST", "/api/auth/login", {"username": "survey1", "pin": "234567"}
+            )
+            self.assertEqual(status, 200)
+            with server.connect_db() as db:
+                with db:
+                    db.executemany(
+                        "INSERT INTO provided_houses(id, ready_for_start, source) VALUES (?, ?, 'tracker')",
+                        [("H-READY", 1), ("H-PENDING", 0)],
+                    )
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/calculator/houses?status=not_started", cookie=survey_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual([h["id"] for h in result["houses"]], ["H-READY"])
+            survey = {
+                "windows": [{"w": 1.2, "h": 1.0, "qty": 3}],
+                "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
+                "house_corners": [2.5], "notes": "Check access",
+            }
+            for invalid_survey in [
+                {**survey, "windows": [{"w": 1.2, "h": 1.0, "qty": 0}]},
+                {**survey, "doors": [{"w": float("nan"), "h": 2.0, "qty": 1}]},
+                {**survey, "house_corners": [-1]},
+                {**survey, "notes": "x" * 2001},
+            ]:
+                status, _, _ = self.http_request(
+                    httpd, "POST", "/api/house-survey",
+                    {"house_id": "H-READY", "survey": invalid_survey}, survey_cookie,
+                )
+                self.assertEqual(status, 400)
+            status, result, _ = self.http_request(
+                httpd, "POST", "/api/house-survey",
+                {"house_id": "H-READY", "survey": survey}, survey_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(result["saved"])
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/calculator/houses?q=H-READY", cookie=survey_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["houses"][0]["survey"], survey)
+            status, _, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=survey_cookie
+            )
+            self.assertEqual(status, 403)
+            with server.connect_db() as db:
+                with db:
+                    db.execute("UPDATE provided_houses SET ready_for_start = 0 WHERE id = 'H-READY'")
+            status, _, _ = self.http_request(
+                httpd, "POST", "/api/house-survey",
+                {"house_id": "H-READY", "survey": survey}, survey_cookie,
+            )
+            self.assertEqual(status, 409)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_admin_can_view_unstarted_house_notes_snags_and_detached_movement_history(self):
+        httpd, thread = self.start_test_server()
+        try:
+            _, _, admin_cookie = self.http_request(
+                httpd, "POST", "/api/auth/setup",
+                {"username": "admin1", "display_name": "Admin", "pin": "123456"},
+            )
+            material_id = self.add_material()
+            with server.connect_db() as db:
+                with db:
+                    db.execute(
+                        "INSERT INTO provided_houses(id, postcode, owner_name, notes) "
+                        "VALUES ('H-UNSTARTED', 'A1', 'Owner', 'House note retained')"
+                    )
+                    db.execute(
+                        "INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at) "
+                        "VALUES ('H-UNSTARTED', '{}', 'Survey note retained', 'Surveyor', ?)",
+                        (date.today().isoformat(),),
+                    )
+                    db.execute(
+                        "INSERT INTO house_snags(house_id, text, done, created_at) "
+                        "VALUES ('H-UNSTARTED', 'Repair the sill', 1, 1000)"
+                    )
+                    server._upsert_house(db, "H-UNSTARTED", "A1", "Owner", "Worker")
+                    server._record_movement(db, {
+                        "kind": "pickup",
+                        "date": date.today().isoformat(),
+                        "material_id": material_id,
+                        "qty": 2,
+                        "house_id": "H-UNSTARTED",
+                        "person": "Worker",
+                        "team": "Crew",
+                    })
+                    db.execute(
+                        "UPDATE movements SET house_id = NULL WHERE house_id = 'H-UNSTARTED'"
+                    )
+                    db.execute("DELETE FROM houses WHERE id = 'H-UNSTARTED'")
+            status, details, _ = self.http_request(
+                httpd, "GET", "/api/houses/H-UNSTARTED", cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(details["house"]["status"], "not_started")
+            self.assertEqual(details["house"]["notes"], "House note retained")
+            self.assertEqual(details["house"]["survey_notes"], "Survey note retained")
+            self.assertEqual(details["house"]["snags"][0]["text"], "Repair the sill")
+            self.assertTrue(details["house"]["snags"][0]["done"])
+            self.assertEqual(len(details["movements"]), 1)
+            self.assertIsNone(details["movements"][0]["house_id"])
+            self.assertEqual(details["movements"][0]["destination"], "house:H-UNSTARTED")
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(dashboard["house_summary"]["provided"], 1)
+            self.assertEqual(dashboard["house_summary"]["active"], 0)
+            self.assertEqual(dashboard["house_summary"]["closed"], 0)
+            self.assertEqual(dashboard["house_summary"]["ready"], 0)
+            self.assertEqual(dashboard["house_summary"]["not_started"], 1)
+            self.assertEqual(len(dashboard["movements"]), 1)
+            status, _, _ = self.http_request(
+                httpd, "POST", "/api/houses/archive",
+                {"id": "H-UNSTARTED", "archived": False}, admin_cookie,
+            )
+            self.assertEqual(status, 404)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_surveyor_role_migration_preserves_users_and_sessions(self):
+        legacy_path = Path(self.temp_dir.name) / "legacy.sqlite3"
+        with sqlite3.connect(legacy_path) as db:
+            db.executescript("""
+                CREATE TABLE app_users (
+                    id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    display_name TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+                    password_salt BLOB NOT NULL, password_hash BLOB NOT NULL,
+                    password_iterations INTEGER NOT NULL,
+                    credential_type TEXT NOT NULL DEFAULT 'pin', is_active INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE TABLE app_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    expires_at INTEGER NOT NULL
+                );
+                INSERT INTO app_users VALUES (1, 'admin1', 'Admin', 'admin', X'01', X'02', 1, 'pin', 1);
+                INSERT INTO app_sessions VALUES ('session-hash', 1, 9999999999);
+            """)
+        db.close()
+        original_path = server.DB_PATH
+        try:
+            server.DB_PATH = legacy_path
+            server.initialize_db()
+            with server.connect_db() as db:
+                self.assertEqual(db.execute("SELECT role FROM app_users WHERE id = 1").fetchone()[0], "admin")
+                self.assertEqual(db.execute("SELECT user_id FROM app_sessions WHERE token_hash = 'session-hash'").fetchone()[0], 1)
+                db.execute("UPDATE app_users SET role = 'surveyor' WHERE id = 1")
+        finally:
+            server.DB_PATH = original_path
+
     def test_movement_flow_updates_warehouse_team_and_house_balances(self):
         material_id = self.add_material()
         self.add_movement(material_id, "collection", 6, person="A", team="Crew A")
@@ -1210,6 +1384,18 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(
             summary, {"provided": 3, "active": 1, "closed": 1, "ready": 0, "not_started": 1}
         )
+
+    def test_legacy_archive_column_is_removed_from_house_schema(self):
+        if sqlite3.sqlite_version_info < (3, 35, 0):
+            self.skipTest("SQLite before 3.35 does not support DROP COLUMN.")
+        with server.connect_db() as db:
+            db.execute(
+                "ALTER TABLE houses ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0"
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(houses)")}
+        self.assertNotIn("is_archived", columns)
 
     def test_dashboard_orders_open_houses_by_latest_status_change(self):
         with server.connect_db() as db:
@@ -1618,6 +1804,47 @@ class TrackerTests(unittest.TestCase):
             ).fetchall()
             self.assertEqual([row["house_id"] for row in rows], ["H-OLD", "H-OLD"])
             self.assertEqual([row["delivery_number"] for row in rows], [1, 2])
+
+    def test_house_checklists_survive_resetting_active_houses(self):
+        with server.connect_db() as db:
+            db.executescript(
+                """
+                INSERT INTO provided_houses(id) VALUES ('H-CHECK');
+                INSERT INTO houses(id) VALUES ('H-CHECK');
+                DROP TABLE house_checklists;
+                CREATE TABLE house_checklists (
+                    house_id TEXT PRIMARY KEY REFERENCES houses(id) ON DELETE CASCADE,
+                    scaffolding_status TEXT,
+                    esb_unclipped TEXT,
+                    plumber_status TEXT
+                );
+                INSERT INTO house_checklists
+                    (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                VALUES ('H-CHECK', 'done', 'yes', 'not_necessary');
+                """
+            )
+
+        server.initialize_db()
+        with server.connect_db() as db:
+            self.assertEqual(
+                tuple(db.execute(
+                    "SELECT scaffolding_status, esb_unclipped, plumber_status "
+                    "FROM house_checklists WHERE house_id = 'H-CHECK'"
+                ).fetchone()),
+                ("done", "yes", "not_necessary"),
+            )
+            parent = db.execute(
+                "PRAGMA foreign_key_list(house_checklists)"
+            ).fetchone()["table"]
+            self.assertEqual(parent, "provided_houses")
+            db.execute("DELETE FROM houses WHERE id = 'H-CHECK'")
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_checklists WHERE house_id = 'H-CHECK'"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def create_workbook(self, opening, movements):
         path = Path(self.temp_dir.name) / "input.xlsx"

@@ -20,6 +20,23 @@ APP_JS = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 CATALOG = {item["name"] for item in json.loads((ROOT / "demo_catalog.json").read_text())}
 
 
+def calculate_material_scenarios(scenarios):
+    calculator = CALC_HTML[
+        CALC_HTML.index("function calculateMaterialQuantities"):
+        CALC_HTML.index("function calc(){")
+    ]
+    corner = next(line for line in CALC_HTML.splitlines() if line.startswith("function corner("))
+    script = (
+        f"const up=x=>Math.ceil(x-1e-9);\n{corner}\n{calculator}\nconst scenarios="
+        + json.dumps(scenarios)
+        + ";console.log(JSON.stringify(scenarios.map(calculateMaterialQuantities)))"
+    )
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+    return json.loads(result.stdout)
+
+
 class FlowBase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -110,6 +127,14 @@ class ProvidedHouseSummaryTests(FlowBase):
         self.assertEqual(s, {"provided": 5, "active": 1, "closed": 1, "ready": 0, "not_started": 3})
         self.assertEqual(s["active"] + s["closed"] + s["not_started"], s["provided"])
 
+    def test_fifty_provided_houses_all_count_as_not_started(self):
+        for number in range(50):
+            self.provide(f"SEAI-{number:03}")
+        self.assertEqual(
+            self.summary(),
+            {"provided": 50, "active": 0, "closed": 0, "ready": 0, "not_started": 50},
+        )
+
     def test_reopening_a_house_moves_it_from_closed_to_active(self):
         self.provide("P-1")
         with server.connect_db() as db:
@@ -166,7 +191,7 @@ class SeedTests(FlowBase):
         self.assertTrue(row["postcode"] and row["address"] and row["owner_name"])
         self.assertGreater(row["area_m2"], 0)
         self.assertGreater(row["perimeter_m"], 0)
-        self.assertEqual(row["source"], "government")
+        self.assertEqual(row["source"], "fictional_sample")
 
     def test_seed_does_not_overwrite_edited_details(self):
         seed_houses.seed_provided_houses(3)
@@ -333,8 +358,73 @@ class CalculatorApiTests(HttpBase):
         self.assertEqual(dashboard["house_summary"],
                          {"provided": 3, "active": 1, "closed": 0, "ready": 0, "not_started": 2})
 
+    def test_dashboard_summary_includes_maptest_houses_in_combined_totals(self):
+        with server.connect_db() as db:
+            with db:
+                db.execute(
+                    "INSERT INTO provided_houses(id, postcode, source, ready_for_start) "
+                    "VALUES ('MAPTEST-READY', 'F12 TEST', 'map_test', 1)"
+                )
+                db.execute(
+                    "INSERT INTO provided_houses(id, postcode, source, ready_for_start) "
+                    "VALUES ('MAPTEST-ACTIVE', 'F12 TEST', 'map_test', 1)"
+                )
+                server._upsert_house(db, "MAPTEST-ACTIVE")
+        self.activate({"id": "WH2131"})
+        _, dashboard, _ = self.call("GET", "/api/dashboard")
+        self.assertEqual(
+            dashboard["house_summary"],
+            {"provided": 5, "active": 2, "closed": 0, "ready": 1, "not_started": 2},
+        )
+
 
 class EndToEndFlowTests(HttpBase):
+    def test_ready_house_survey_notes_measurements_activation_and_calculator_request(self):
+        self.provide("WH-SURVEY-1", "T1", "1 Survey Lane", "Survey Owner", 100, 40)
+        self.assertEqual(
+            self.call("POST", "/api/houses/plan", {"id": "WH-SURVEY-1", "ready": True})[0],
+            200,
+        )
+        _, listed, _ = self.call("GET", "/api/calculator/houses?status=ready&q=WH-SURVEY-1")
+        self.assertIsNone(listed["houses"][0]["survey"])
+
+        survey = {
+            "windows": [{"w": 1.2, "h": 1.5, "qty": 2}],
+            "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
+            "house_corners": [2.4, 3.1],
+            "notes": "Rear access confirmed; double-check corner by the kitchen.",
+        }
+        status, saved, _ = self.call(
+            "POST", "/api/house-survey",
+            {"house_id": "WH-SURVEY-1", "survey": survey},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(saved["saved"])
+        self.assertEqual(saved["survey"]["notes"], survey["notes"])
+
+        _, listed, _ = self.call("GET", "/api/calculator/houses?q=WH-SURVEY-1")
+        self.assertEqual(listed["houses"][0]["survey"], survey)
+        status, _, _ = self.call("POST", "/api/houses", {
+            "id": "WH-SURVEY-1", "postcode": "T1", "owner_name": "Survey Owner",
+        })
+        self.assertEqual(status, 201)
+        _, active, _ = self.call("GET", "/api/calculator/houses?q=WH-SURVEY-1")
+        self.assertEqual(active["houses"][0]["status"], "active")
+        self.assertEqual(active["houses"][0]["survey"]["notes"], survey["notes"])
+
+        data = {"items": [{
+            "label": "Mortar bags (Glue)", "material": "Mortage bags(Glue)",
+            "qty": 51, "required": "51 bags",
+        }], "survey_note": active["houses"][0]["survey"]["notes"]}
+        status, _, _ = self.call(
+            "POST", "/api/calculator/requests",
+            {"house_id": "WH-SURVEY-1", "notes": survey["notes"], "data": data},
+        )
+        self.assertEqual(status, 201)
+        _, requests, _ = self.call("GET", "/api/calculator/requests?house_id=WH-SURVEY-1")
+        self.assertEqual(requests["requests"][0]["data"], data)
+        self.assertEqual(requests["requests"][0]["data"]["items"][0]["qty"], 51)
+
     def test_seai_house_to_activation_assignment_and_pickup(self):
         self.provide("WH2140", "T1", "5 Elm Grove", "Owner", 250.0, 50.0)
         board = self.add_material("Board 100mm", 100)
@@ -717,6 +807,93 @@ class CalculatorMaterialMappingTests(unittest.TestCase):
         self.assertEqual(unresolved - self.UNTRACKED, set(), "calculator items missing from tracker catalog")
 
 
+@unittest.skipUnless(shutil.which("node"), "node is required for the calculator logic scenarios")
+class CalculatorScenarioTests(unittest.TestCase):
+    def calculate(self, scenarios):
+        return calculate_material_scenarios(scenarios)
+
+    def test_mortar_adds_area_allowance_to_existing_board_based_amount(self):
+        results = self.calculate([{"wall": area} for area in (100, 200, 80)])
+        self.assertEqual(
+            [(r["areaBasedMortarBags"], r["boardBasedMortarBags"], r["mortarBags"]) for r in results],
+            [(18, 35, 53), (36, 70, 106), (15, 28, 43)],
+        )
+
+    def test_mortar_area_allowance_uses_net_wall_after_window_and_door_areas(self):
+        full_wall, after_openings = self.calculate([{"wall": 100}, {
+            "wall": 100,
+            "windows": [{"w": 2, "h": 2}],
+            "doors": [{"w": 0.9, "h": 2}],
+        }])
+        self.assertAlmostEqual(after_openings["netWallArea"], 94.2)
+        self.assertEqual((full_wall["areaBasedMortarBags"], full_wall["boardBasedMortarBags"]), (18, 35))
+        self.assertEqual(
+            (
+                after_openings["areaBasedMortarBags"],
+                after_openings["boardBasedMortarBags"],
+                after_openings["mortarBags"],
+            ),
+            (17, 33, 50),
+        )
+        self.assertLess(after_openings["areaBasedMortarBags"], full_wall["areaBasedMortarBags"])
+        self.assertLess(after_openings["boardBasedMortarBags"], full_wall["boardBasedMortarBags"])
+
+    def test_survey_measurements_produce_mortar_quantity_saved_in_workflow(self):
+        result = self.calculate([{
+            "wall": 100, "perimeter": 40, "plinth": 0.3, "texture": 2.9,
+            "windows": [{"w": 1.2, "h": 1.5}, {"w": 1.2, "h": 1.5}],
+            "doors": [{"w": 0.9, "h": 2.0}],
+            "houseCorners": [2.4, 3.1],
+        }])[0]
+        self.assertAlmostEqual(result["netWallArea"], 94.6)
+        self.assertEqual(
+            (
+                result["areaBasedMortarBags"],
+                result["boardBasedMortarBags"],
+                result["mortarBags"],
+            ),
+            (18, 33, 51),
+        )
+
+    def test_original_material_formulas_match_existing_html_logic(self):
+        result = self.calculate([{
+            "wall": 250,
+            "perimeter": 50,
+            "plinth": 0.3,
+            "texture": 2.9,
+            "windows": [{"w": 1.2, "h": 1.5}, {"w": 1.5, "h": 1.2}],
+            "doors": [{"w": 0.9, "h": 2}],
+            "houseCorners": [2.5],
+        }])[0]
+        expected = {
+            "wa": 3.6, "da": 1.8, "net": 244.6, "plinthArea": 15,
+            "net100": 229.6, "b100": 319, "b60": 21, "b20": 6,
+            "boardBasedMortarBags": 85, "pin100": 8, "pin60": 1, "starter": 25,
+            "profile": 6, "mesh": 5, "primer": 2, "finish": 29,
+        }
+        for key, value in expected.items():
+            if isinstance(value, float):
+                self.assertAlmostEqual(result[key], value, msg=key)
+            else:
+                self.assertEqual(result[key], value, key)
+        self.assertEqual((result["areaBasedMortarBags"], result["mortarBags"]), (45, 130))
+        self.assertEqual(result["windowCornerLengths"], [1.2, 1.5, 1.5, 1.5, 1.2, 1.2])
+
+    def test_zero_area_and_incomplete_openings_do_not_add_materials(self):
+        zero, incomplete = self.calculate([
+            {"wall": 0},
+            {"wall": 10, "windows": [{"w": 1, "h": 0}, {"w": 0, "h": 1}]},
+        ])
+        self.assertEqual(
+            (zero["areaBasedMortarBags"], zero["boardBasedMortarBags"], zero["mortarBags"]),
+            (0, 0, 0),
+        )
+        self.assertEqual(
+            (incomplete["netWallArea"], incomplete["wa"], incomplete["areaBasedMortarBags"]),
+            (10, 0, 2),
+        )
+
+
 @unittest.skipUnless(shutil.which("node"), "node is required for the front-end logic tests")
 class ReadyForStartAndNotesTests(HttpBase):
     def setUp(self):
@@ -744,7 +921,143 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(self.listing("ready"), {})
         self.assertEqual(self.summary()["not_started"], 2)
 
+    def test_not_started_listing_returns_address_area_and_perimeter(self):
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET area_m2 = 142.5, perimeter_m = 51.2 WHERE id = 'WH1'"
+            )
+        house = self.listing("not_started")["WH1"]
+        self.assertEqual((house["address"], house["area_m2"], house["perimeter_m"]),
+                         ("1 Elm", 142.5, 51.2))
+
+    def test_location_csv_import_preserves_house_state_and_exposes_map_coordinates(self):
+        self.plan({"id": "WH1", "ready": True, "notes": "Keep rear access clear"})
+        contents = (
+            "house_id,eircode,address,owner_name,latitude,longitude,area_m2,perimeter_m\n"
+            "WH1,T12 AB12,1 Elm Road,Ciaran Example,51.8985,-8.4756,142.5,51.2\n"
+        ).encode("utf-8")
+        with server.connect_db() as db:
+            with db:
+                result = server._import_house_locations_csv(db, contents)
+            house = db.execute(
+                "SELECT postcode, address, owner_name, latitude, longitude, area_m2, "
+                "perimeter_m, ready_for_start, notes, source FROM provided_houses "
+                "WHERE id = 'WH1'"
+            ).fetchone()
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["imported"], 0)
+        self.assertEqual(
+            tuple(house),
+            (
+                "T12 AB12", "1 Elm Road", "Ciaran Example", 51.8985, -8.4756,
+                142.5, 51.2, 1, "Keep rear access clear", "government",
+            ),
+        )
+        _, mapped, _ = self.call("GET", "/api/calculator/houses?status=all")
+        map_house = next(row for row in mapped["houses"] if row["id"] == "WH1")
+        self.assertEqual(
+            (map_house["status"], map_house["latitude"], map_house["longitude"]),
+            ("ready", 51.8985, -8.4756),
+        )
+
+    def test_location_csv_rejects_invalid_coordinates_without_partial_import(self):
+        contents = (
+            "house_id,eircode,latitude,longitude\n"
+            "WH3,T12 AB12,91,-8.4\n"
+            "WH4,T12 CD34,51.9,-8.4\n"
+        ).encode("utf-8")
+        with server.connect_db() as db:
+            with self.assertRaisesRegex(server.ApiError, "invalid latitude"):
+                with db:
+                    server._import_house_locations_csv(db, contents)
+            self.assertIsNone(
+                db.execute("SELECT 1 FROM provided_houses WHERE id = 'WH4'").fetchone()
+            )
+
+    def test_location_csv_upload_route_accepts_admin_file(self):
+        boundary = "house-map-test-boundary"
+        csv_data = (
+            b"house_id,eircode,latitude,longitude\n"
+            b"WH3,T12 AB12,51.8985,-8.4756\n"
+        )
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="houses.csv"\r\n'
+            "Content-Type: text/csv\r\n\r\n"
+        ).encode() + csv_data + f"\r\n--{boundary}--\r\n".encode()
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+        connection.request(
+            "POST",
+            "/api/houses/import",
+            body=body,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(len(body)),
+                "Cookie": self.cookie,
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        self.assertEqual(response.status, 201)
+        self.assertEqual((payload["imported"], payload["updated"]), (1, 0))
+        with server.connect_db() as db:
+            row = db.execute(
+                "SELECT postcode, latitude, longitude FROM provided_houses WHERE id = 'WH3'"
+            ).fetchone()
+        self.assertEqual(tuple(row), ("T12 AB12", 51.8985, -8.4756))
+
+    def test_map_listing_contains_only_ready_and_active_houses_with_stages(self):
+        self.provide("WH3", "T3", "3 Elm", "Owner3")
+        self.plan({"id": "WH1", "ready": True})
+        self.activate({"id": "WH2", "postcode": "T2", "owner_name": "Owner2"})
+        self.call(
+            "POST",
+            "/api/houses/status",
+            {"id": "WH2", "finished": True},
+        )
+        _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
+        self.assertEqual(
+            {house["id"]: house["status"] for house in mapped["houses"]},
+            {"WH1": "ready"},
+        )
+        self.plan({"id": "WH1", "ready": False})
+        self.activate({"id": "WH1", "postcode": "T1", "owner_name": "Owner"})
+        with server.connect_db() as db:
+            db.execute("UPDATE houses SET stage = 2 WHERE id = 'WH1'")
+        _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
+        self.assertEqual(
+            {house["id"]: (house["status"], house["stage"]) for house in mapped["houses"]},
+            {"WH1": ("active", 2)},
+        )
+
+    def test_map_and_ready_listing_combine_provided_and_maptest_houses(self):
+        self.plan({"id": "WH1", "ready": True})
+        self.plan({"id": "WH2", "ready": True})
+        with server.connect_db() as db:
+            with db:
+                for index in range(9):
+                    db.execute(
+                        """INSERT INTO provided_houses
+                           (id, postcode, source, ready_for_start, latitude, longitude)
+                           VALUES (?, ?, 'map_test', 1, 53.4, -8.1)""",
+                        (f"MAPTEST-{index:02}", f"TEST-{index:02}"),
+                    )
+
+        _, ready, _ = self.call("GET", "/api/calculator/houses?status=ready")
+        _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
+        _, all_ready, _ = self.call("GET", "/api/calculator/houses?status=ready")
+        self.assertEqual(len(ready["houses"]), 11)
+        self.assertEqual(len(mapped["houses"]), 11)
+        self.assertEqual({house["status"] for house in mapped["houses"]}, {"ready"})
+        self.assertEqual(len(all_ready["houses"]), 11)
+
     def test_activation_clears_ready_and_carries_planned_checklist_and_notes(self):
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET area_m2 = 142.5, perimeter_m = 51.2 "
+                "WHERE id = 'WH1'"
+            )
         self.plan({"id": "WH1", "ready": True, "notes": "Key with neighbour"})
         status, _, _ = self.call("POST", "/api/house-checklist", {
             "house_id": "WH1", "scaffolding_status": "done",
@@ -758,8 +1071,54 @@ class ReadyForStartAndNotesTests(HttpBase):
         _, dash, _ = self.call("GET", "/api/dashboard")
         house = next(h for h in dash["house_list"] if h["id"] == "WH1")
         self.assertEqual(house["notes"], "Key with neighbour")
+        self.assertEqual(
+            (house["postcode"], house["address"], house["area_m2"], house["perimeter_m"]),
+            ("T1", "1 Elm", 142.5, 51.2),
+        )
         self.assertEqual((house["scaffolding_status"], house["esb_unclipped"], house["plumber_status"]),
                          ("done", "no", "not_necessary"))
+        _, details, _ = self.call("GET", "/api/houses/WH1")
+        self.assertEqual(
+            (details["house"]["postcode"], details["house"]["address"],
+             details["house"]["area_m2"], details["house"]["perimeter_m"]),
+            ("T1", "1 Elm", 142.5, 51.2),
+        )
+
+    def test_activation_uses_saved_house_details_and_map_status(self):
+        self.provide("WH-ACTIVE", "T12 AB12", "17 Main Street, Cork", "Owner", 142.5, 51.2)
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET latitude = 51.8985, longitude = -8.4756 "
+                "WHERE id = 'WH-ACTIVE'"
+            )
+        self.plan({"id": "WH-ACTIVE", "ready": True})
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/houses",
+            {"id": "WH-ACTIVE", "postcode": "WRONG", "owner_name": "Wrong owner"},
+        )
+        self.assertEqual(status, 201)
+        with server.connect_db() as db:
+            active = db.execute(
+                "SELECT postcode, owner_name FROM houses WHERE id = 'WH-ACTIVE'"
+            ).fetchone()
+        self.assertEqual(tuple(active), ("T12 AB12", "Owner"))
+
+        _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
+        house = next(item for item in mapped["houses"] if item["id"] == "WH-ACTIVE")
+        self.assertEqual(
+            (
+                house["status"],
+                house["postcode"],
+                house["address"],
+                house["area_m2"],
+                house["perimeter_m"],
+                house["latitude"],
+                house["longitude"],
+            ),
+            ("active", "T12 AB12", "17 Main Street, Cork", 142.5, 51.2, 51.8985, -8.4756),
+        )
 
     def test_notes_work_for_any_house_and_are_validated(self):
         self.activate({"id": "WH2"})
@@ -929,7 +1288,8 @@ class SnagTests(HttpBase):
 
 class UiWiringTests(unittest.TestCase):
     def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
-        self.assertIn('${isReady ? `<button class="text-button seai-activate"', APP_JS)
+        self.assertIn('${!isReady ? `<button class="text-button plan-ready-toggle"', APP_JS)
+        self.assertIn('${h.survey ? "Review survey" : "Enter survey measurements"}', APP_JS)
 
     def test_plan_lists_refresh_without_flashing_loading_state(self):
         body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]
@@ -953,13 +1313,14 @@ class UiWiringTests(unittest.TestCase):
 
     """Guards for the markup/JS hooks the flow depends on."""
 
-    def test_overview_card_has_three_clickable_status_tiles(self):
+    def test_overview_house_counts_show_combined_tracker_totals(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
-        for view in ("", "active", "closed"):
+        for view in ("", "active", "closed", "ready"):
             self.assertIn(f'data-house-view="{view}"', html)
         for element_id in ("stat-provided", "stat-houses", "stat-closed", "stat-not-started"):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn("From SEAI", html)
+        self.assertIn("data.house_summary ||", APP_JS)
 
     def test_active_house_dialog_has_seai_search_and_redirects_to_calculator(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -971,6 +1332,178 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('get("house")', CALC_HTML)
         self.assertIn("Assigned to house</button>", CALC_HTML)
         self.assertNotIn(">Save to house<", CALC_HTML)
+
+    def test_survey_window_quantity_uses_a_dropdown(self):
+        survey_row = APP_JS[APP_JS.index("function surveyRow"):APP_JS.index("function openHouseSurvey")]
+        self.assertIn("Math.max(20, quantity)", survey_row)
+        self.assertIn('Quantity<select>${options}</select>', survey_row)
+
+    def test_window_corner_lengths_are_derived_without_additional_entry_fields(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        calc = CALC_HTML[CALC_HTML.index("function calc()"):CALC_HTML.index("function printDelivery()")]
+        quantity_helper = CALC_HTML[
+            CALC_HTML.index("function calculateMaterialQuantities"):
+            CALC_HTML.index("function calc(){")
+        ]
+        self.assertNotIn('data-survey-list="opening_corners"', html)
+        self.assertNotIn('id="oc"', CALC_HTML)
+        self.assertIn("W.flatMap(x=>[x.w,x.h,x.h])", quantity_helper)
+        self.assertIn("houseCornerLengths.concat(windowCornerLengths)", quantity_helper)
+        loader = CALC_HTML[CALC_HTML.index("function loadSurveyMeasurements"):CALC_HTML.index("function chooseHouse")]
+        self.assertIn("item.w,item.h,item.h", loader)
+        self.assertNotIn("survey.opening_corners", loader)
+
+    def test_calculator_measurement_card_starts_clean_and_explains_corner_estimate(self):
+        self.assertIn('id="windows" class="measurement-list"', CALC_HTML)
+        self.assertIn('id="doors" class="measurement-list"', CALC_HTML)
+        self.assertNotIn('addOpen("windows","Window");addOpen("doors","Door")', CALC_HTML)
+        self.assertIn("filter(r=>r.w>0&&r.h>0)", CALC_HTML)
+        self.assertIn('id="cornerSummary" aria-live="polite"', CALC_HTML)
+        self.assertIn("Window corners include each window width and both sides.", CALC_HTML)
+
+    def test_survey_loaded_summary_groups_measurements_and_corner_formula(self):
+        loader = CALC_HTML[CALC_HTML.index("function loadSurveyMeasurements"):CALC_HTML.index("function chooseHouse")]
+        self.assertIn('className="survey-summary-grid"', loader)
+        self.assertIn("item.qty*(item.w+2*item.h)", loader)
+        self.assertIn("Each length is considered separately when reusing 2.5 m pieces.", loader)
+        self.assertIn('className="survey-note"', loader)
+
+    def test_saved_survey_is_marked_and_has_a_review_action(self):
+        self.assertIn("function surveyStatusBadge(survey)", APP_JS)
+        self.assertIn('class="status-pill survey-complete">Survey recorded', APP_JS)
+        self.assertIn('${h.survey ? "Review survey" : "Enter survey measurements"}', APP_JS)
+        self.assertIn('${h.survey ? "survey-reviewed" : "survey-needed"}', APP_JS)
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(".house-card .house-card-actions .house-survey-open.survey-reviewed::before", css)
+        self.assertIn(".status-pill.survey-complete", css)
+
+    def test_ready_house_actions_have_distinct_accessible_colors(self):
+        for action in ("seai-activate", "house-survey-open", "house-note-open"):
+            self.assertIn(f'class="text-button {action}', APP_JS)
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        for color in ("seai-activate", "house-survey-open.survey-needed", "house-survey-open.survey-reviewed", "house-note-open", "house-snags-open", "house-record-movement", "house-finish-toggle", "house-open"):
+            self.assertIn(f".house-card .house-card-actions .{color}", css)
+        self.assertIn(".house-card .house-card-actions .text-button:focus-visible", css)
+
+    def test_active_house_card_shows_content_without_nested_scroll_area(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(".house-card:has(.house-body) { min-height: 290px; height: auto;", css)
+        self.assertIn(".house-body { flex: 0 1 auto; min-height: 0; overflow: visible;", css)
+        self.assertIn(".house-grid { grid-auto-rows: 500px; align-items: stretch; }", css)
+        self.assertIn(".house-card:has(.house-body) { height: 500px; min-height: 500px; }", css)
+        self.assertIn(".house-card .house-body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto;", css)
+        self.assertIn(".house-card .house-card-actions { display: grid; height: 198px; min-height: 198px; max-height: 198px;", css)
+        self.assertIn("list.classList.toggle(\"house-grid-compact\", !isReady)", APP_JS)
+        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: 380px; }", css)
+        self.assertIn(".house-grid.house-grid-compact .house-pending { height: 380px; min-height: 380px; }", css)
+        self.assertIn(".house-grid.house-grid-compact .house-pending .house-card-actions { height: auto; min-height: 0; max-height: none; grid-template-rows: auto; }", css)
+        self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", css)
+        self.assertIn('class="house-card-actions"', APP_JS)
+        self.assertIn('class="stage-switch" role="group" aria-label="Stage"', APP_JS)
+        self.assertIn('.house-card .house-card-actions .stage-btn[data-stage="1"].on', css)
+        self.assertIn('.house-card .house-card-actions .stage-btn[data-stage="2"].on', css)
+        self.assertIn(".house-card .house-card-actions .stage-btn:focus-visible", css)
+
+    def test_archive_feature_is_removed_and_not_started_cards_show_workflow(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("archived", html.lower())
+        self.assertNotIn("is_archived", APP_JS)
+        self.assertNotIn("house-archive-toggle", APP_JS)
+        self.assertNotIn("archived", css.lower())
+        self.assertIn('class="house-workflow"', APP_JS)
+        self.assertIn("house-workflow-steps", css)
+        self.assertIn("Stage 1/2 work stages appear after activation.", APP_JS)
+        self.assertIn('class="text-button house-open"', APP_JS)
+        self.assertIn('id="house-detail-notes"', html)
+        self.assertIn('id="house-detail-snags"', html)
+        self.assertIn("house.survey_notes", APP_JS)
+        self.assertIn("house.snags || []", APP_JS)
+        self.assertIn('$("#go-overview").classList.toggle("hidden", tab === "overview")', APP_JS)
+
+    def test_not_started_and_closed_cards_show_only_allowed_actions(self):
+        not_started_html = APP_JS[
+            APP_JS.index("async function renderNotStartedHouses"):
+            APP_JS.index("function openHouseNote")
+        ]
+        not_started_actions = not_started_html[
+            not_started_html.index('<div class="house-card-actions">'):
+        ]
+        not_started = re.search(
+            r"\$\{!isReady \? `([\s\S]*?)` :", not_started_actions
+        )
+        closed = re.search(
+            r"\$\{house\.is_finished \? `([\s\S]*?)` : `", APP_JS
+        )
+        self.assertIsNotNone(not_started)
+        self.assertIsNotNone(closed)
+        self.assertEqual(
+            re.findall(r'<button class="text-button ([^"]+)', not_started.group(1)),
+            ["plan-ready-toggle", "house-note-open"],
+        )
+        self.assertEqual(
+            re.findall(r'<button class="text-button ([^"]+)', closed.group(1)),
+            ["house-finish-toggle", "house-open"],
+        )
+        ready_actions = re.search(r": `([\s\S]*?)`\}", not_started_actions)
+        self.assertIsNotNone(ready_actions)
+        self.assertNotIn("house-snags-open", ready_actions.group(1))
+        self.assertIn("h.area_m2", APP_JS)
+        self.assertIn("h.perimeter_m", APP_JS)
+        self.assertIn('id="go-overview"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        self.assertIn('$("#go-overview").addEventListener("click", goToHomeView)', APP_JS)
+
+    def test_logo_returns_to_overview_and_hides_overview_shortcut(self):
+        self.assertIn('$$(".brand, .mobile-brand").forEach((link) =>', APP_JS)
+        self.assertIn('link.addEventListener("click", goToHomeView)', APP_JS)
+        self.assertIn('setTab("overview");\n  showHousesOverview();', APP_JS)
+        self.assertIn('$("#go-overview").classList.toggle("hidden", tab === "overview")', APP_JS)
+        self.assertIn('$("#go-overview").classList.add("hidden")', APP_JS)
+        self.assertIn('button.setAttribute("aria-current", "page")', APP_JS)
+
+    def test_seai_map_shows_house_stages_and_supports_map_actions(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        for element in (
+            'id="house-map-view"',
+            'id="house-map-canvas"',
+            'id="house-map-markers"',
+            'id="house-map-selection"',
+            'id="house-locations-import"',
+        ):
+            self.assertIn(element, html)
+        legend = html[html.index('class="house-map-legend"'):html.index("</div>", html.index('class="house-map-legend"'))]
+        self.assertNotIn("Not started", legend)
+        self.assertNotIn("Closed", legend)
+        self.assertIn("Ready for start", legend)
+        self.assertIn("Active · Stage 1", legend)
+        self.assertIn("Active · Stage 2", legend)
+        self.assertIn('if (tile.dataset.houseView === "")', APP_JS)
+        self.assertIn('request("/api/calculator/houses?status=map")', APP_JS)
+        self.assertIn('request(`/api/calculator/houses?status=${mode}`)', APP_JS)
+        self.assertIn(".house-grid.house-grid-ready { grid-auto-rows: 410px; }", css)
+        self.assertIn("scroll-snap-type: y proximity", css)
+        self.assertIn('marker.dataset.stage = String(house.stage || 1)', APP_JS)
+        self.assertIn("TEST ONLY: synthetic coordinates", APP_JS)
+        self.assertIn("do not identify the Eircode location", APP_JS)
+        self.assertIn("synthetic address, area, perimeter, and map coordinates", APP_JS)
+        self.assertIn('house.status === "active" ? String(house.stage || 1) : "R"', APP_JS)
+        self.assertIn("mapHouseActions(displayHouse)", APP_JS)
+        self.assertIn("https://tile.openstreetmap.org/", APP_JS)
+        self.assertIn("map-status-active[data-stage=\"2\"]", css)
+        self.assertIn(".house-map-selection .house-card-actions .seai-activate", css)
+        self.assertIn(".house-map-list-item:focus-visible", css)
+        self.assertIn("We will not invent a residential postcode", html)
+
+    def test_presentation_guide_covers_survey_stages_and_house_history(self):
+        guide = (ROOT / "DEMO-PRESENTATION.md").read_text(encoding="utf-8")
+        self.assertIn("Ready for start", guide)
+        self.assertIn("survey", guide.lower())
+        self.assertIn("Stage 1", guide)
+        self.assertIn("Stage 2", guide)
+        self.assertNotIn("archive", guide.lower())
+        self.assertIn("snag history", guide.lower())
+        self.assertIn("50 provided houses", guide)
 
     def test_record_movement_hooks(self):
         self.assertIn('id="house-request"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))

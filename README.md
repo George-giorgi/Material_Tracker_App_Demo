@@ -81,14 +81,52 @@ are not real SEAI or stock data and must not be used for real jobs.
 ## Present the demo
 
 Open the app and click **Presentation guide**. It walks through adding a
-fictional house, recording a warehouse pickup and extra delivery, returning
-unused material, transferring stock to another site, reviewing balances,
-finishing the house, and searching its movement history. The guide supplies
-English narration and opens the relevant forms prefilled; review and save each
-form during the presentation.
+fictional house from Ready for start through survey, activation, stage
+progress, warehouse pickup, extra delivery, return, crew transfer, completion,
+and retained house history. The guide supplies English narration and opens
+the relevant views and forms; review and save each form during the presentation.
+
+The demo starts with 50 provided houses marked Not started. House details keep
+notes, survey notes, snags, and material movement history together for review.
 
 See [DEMO-PRESENTATION.md](./DEMO-PRESENTATION.md) for the matching spoken
 video script and scene order.
+
+## SEAI house map
+
+Click **From SEAI** on Overview to open the house map. The current demo map
+and Ready for start list combine the original 50 houses with the nine added
+Eircode test records. The nine added records are marked Ready for start.
+Overview totals use the complete combined database, and the map shows all
+Ready or Active houses. Markers use their stored coordinates and identify
+active Stage 1 or 2 houses. Selecting a marker or list entry opens that
+house's available workflow actions.
+Activating a Ready house copies its saved Eircode and owner from the provided
+house record; the house remains on the map with its Active status.
+
+Administrators can import an approved UTF-8 CSV from the map. Required headers
+are `house_id`, `eircode`, `latitude`, and `longitude`; optional headers are
+`address`, `owner_name`, `area_m2`, and `perimeter_m`. Existing house workflow,
+notes, surveys, and history are retained when an ID is updated; rows absent
+from the file are not deleted. Use verified SEAI/Eircode data and coordinates:
+the demo-generated locations are fictional and are not suitable for live jobs.
+
+House coordinates stay in the tracker and are not submitted to a geocoder.
+Map imagery is loaded from the public OpenStreetMap tile service, which can
+observe tile requests and the approximate map area being viewed. OpenStreetMap
+attribution is displayed on the map.
+
+Map-test records use the `map_test` source, have synthetic coordinates, and are
+labelled in the map UI. They are for exercising marker/status behavior only;
+their coordinates do not represent the real locations of their Eircodes.
+
+## House surveys and calculator measurements
+
+Administrators can add employee or surveyor accounts in **Account ? Manage employees**. A surveyor sees only houses marked **Ready for start** and can add a survey note, window and door sizes with quantities, and house-corner lengths. Window corner lengths are calculated automatically from each window's width and two sides. Survey entries are saved per provided house. Employees cannot edit surveys.
+
+When the house is selected in the automatic calculator, saved dimensions and corner lengths are loaded and shown read-only instead of requesting the same measurements again. The calculator continues to accept manual measurements when no surveyed house is selected. Existing user accounts and active sessions are preserved when the database is upgraded for the surveyor role.
+
+Mortar / glue is estimated as the existing one bag per four insulation boards (100 mm and 60 mm combined) **plus** an area allowance of 18 bags per 100 m² of net wall area. Net wall area subtracts measured window and door areas from the wall area, and both parts are rounded up to whole bags before being added. With no openings or plinth deduction, the current examples are: 100 m² = 18 area-based + 35 existing board-based = **53 bags**; 200 m² = 36 + 70 = **106 bags**; 80 m² = 15 + 28 = **43 bags**. The calculator shows both parts and the combined total.
 
 ## Tests
 
