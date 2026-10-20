@@ -63,6 +63,7 @@
             <button type="button" class="kpi active" data-house-view="active" title="View active houses"><span class="kpi-label">Active houses</span><span class="kpi-value" id="stat-houses">—</span></button>
             <button type="button" class="kpi closed" data-house-view="closed" title="View closed houses"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="stat-closed">—</span></button>
             <button type="button" class="kpi pending" data-house-view="not_started" title="View SEAI houses not started yet"><span class="kpi-label">Not started</span><span class="kpi-value" id="stat-not-started">—</span></button>
+            <button type="button" class="kpi ready" data-house-view="ready" title="View houses ready for start"><span class="kpi-label">Ready for start</span><span class="kpi-value" id="stat-ready">—</span></button>
           </div>
           <div class="kpi-strip">
             <span><b id="stat-materials">—</b> material types tracked</span>
@@ -157,6 +158,34 @@
         </section>
       </main>
     </div>
+
+    <dialog id="house-snag-dialog" class="dialog snag-dialog">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">HOUSE SNAGS</div><h2 id="house-snag-title">Snags</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close">×</button>
+        </div>
+        <div id="house-snag-list" class="snag-list"></div>
+        <form id="house-snag-form" class="snag-add">
+          <input name="text" maxlength="500" placeholder="Describe a snag…" autocomplete="off" required>
+          <button class="button button-primary" type="submit">Add snag</button>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog id="house-note-dialog" class="dialog">
+      <form id="house-note-form">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">HOUSE NOTES</div><h2 id="house-note-title">House notes</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close">×</button>
+        </div>
+        <label class="field full">Note<textarea name="notes" rows="6" maxlength="2000" placeholder="Access details, owner requests, site issues…"></textarea></label>
+        <div class="dialog-actions">
+          <button class="button button-secondary close-dialog" type="button">Cancel</button>
+          <button class="button button-primary" type="submit">Save note</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="house-checklist-dialog" class="dialog house-checklist-dialog">
       <form id="house-checklist-form">

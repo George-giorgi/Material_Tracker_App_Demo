@@ -549,6 +549,7 @@ function renderOverview() {
   $("#stat-houses").textContent = hs.active;
   $("#stat-closed").textContent = hs.closed;
   $("#stat-not-started").textContent = hs.not_started;
+  $("#stat-ready").textContent = hs.ready || 0;
   $("#stat-movements").textContent = data.movements.length;
   $("#stat-counts").textContent = materials.filter(
     (item) => item.needs_stocktake,
@@ -644,34 +645,188 @@ const STOCK_PREVIEW = 3;
 const expandedStock = new Set();
 
 const stickyHouses = new Set();
-let notStartedCache = null;
-async function renderNotStartedHouses(query) {
+let planCache = {};
+const planStale = new Set();
+const PLAN_LABELS = {
+  scaffolding: { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
+  esb: { yes: "Yes", no: "No", not_esb: "Not ESB" },
+  plumber: { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
+};
+function planChecklistHtml(h) {
+  const tone = (value) =>
+    value === "done" || value === "yes"
+      ? "positive"
+      : value === "not_done" || value === "no"
+        ? "negative"
+        : value ? "unnecessary" : "unset";
+  return [
+    ["Scaffolding", h.plan_scaffolding, PLAN_LABELS.scaffolding],
+    ["ESB cable unclipped", h.plan_esb, PLAN_LABELS.esb],
+    ["Plumber work", h.plan_plumber, PLAN_LABELS.plumber],
+  ]
+    .map(
+      ([label, value, labels]) =>
+        `<div class="checklist-card-row"><span>${label}</span><strong class="checklist-value checklist-value-${tone(value)}">${value ? labels[value] : "Not set"}</strong></div>`,
+    )
+    .join("");
+}
+function snagRowHtml(snag, houseId) {
+  return `<button type="button" class="snag-row${snag.done ? " done" : ""}" data-snag-id="${snag.id}" data-house-id="${escapeHtml(houseId)}" data-done="${snag.done ? "false" : "true"}" aria-pressed="${snag.done}" title="${snag.done ? "Mark as not done" : "Mark as done"}"><span class="snag-box">${snag.done ? "✓" : ""}</span><span class="snag-text">${escapeHtml(snag.text)}</span></button>`;
+}
+function snagsHtml(house) {
+  const snags = house.snags || [];
+  return snags.length
+    ? `<div class="snag-block"><div class="house-stock-title">Snags (${snags.filter((s) => !s.done).length} open)</div>${snags.map((s) => snagRowHtml(s, house.id)).join("")}</div>`
+    : "";
+}
+function findAnyHouse(houseId) {
+  return state.dashboard.house_list.find((item) => item.id === houseId) || findPlanHouse(houseId);
+}
+function renderSnagDialog() {
+  const house = findAnyHouse($("#house-snag-form").dataset.houseId);
+  const snags = house?.snags || [];
+  $("#house-snag-list").innerHTML = snags.length
+    ? snags
+        .map((s) => `<div class="snag-item">${snagRowHtml(s, house.id)}<button type="button" class="snag-del" data-snag-id="${s.id}" data-house-id="${escapeHtml(house.id)}" aria-label="Delete snag" title="Delete snag">×</button></div>`)
+        .join("")
+    : `<div class="snag-empty">No snags yet.</div>`;
+}
+function openHouseSnags(houseId) {
+  $("#house-snag-form").dataset.houseId = houseId;
+  $("#house-snag-title").textContent = `${houseId} snags`;
+  renderSnagDialog();
+  $("#house-snag-form").reset();
+  if (!$("#house-snag-dialog").open) $("#house-snag-dialog").showModal();
+  $("#house-snag-form").elements.text.focus();
+}
+async function saveSnag(payload) {
+  try {
+    const result = await request("/api/houses/snags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const house = findAnyHouse(result.id);
+    if (house) house.snags = result.snags;
+    renderHouses();
+    if ($("#house-snag-dialog").open) renderSnagDialog();
+    return true;
+  } catch (error) {
+    showToast(error.message, true);
+    return false;
+  }
+}
+function noteHtml(text) {
+  return text ? `<div class="house-note"><div class="house-stock-title">Notes</div><p>${escapeHtml(text)}</p></div>` : "";
+}
+function findPlanHouse(houseId) {
+  return Object.values(planCache).flat().find((item) => item.id === houseId);
+}
+async function renderNotStartedHouses(query, mode = "not_started") {
   const list = $("#houses-list");
   list.classList.remove("house-grid-scrollable");
-  if (!notStartedCache) {
+  const loadPlan = async () => {
+    planCache[mode] = (await request(`/api/calculator/houses?status=${mode}`)).houses;
+    planStale.delete(mode);
+  };
+  if (!planCache[mode]) {
     list.innerHTML = `<p class="muted">Loading SEAI houses…</p>`;
+    delete list.dataset.planHtml;
     try {
-      notStartedCache = (await request("/api/calculator/houses?status=not_started")).houses;
+      await loadPlan();
     } catch (error) {
       showToast(error.message, true);
       return;
     }
-    if (state.houseStatusFilter !== "not_started") return;
+    if (state.houseStatusFilter !== mode) return;
+  } else if (planStale.has(mode)) {
+    // Keep the current cards on screen while a background refresh runs.
+    planStale.delete(mode);
+    const before = JSON.stringify(planCache[mode]);
+    loadPlan()
+      .then(() => {
+        if (state.houseStatusFilter === mode && JSON.stringify(planCache[mode]) !== before) {
+          renderNotStartedHouses($("#house-search").value.trim().toLocaleLowerCase(), mode);
+        }
+      })
+      .catch(() => {});
   }
-  const rows = notStartedCache.filter((h) =>
+  const isReady = mode === "ready";
+  const canManageHouses = state.user?.role === "admin";
+  const rows = planCache[mode].filter((h) =>
     [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query),
   );
-  list.innerHTML = rows.length
+  const html = rows.length
     ? rows
-        .map(
-          (h) => `<article class="card house-card house-pending">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(h.id)}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" · ") || "No details")}</p></div><span class="status-pill pending">Not started</span></div>
-        <div class="house-card-actions"><button class="text-button seai-activate" type="button" data-house-id="${escapeHtml(h.id)}">＋ Activate house</button></div>
-      </article>`,
-        )
+        .map((h) => {
+          const id = escapeHtml(h.id);
+          return `<article class="card house-card ${isReady ? "house-ready" : "house-pending"}">
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" · ") || "No details")}</p></div><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span></div>
+        <div class="house-body">${noteHtml(h.notes)}${snagsHtml(h)}<div class="house-checklist-card"><div class="house-stock-title">House checklist</div>${planChecklistHtml(h)}</div></div>
+        <div class="house-card-actions">
+          ${isReady ? `<button class="text-button seai-activate" type="button" data-house-id="${id}">＋ Activate house</button>` : ""}
+          <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="${isReady ? "false" : "true"}">${isReady ? "Back to not started" : "Mark ready for start"}</button>
+          <button class="text-button house-note-open" type="button" data-house-id="${id}">${h.notes ? "Edit note" : "Add note"}</button>
+          <button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>
+          ${canManageHouses ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button>` : ""}
+        </div>
+      </article>`;
+        })
         .join("")
-    : `<p class="muted">No SEAI houses waiting to start.</p>`;
+    : `<p class="muted">${isReady ? "No houses are ready for start yet." : "No SEAI houses waiting to start."}</p>`;
+  if (list.dataset.planHtml !== html) {
+    const scroll = list.scrollTop;
+    list.innerHTML = html;
+    list.dataset.planHtml = html;
+    list.scrollTop = scroll;
+  }
   list.classList.toggle("house-grid-scrollable", rows.length > 6);
+}
+
+function openHouseNote(houseId) {
+  const house =
+    state.dashboard.house_list.find((item) => item.id === houseId) || findPlanHouse(houseId);
+  const form = $("#house-note-form");
+  form.dataset.houseId = houseId;
+  form.elements.notes.value = house?.notes || "";
+  $("#house-note-title").textContent = `${houseId} notes`;
+  $("#house-note-dialog").showModal();
+  form.elements.notes.focus();
+}
+
+async function submitHouseNote(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  try {
+    await request("/api/houses/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: form.dataset.houseId, notes: form.elements.notes.value }),
+    });
+    $("#house-note-dialog").close();
+    showToast(`Note for ${form.dataset.houseId} saved.`);
+    await refresh();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function toggleHouseReady(houseId, ready) {
+  try {
+    await request("/api/houses/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: houseId, ready }),
+    });
+    showToast(ready ? `${houseId} is ready for start.` : `${houseId} moved back to not started.`);
+    await refresh();
+  } catch (error) {
+    showToast(error.message, true);
+  }
 }
 
 function renderHouses() {
@@ -695,13 +850,16 @@ function renderHouses() {
       },
     );
   });
-  if (statusFilter === "not_started" && !teamFilter) {
-    $("#houses-list-heading").textContent = "SEAI houses not started";
+  if ((statusFilter === "not_started" || statusFilter === "ready") && !teamFilter) {
+    const ready = statusFilter === "ready";
+    $("#houses-list-heading").textContent = ready ? "Houses ready for start" : "SEAI houses not started";
     $("#house-team-filter").classList.remove("hidden");
-    $("#house-team-filter-label").textContent = "Showing SEAI houses not started yet";
+    $("#house-team-filter-label").textContent = ready
+      ? "Showing houses ready for start"
+      : "Showing SEAI houses not started yet";
     $("#houses-empty").classList.add("hidden");
     $("#houses-no-results").classList.add("hidden");
-    renderNotStartedHouses(query);
+    renderNotStartedHouses(query, statusFilter);
     return;
   }
   const matchingHouses = data.house_list.filter((house) =>
@@ -770,6 +928,7 @@ function renderHouses() {
         <div class="house-body"><div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
+        ${noteHtml(house.notes)}${snagsHtml(house)}
         <div class="house-checklist-card">
           <div class="house-stock-title">House checklist</div>
           ${checklist.map(([label, status, value]) => `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></div>`).join("")}
@@ -777,6 +936,9 @@ function renderHouses() {
         </div>
         <div class="house-card-actions">
           <button class="text-button house-record-movement${house.is_finished ? " ghost" : ""}" type="button" data-house-id="${escapeHtml(house.id)}"${house.is_finished ? ' aria-hidden="true" tabindex="-1"' : ""}>＋ Record movement</button>
+          <button class="text-button house-note-open" type="button" data-house-id="${escapeHtml(house.id)}">${house.notes ? "Edit note" : "Add note"}</button>
+          <span class="stage-switch" role="group" aria-label="Stage">${[1, 2].map((n) => `<button class="stage-btn${(Number(house.stage) || 1) === n ? " on" : ""}" type="button" data-house-id="${escapeHtml(house.id)}" data-stage="${n}" aria-pressed="${(Number(house.stage) || 1) === n}"${house.is_finished ? " disabled" : ""}>Stage ${n}</button>`).join("")}</span>
+          <button class="text-button house-snags-open" type="button" data-house-id="${escapeHtml(house.id)}">Snags</button>
           ${canManageHouses ? `
             <button class="text-button house-checklist-open" type="button" data-house-id="${escapeHtml(house.id)}">Edit checklist</button>
             <button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>
@@ -852,6 +1014,7 @@ function renderHouses() {
     !teamQuery || matchingTeams.length > 0,
   );
   const housesList = $("#houses-list");
+  delete housesList.dataset.planHtml;
   const listScroll = housesList.scrollTop;
   const pageScroll = window.scrollY;
   housesList.innerHTML = houseCards.join("");
@@ -1237,7 +1400,7 @@ async function searchSeaiHouses() {
   const box = $("#seai-results");
   const q = $("#seai-search").value.trim();
   try {
-    const { houses } = await request(`/api/calculator/houses?q=${encodeURIComponent(q)}`);
+    const { houses } = await request(`/api/calculator/houses?status=ready&q=${encodeURIComponent(q)}`);
     box.innerHTML = houses.length
       ? houses
           .map(
@@ -1245,7 +1408,7 @@ async function searchSeaiHouses() {
               `<button type="button" data-index="${i}"><span><strong>${escapeHtml(h.id)}</strong> ${escapeHtml(h.owner_name || "")}<br><small>${escapeHtml([h.address, h.postcode].filter(Boolean).join(" · "))}</small></span><small>${escapeHtml(h.status.replace("_", " "))}</small></button>`,
           )
           .join("")
-      : '<div class="seai-none">No matching SEAI houses</div>';
+      : '<div class="seai-none">No matching houses ready for start</div>';
     box._houses = houses;
     box.classList.remove("hidden");
   } catch (error) {
@@ -1287,7 +1450,7 @@ function renderAll(preserveMovementLines = false) {
 }
 
 async function refresh(preserveMovementLines = false) {
-  notStartedCache = null;
+  Object.keys(planCache).forEach((mode) => planStale.add(mode));
   const search = $("#movement-search")?.value.trim() || "";
   const [dashboard, ledger] = await Promise.all([
     request("/api/dashboard"),
@@ -1531,11 +1694,53 @@ async function toggleHouseFinished(event) {
   }
   const activateButton = event.target.closest(".seai-activate");
   if (activateButton) {
-    const h = notStartedCache?.find((item) => item.id === activateButton.dataset.houseId);
+    const h = findPlanHouse(activateButton.dataset.houseId);
     if (h) {
       openHouseDialog();
       fillSeaiHouse(h);
     }
+    return;
+  }
+  const readyButton = event.target.closest(".plan-ready-toggle");
+  if (readyButton) {
+    toggleHouseReady(readyButton.dataset.houseId, readyButton.dataset.ready === "true");
+    return;
+  }
+  const snagOpen = event.target.closest(".house-snags-open");
+  if (snagOpen) {
+    openHouseSnags(snagOpen.dataset.houseId);
+    return;
+  }
+  const snagDelete = event.target.closest(".snag-del");
+  if (snagDelete) {
+    saveSnag({ snag_id: Number(snagDelete.dataset.snagId), delete: true });
+    return;
+  }
+  const snagToggle = event.target.closest(".snag-row");
+  if (snagToggle) {
+    saveSnag({ snag_id: Number(snagToggle.dataset.snagId), done: snagToggle.dataset.done === "true" });
+    return;
+  }
+  const stageButton = event.target.closest(".stage-btn");
+  if (stageButton) {
+    const house = findAnyHouse(stageButton.dataset.houseId);
+    const next = Number(stageButton.dataset.stage);
+    if (house && (Number(house.stage) || 1) === next) return;
+    request("/api/houses/stage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: stageButton.dataset.houseId, stage: next }),
+    })
+      .then(() => {
+        if (house) house.stage = next;
+        renderHouses();
+      })
+      .catch((error) => showToast(error.message, true));
+    return;
+  }
+  const noteButton = event.target.closest(".house-note-open");
+  if (noteButton) {
+    openHouseNote(noteButton.dataset.houseId);
     return;
   }
   const recordButton = event.target.closest(".house-record-movement");
@@ -1995,6 +2200,26 @@ function bindEvents() {
     if (button) openHouseChecklist(button.dataset.houseId);
   });
   $("#house-checklist-form").addEventListener("submit", submitHouseChecklist);
+  $("#house-note-form").addEventListener("submit", submitHouseNote);
+  $("#house-snag-list").addEventListener("click", (event) => {
+    const remove = event.target.closest(".snag-del");
+    if (remove) {
+      saveSnag({ snag_id: Number(remove.dataset.snagId), delete: true });
+      return;
+    }
+    const toggle = event.target.closest(".snag-row");
+    if (toggle) {
+      saveSnag({ snag_id: Number(toggle.dataset.snagId), done: toggle.dataset.done === "true" });
+    }
+  });
+  $("#house-snag-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (await saveSnag({ id: form.dataset.houseId, text: form.elements.text.value })) {
+      form.reset();
+      form.elements.text.focus();
+    }
+  });
   $("#stocktake-form").addEventListener("submit", submitStocktake);
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
@@ -2417,6 +2642,9 @@ function renderHouseLiveStock() {
   const house = state.dashboard.house_list.find(
     (item) => item.id.toLocaleLowerCase() === houseId.toLocaleLowerCase(),
   );
+  const submit = document.querySelector("#movement-form button[type=submit]");
+  const closed = Boolean(house && house.is_finished);
+  if (submit) submit.disabled = closed;
   if (!houseId) {
     liveStock.innerHTML = `<strong>Select a house to see its current on-site materials.</strong><div id="house-live-stock-list"></div>`;
     return;
@@ -2427,6 +2655,7 @@ function renderHouseLiveStock() {
   });
   liveStock.innerHTML = `
     <strong>On site at ${escapeHtml(house?.id || houseId)}${house?.owner_name ? ` · ${escapeHtml(house.owner_name)}` : ""}</strong>
+    ${closed ? `<div style="color:#b3261e;font-weight:600;margin:6px 0">This house is closed. Reopen it to record movements.</div>` : ""}
     <div class="house-live-stock-list">${
       materials.length
         ? materials

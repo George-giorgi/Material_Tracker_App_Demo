@@ -196,6 +196,9 @@ def initialize_db():
             db.execute(
                 "ALTER TABLE houses ADD COLUMN employee_name TEXT NOT NULL DEFAULT ''"
             )
+        if "stage" not in house_columns:
+            db.execute("ALTER TABLE houses ADD COLUMN stage INTEGER NOT NULL DEFAULT 1")
+        db.execute("UPDATE houses SET stage = 1 WHERE stage NOT IN (1, 2)")
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS provided_houses (
@@ -209,6 +212,29 @@ def initialize_db():
             )
             """
         )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_snags (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                text TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        provided_columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(provided_houses)")
+        }
+        for column, definition in (
+            ("ready_for_start", "INTEGER NOT NULL DEFAULT 0"),
+            ("notes", "TEXT NOT NULL DEFAULT ''"),
+            ("plan_scaffolding", "TEXT"),
+            ("plan_esb", "TEXT"),
+            ("plan_plumber", "TEXT"),
+        ):
+            if column not in provided_columns:
+                db.execute(f"ALTER TABLE provided_houses ADD COLUMN {column} {definition}")
         # Every house the tracker already works on belongs to the provided list.
         db.execute(
             """
@@ -561,6 +587,21 @@ def _undo_auto_closeouts(db, house_id):
     return cursor.rowcount
 
 
+def _require_ready_to_activate(db, house_id):
+    """A listed SEAI house can only become active once it is marked ready for start."""
+    row = db.execute(
+        "SELECT p.ready_for_start, h.id AS active_id FROM provided_houses p "
+        "LEFT JOIN houses h ON h.id = p.id WHERE p.id = ?",
+        (str(house_id).strip(),),
+    ).fetchone()
+    if row and row["active_id"] is None and not row["ready_for_start"]:
+        raise ApiError(
+            409,
+            f"House {str(house_id).strip()} is not marked ready for start. "
+            "Mark it ready in Houses & teams before activating it.",
+        )
+
+
 def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
     if not house_id or not str(house_id).strip():
         raise ApiError(400, "House ID is required for this movement.")
@@ -586,6 +627,19 @@ def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
         "INSERT OR IGNORE INTO provided_houses(id, postcode, owner_name, source) "
         "VALUES (?, ?, ?, 'tracker')",
         (house_id, str(postcode or "").strip(), str(owner_name or "").strip()),
+    )
+    db.execute(
+        "UPDATE provided_houses SET ready_for_start = 0 WHERE id = ?", (house_id,)
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO house_checklists
+            (house_id, scaffolding_status, esb_unclipped, plumber_status)
+        SELECT id, plan_scaffolding, plan_esb, plan_plumber FROM provided_houses
+        WHERE id = ? AND plan_scaffolding IS NOT NULL
+          AND plan_esb IS NOT NULL AND plan_plumber IS NOT NULL
+        """,
+        (house_id,),
     )
     return house_id
 
@@ -641,6 +695,13 @@ def _record_movement(
         house_reference = str(reference or "").strip()
         if not house_reference:
             raise ApiError(400, "House ID is required for this movement.")
+        closed = db.execute(
+            "SELECT 1 FROM houses WHERE id = ? COLLATE NOCASE AND is_finished = 1",
+            (house_reference,),
+        ).fetchone()
+        if closed:
+            raise ApiError(409, f"House {house_reference} is closed. Reopen it before recording movements.")
+        _require_ready_to_activate(db, house_reference)
         if not allow_house_updates:
             exists = db.execute(
                 "SELECT 1 FROM houses WHERE id = ?", (house_reference,)
@@ -907,7 +968,19 @@ def _delivered_to_house(db, house_id):
     return delivered
 
 
+def _snags_by_house(db):
+    grouped = {}
+    for row in db.execute(
+        "SELECT id, house_id, text, done FROM house_snags ORDER BY done, id"
+    ):
+        grouped.setdefault(row["house_id"], []).append(
+            {"id": row["id"], "text": row["text"], "done": bool(row["done"])}
+        )
+    return grouped
+
+
 def _dashboard(db):
+    snags = _snags_by_house(db)
     materials = []
     for row in db.execute("SELECT * FROM materials ORDER BY name COLLATE NOCASE"):
         balances = balances_for(db, row["id"])
@@ -939,6 +1012,10 @@ def _dashboard(db):
     ).fetchone()[0]
     closed_house_count = db.execute(
         "SELECT COUNT(*) FROM houses WHERE is_finished = 1"
+    ).fetchone()[0]
+    ready_house_count = db.execute(
+        "SELECT COUNT(*) FROM provided_houses p WHERE p.ready_for_start = 1 "
+        "AND NOT EXISTS (SELECT 1 FROM houses h WHERE h.id = p.id)"
     ).fetchone()[0]
     team_house_counts = {}
     for row in db.execute(
@@ -980,7 +1057,8 @@ def _dashboard(db):
             "provided": provided_house_count,
             "active": active_house_count,
             "closed": closed_house_count,
-            "not_started": provided_house_count - house_count,
+            "ready": ready_house_count,
+            "not_started": provided_house_count - house_count - ready_house_count,
         },
         "movements": [_movement_json(row) for row in _movement_rows(db, 12)],
         "teams": sorted(
@@ -997,14 +1075,16 @@ def _dashboard(db):
             {
                 **dict(row),
                 "esb_unclipped": _esb_unclipped_status(row["esb_unclipped"]),
+                "snags": snags.get(row["id"], []),
             }
             for row in db.execute(
                 """
                 SELECT h.id, h.postcode, h.owner_name, h.employee_name, h.is_finished,
-                       h.status_changed_at,
+                       h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
                        c.scaffolding_status, c.esb_unclipped, c.plumber_status
                 FROM houses h
                 LEFT JOIN house_checklists c ON c.house_id = h.id
+                LEFT JOIN provided_houses p ON p.id = h.id
                 ORDER BY h.status_changed_at DESC, h.id COLLATE NOCASE
                 """
             )
@@ -1298,28 +1378,39 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             params = parse_qs(urlparse(self.path).query)
             query = params.get("q", [""])[0].strip()
-            only_not_started = params.get("status", [""])[0] == "not_started"
+            status_filter = params.get("status", [""])[0]
+            wanted = {
+                "not_started": "h.id IS NULL AND p.ready_for_start = 0",
+                "ready": "h.id IS NULL AND p.ready_for_start = 1",
+                "pending": "h.id IS NULL",
+            }.get(status_filter)
             like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             with connect_db() as db:
                 rows = db.execute(
-                    """
+                    f"""
                     SELECT p.id, p.postcode, p.address, p.owner_name,
                            COALESCE(h.employee_name, '') AS employee_name,
-                           p.area_m2, p.perimeter_m,
-                           CASE WHEN h.id IS NULL THEN 'not_started'
+                           p.area_m2, p.perimeter_m, p.notes,
+                           p.plan_scaffolding, p.plan_esb, p.plan_plumber,
+                           CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                                WHEN h.id IS NULL THEN 'not_started'
                                 WHEN h.is_finished = 1 THEN 'closed'
                                 ELSE 'active' END AS status
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
                     WHERE (p.id LIKE ? ESCAPE '\\' OR p.postcode LIKE ? ESCAPE '\\'
                        OR p.owner_name LIKE ? ESCAPE '\\' OR p.address LIKE ? ESCAPE '\\')
-                      AND (? = 0 OR h.id IS NULL)
+                      AND ({wanted or "1 = 1"})
                     ORDER BY (h.is_finished = 1), p.id COLLATE NOCASE
                     LIMIT ?
                     """,
-                    (like, like, like, like, int(only_not_started), 500 if only_not_started else 20),
+                    (like, like, like, like, 500 if wanted else 20),
                 ).fetchall()
-            self._send_json(200, {"houses": [dict(row) for row in rows]})
+                snags = _snags_by_house(db)
+            self._send_json(
+                200,
+                {"houses": [{**dict(row), "snags": snags.get(row["id"], [])} for row in rows]},
+            )
         elif path == "/api/calculator/requests":
             user = self._login_required()
             if user is None:
@@ -1382,18 +1473,31 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             house_id = unquote(raw_house_id).strip()
             with connect_db() as db:
-                if not db.execute(
+                if db.execute(
                     "SELECT 1 FROM houses WHERE id = ?", (house_id,)
                 ).fetchone():
-                    self._send_json(404, {"error": "House was not found."})
-                    return
-                checklist = db.execute(
-                    """
-                    SELECT scaffolding_status, esb_unclipped, plumber_status
-                    FROM house_checklists WHERE house_id = ?
-                    """,
-                    (house_id,),
-                ).fetchone()
+                    checklist = db.execute(
+                        """
+                        SELECT scaffolding_status, esb_unclipped, plumber_status
+                        FROM house_checklists WHERE house_id = ?
+                        """,
+                        (house_id,),
+                    ).fetchone()
+                else:
+                    checklist = db.execute(
+                        """
+                        SELECT plan_scaffolding AS scaffolding_status,
+                               plan_esb AS esb_unclipped,
+                               plan_plumber AS plumber_status
+                        FROM provided_houses WHERE id = ?
+                        """,
+                        (house_id,),
+                    ).fetchone()
+                    if checklist is None:
+                        self._send_json(404, {"error": "House was not found."})
+                        return
+                    if checklist["scaffolding_status"] is None:
+                        checklist = None
             self._send_json(
                 200,
                 {
@@ -1667,7 +1771,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                         if not db.execute(
                             "SELECT 1 FROM houses WHERE id = ?", (house_id,)
                         ).fetchone():
-                            raise ApiError(404, "House was not found.")
+                            planned = db.execute(
+                                "UPDATE provided_houses SET plan_scaffolding = ?, "
+                                "plan_esb = ?, plan_plumber = ? WHERE id = ?",
+                                (scaffolding_status, esb_unclipped, plumber_status, house_id),
+                            )
+                            if planned.rowcount == 0:
+                                raise ApiError(404, "House was not found.")
+                            self._send_json(200, {"house_id": house_id, "saved": True})
+                            return
                         db.execute(
                             """
                             INSERT INTO house_checklists
@@ -1686,6 +1798,102 @@ class RequestHandler(BaseHTTPRequestHandler):
                             ),
                         )
                 self._send_json(200, {"house_id": house_id, "saved": True})
+            elif path == "/api/houses/snags":
+                user = self._login_required()
+                if user is None:
+                    return
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Snag details must be a JSON object.")
+                with connect_db() as db:
+                    with db:
+                        if "snag_id" in payload:
+                            snag = db.execute(
+                                "SELECT id, house_id FROM house_snags WHERE id = ?",
+                                (payload.get("snag_id"),),
+                            ).fetchone()
+                            if snag is None:
+                                raise ApiError(404, "Snag was not found.")
+                            if payload.get("delete") is True:
+                                db.execute("DELETE FROM house_snags WHERE id = ?", (snag["id"],))
+                            elif isinstance(payload.get("done"), bool):
+                                db.execute(
+                                    "UPDATE house_snags SET done = ? WHERE id = ?",
+                                    (int(payload["done"]), snag["id"]),
+                                )
+                            else:
+                                raise ApiError(400, "Choose whether the snag is done.")
+                            house_id = snag["house_id"]
+                        else:
+                            house_id = str(payload.get("id") or "").strip()
+                            text = str(payload.get("text") or "").strip()
+                            if not text:
+                                raise ApiError(400, "Describe the snag first.")
+                            if len(text) > 500:
+                                raise ApiError(400, "A snag must be 500 characters or fewer.")
+                            if not db.execute(
+                                "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
+                            ).fetchone():
+                                raise ApiError(404, "House was not found.")
+                            db.execute(
+                                "INSERT INTO house_snags(house_id, text, created_at) VALUES (?, ?, ?)",
+                                (house_id, text, datetime.now().timestamp()),
+                            )
+                    snags = _snags_by_house(db).get(house_id, [])
+                self._send_json(200, {"id": house_id, "snags": snags})
+            elif path == "/api/houses/stage":
+                user = self._login_required()
+                if user is None:
+                    return
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Stage details must be a JSON object.")
+                house_id = str(payload.get("id") or "").strip()
+                stage = payload.get("stage")
+                if isinstance(stage, bool) or stage not in (1, 2):
+                    raise ApiError(400, "Stage must be 1 or 2.")
+                with connect_db() as db:
+                    with db:
+                        cursor = db.execute(
+                            "UPDATE houses SET stage = ? WHERE id = ?", (stage, house_id)
+                        )
+                        if not cursor.rowcount:
+                            raise ApiError(404, "House was not found.")
+                self._send_json(200, {"id": house_id, "stage": stage})
+            elif path == "/api/houses/plan":
+                user = self._login_required()
+                if user is None:
+                    return
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "House details must be a JSON object.")
+                house_id = str(payload.get("id") or "").strip()
+                with connect_db() as db:
+                    with db:
+                        if not db.execute(
+                            "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
+                        ).fetchone():
+                            raise ApiError(404, "House was not found.")
+                        if "notes" in payload:
+                            notes = str(payload.get("notes") or "").strip()
+                            if len(notes) > 2000:
+                                raise ApiError(400, "Notes must be 2,000 characters or fewer.")
+                            db.execute(
+                                "UPDATE provided_houses SET notes = ? WHERE id = ?",
+                                (notes, house_id),
+                            )
+                        if "ready" in payload:
+                            if not isinstance(payload["ready"], bool):
+                                raise ApiError(400, "Choose whether the house is ready for start.")
+                            if db.execute(
+                                "SELECT 1 FROM houses WHERE id = ?", (house_id,)
+                            ).fetchone():
+                                raise ApiError(409, f"House {house_id} is already activated.")
+                            db.execute(
+                                "UPDATE provided_houses SET ready_for_start = ? WHERE id = ?",
+                                (int(payload["ready"]), house_id),
+                            )
+                self._send_json(200, {"id": house_id, "saved": True})
             elif path == "/api/stocktakes":
                 payload = self._json_body()
                 material_id = payload.get("material_id")
@@ -1765,6 +1973,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
                     ).fetchone():
                         raise ApiError(404, "Select a house from the provided list first.")
+                    if db.execute(
+                        "SELECT 1 FROM houses WHERE id = ? AND is_finished = 1", (house_id,)
+                    ).fetchone():
+                        raise ApiError(409, f"House {house_id} is closed. Reopen it before assigning materials.")
                     cursor = db.execute(
                         """
                         INSERT INTO material_requests(house_id, created_at, created_by, notes, data)
@@ -1793,6 +2005,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     raise ApiError(400, "House details exceed the allowed length.")
                 with connect_db() as db:
                     with db:
+                        _require_ready_to_activate(db, house_id)
                         _upsert_house(
                             db,
                             house_id,

@@ -69,6 +69,11 @@ class HttpBase(FlowBase):
         self.thread.join(timeout=5)
         super().tearDown()
 
+    def activate(self, payload):
+        with server.connect_db() as db:
+            db.execute("UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?", (payload["id"],))
+        return self.call("POST", "/api/houses", payload)
+
     def call(self, method, path, payload=None, cookie=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=5)
         headers, body = {}, None
@@ -90,7 +95,7 @@ class HttpBase(FlowBase):
 class ProvidedHouseSummaryTests(FlowBase):
     def test_new_database_has_empty_provided_list(self):
         self.assertEqual(
-            self.summary(), {"provided": 0, "active": 0, "closed": 0, "not_started": 0}
+            self.summary(), {"provided": 0, "active": 0, "closed": 0, "ready": 0, "not_started": 0}
         )
 
     def test_summary_always_adds_up(self):
@@ -102,7 +107,7 @@ class ProvidedHouseSummaryTests(FlowBase):
                 server._upsert_house(db, "P-1")
                 db.execute("UPDATE houses SET is_finished = 1 WHERE id = 'P-1'")
         s = self.summary()
-        self.assertEqual(s, {"provided": 5, "active": 1, "closed": 1, "not_started": 3})
+        self.assertEqual(s, {"provided": 5, "active": 1, "closed": 1, "ready": 0, "not_started": 3})
         self.assertEqual(s["active"] + s["closed"] + s["not_started"], s["provided"])
 
     def test_reopening_a_house_moves_it_from_closed_to_active(self):
@@ -275,14 +280,14 @@ class CalculatorApiTests(HttpBase):
         self.assertEqual(len(self.search("BULK")), 20)
 
     def test_search_reports_status_not_started_active_closed(self):
-        self.call("POST", "/api/houses", {"id": "WH2132"})
-        self.call("POST", "/api/houses", {"id": "WH2133"})
+        self.activate({"id": "WH2132"})
+        self.activate({"id": "WH2133"})
         self.call("POST", "/api/houses/status", {"id": "WH2133", "finished": True})
         status = {h["id"]: h["status"] for h in self.search("WH213")}
         self.assertEqual(status, {"WH2131": "not_started", "WH2132": "active", "WH2133": "closed"})
 
     def test_closed_houses_sort_last(self):
-        self.call("POST", "/api/houses", {"id": "WH2131"})
+        self.activate({"id": "WH2131"})
         self.call("POST", "/api/houses/status", {"id": "WH2131", "finished": True})
         self.assertEqual(self.search("WH213")[-1]["id"], "WH2131")
 
@@ -323,10 +328,10 @@ class CalculatorApiTests(HttpBase):
         self.assertEqual(self.summary()["active"], 0)
 
     def test_dashboard_exposes_house_summary(self):
-        self.call("POST", "/api/houses", {"id": "WH2131"})
+        self.activate({"id": "WH2131"})
         _, dashboard, _ = self.call("GET", "/api/dashboard")
         self.assertEqual(dashboard["house_summary"],
-                         {"provided": 3, "active": 1, "closed": 0, "not_started": 2})
+                         {"provided": 3, "active": 1, "closed": 0, "ready": 0, "not_started": 2})
 
 
 class EndToEndFlowTests(HttpBase):
@@ -338,12 +343,19 @@ class EndToEndFlowTests(HttpBase):
         house = found["houses"][0]
         self.assertEqual(house["status"], "not_started")
 
-        status, _, _ = self.call("POST", "/api/houses", {
-            "id": house["id"], "postcode": house["postcode"], "owner_name": house["owner_name"],
-        })
+        details = {"id": house["id"], "postcode": house["postcode"], "owner_name": house["owner_name"]}
+        self.assertEqual(self.call("POST", "/api/houses", details)[0], 409)
+        self.assertEqual(self.call("POST", "/api/houses/plan", {"id": house["id"], "ready": True})[0], 200)
+        status, _, _ = self.call("POST", "/api/houses", details)
         self.assertEqual(status, 201)
         _, found, _ = self.call("GET", "/api/calculator/houses?q=WH2140")
         self.assertEqual(found["houses"][0]["status"], "active")
+        _, found, _ = self.call("GET", "/api/calculator/houses?status=not_started&q=WH2140")
+        self.assertEqual(found["houses"], [])
+        self.call("POST", "/api/houses/status", {"id": "WH2140", "finished": True})
+        _, found, _ = self.call("GET", "/api/calculator/houses?status=not_started&q=WH2140")
+        self.assertEqual(found["houses"], [])
+        self.call("POST", "/api/houses/status", {"id": "WH2140", "finished": False})
 
         data = {"items": [{"label": "100mm Board", "material": "Board 100mm", "qty": 40, "required": "40 boards"}],
                 "manual": []}
@@ -364,15 +376,15 @@ class EndToEndFlowTests(HttpBase):
             balances = server.balances_for(db, board)
         self.assertEqual(balances["warehouse"], 60)
         self.assertEqual(balances["house:WH2140"], 40)
-        self.assertEqual(self.summary(), {"provided": 1, "active": 1, "closed": 0, "not_started": 0})
+        self.assertEqual(self.summary(), {"provided": 1, "active": 1, "closed": 0, "ready": 0, "not_started": 0})
 
     def test_closing_a_house_updates_overview_numbers(self):
         self.provide("A")
         self.provide("B")
         for house in ("A", "B"):
-            self.call("POST", "/api/houses", {"id": house})
+            self.activate({"id": house})
         self.call("POST", "/api/houses/status", {"id": "B", "finished": True})
-        self.assertEqual(self.summary(), {"provided": 2, "active": 1, "closed": 1, "not_started": 0})
+        self.assertEqual(self.summary(), {"provided": 2, "active": 1, "closed": 1, "ready": 0, "not_started": 0})
 
 
 class HouseOrderStabilityTests(HttpBase):
@@ -383,7 +395,7 @@ class HouseOrderStabilityTests(HttpBase):
     def setUp(self):
         super().setUp()
         for n, stamp in (("A", 300), ("B", 200), ("C", 100)):
-            self.call("POST", "/api/houses", {"id": n})
+            self.activate({"id": n})
         with server.connect_db() as db:
             for n, stamp in (("A", 300), ("B", 200), ("C", 100)):
                 db.execute("UPDATE houses SET status_changed_at = ? WHERE id = ?", (stamp, n))
@@ -403,7 +415,7 @@ class HouseOrderStabilityTests(HttpBase):
         self.assertEqual(self.order(), ["A", "B", "C"])
 
     def test_new_house_still_appears_first(self):
-        self.call("POST", "/api/houses", {"id": "NEW"})
+        self.activate({"id": "NEW"})
         self.assertEqual(self.order()[0], "NEW")
 
 
@@ -412,7 +424,7 @@ class ReopenRestoresBalanceTests(HttpBase):
         super().setUp()
         self.board = self.add_material("Board 100mm", 500)
         self.mesh = self.add_material("Mesh", 50)
-        self.call("POST", "/api/houses", {"id": "WH1"})
+        self.activate({"id": "WH1"})
         self.pickup(self.board, 40)
         self.pickup(self.mesh, 6)
 
@@ -439,6 +451,26 @@ class ReopenRestoresBalanceTests(HttpBase):
         self.assertEqual(result["materials_restored"], 2)
         self.assertEqual((self.house_balance(self.board), self.house_balance(self.mesh)), (40, 6))
 
+    def test_closed_house_rejects_movements_and_assignments_until_reopened(self):
+        self.finish(True)
+        for kind in ("pickup", "delivery", "use", "return"):
+            status, result, _ = self.call("POST", "/api/movements", {
+                "material_id": self.board, "kind": kind, "qty": 1, "house_id": "WH1",
+                "date": date.today().isoformat(), "person": "Tom", "team": "A",
+            })
+            self.assertEqual(status, 409, (kind, result))
+        status, _, _ = self.call("POST", "/api/movements/batch", {
+            "kind": "pickup", "house_id": "WH1", "date": date.today().isoformat(),
+            "person": "Tom", "team": "A", "items": [{"material_id": self.mesh, "qty": 1}],
+        })
+        self.assertEqual(status, 409)
+        status, _, _ = self.call("POST", "/api/calculator/requests", {"house_id": "WH1", "data": {"items": []}})
+        self.assertEqual(status, 409)
+        self.assertEqual(self.house_balance(self.board), 0)
+        self.finish(False)
+        self.pickup(self.board, 1)
+        self.assertEqual(self.house_balance(self.board), 41)
+
     def test_repeated_close_and_reopen_never_drifts(self):
         for _ in range(4):
             self.finish(True)
@@ -457,14 +489,14 @@ class ReopenRestoresBalanceTests(HttpBase):
         self.finish(False)
         self.assertEqual(self.house_balance(self.board), 25)
 
-    def test_stock_added_while_closed_is_kept_on_reopen(self):
+    def test_stock_added_after_reopen_is_kept(self):
         self.finish(True)
-        self.pickup(self.board, 10)
         self.finish(False)
+        self.pickup(self.board, 10)
         self.assertEqual(self.house_balance(self.board), 50)
 
     def test_other_houses_are_untouched(self):
-        self.call("POST", "/api/houses", {"id": "WH2"})
+        self.activate({"id": "WH2"})
         self.pickup(self.board, 7, "WH2")
         self.finish(True, "WH2")
         self.finish(True)
@@ -503,7 +535,7 @@ class FollowUpDeliveryTests(HttpBase):
         self.provide("WH1")
         self.board = self.add_material("Board 100mm", 500)
         self.mesh = self.add_material("Mesh", 50)
-        self.call("POST", "/api/houses", {"id": "WH1"})
+        self.activate({"id": "WH1"})
         self.call("POST", "/api/calculator/requests", {"house_id": "WH1", "data": {"items": []}})
 
     def move(self, material, kind, qty, **extra):
@@ -539,7 +571,7 @@ class FollowUpDeliveryTests(HttpBase):
         self.assertEqual(self.delivered(), {})
 
     def test_other_houses_do_not_affect_delivered(self):
-        self.call("POST", "/api/houses", {"id": "WH2"})
+        self.activate({"id": "WH2"})
         self.call("POST", "/api/movements", {
             "material_id": self.board, "kind": "pickup", "qty": 9, "house_id": "WH2",
             "date": date.today().isoformat(), "person": "Tom", "team": "Team A",
@@ -686,6 +718,86 @@ class CalculatorMaterialMappingTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is required for the front-end logic tests")
+class ReadyForStartAndNotesTests(HttpBase):
+    def setUp(self):
+        super().setUp()
+        self.provide("WH1", "T1", "1 Elm", "Owner")
+        self.provide("WH2", "T2", "2 Elm", "Owner2")
+
+    def plan(self, payload):
+        return self.call("POST", "/api/houses/plan", payload)
+
+    def listing(self, status):
+        _, found, _ = self.call("GET", "/api/calculator/houses?status=" + status)
+        return {h["id"]: h for h in found["houses"]}
+
+    def test_marking_ready_moves_house_between_lists_and_counts(self):
+        status, _, _ = self.plan({"id": "WH1", "ready": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(list(self.listing("ready")), ["WH1"])
+        self.assertEqual(list(self.listing("not_started")), ["WH2"])
+        self.assertEqual(sorted(self.listing("pending")), ["WH1", "WH2"])
+        self.assertEqual(self.listing("ready")["WH1"]["status"], "ready")
+        summary = self.summary()
+        self.assertEqual((summary["ready"], summary["not_started"]), (1, 1))
+        self.plan({"id": "WH1", "ready": False})
+        self.assertEqual(self.listing("ready"), {})
+        self.assertEqual(self.summary()["not_started"], 2)
+
+    def test_activation_clears_ready_and_carries_planned_checklist_and_notes(self):
+        self.plan({"id": "WH1", "ready": True, "notes": "Key with neighbour"})
+        status, _, _ = self.call("POST", "/api/house-checklist", {
+            "house_id": "WH1", "scaffolding_status": "done",
+            "esb_unclipped": "no", "plumber_status": "not_necessary"})
+        self.assertEqual(status, 200)
+        _, planned, _ = self.call("GET", "/api/house-checklist/WH1")
+        self.assertEqual(planned["scaffolding_status"], "done")
+        self.activate({"id": "WH1", "postcode": "T1", "owner_name": "Owner"})
+        self.assertEqual(self.listing("ready"), {})
+        self.assertEqual(self.summary()["ready"], 0)
+        _, dash, _ = self.call("GET", "/api/dashboard")
+        house = next(h for h in dash["house_list"] if h["id"] == "WH1")
+        self.assertEqual(house["notes"], "Key with neighbour")
+        self.assertEqual((house["scaffolding_status"], house["esb_unclipped"], house["plumber_status"]),
+                         ("done", "no", "not_necessary"))
+
+    def test_notes_work_for_any_house_and_are_validated(self):
+        self.activate({"id": "WH2"})
+        self.assertEqual(self.plan({"id": "WH2", "notes": "Dog in garden"})[0], 200)
+        _, dash, _ = self.call("GET", "/api/dashboard")
+        self.assertEqual(next(h for h in dash["house_list"] if h["id"] == "WH2")["notes"], "Dog in garden")
+        self.assertEqual(self.plan({"id": "WH2", "notes": "x" * 2001})[0], 400)
+        self.assertEqual(self.plan({"id": "NOPE", "notes": "a"})[0], 404)
+
+    def test_only_ready_houses_can_be_activated(self):
+        status, result, _ = self.call("POST", "/api/houses", {"id": "WH1"})
+        self.assertEqual(status, 409)
+        self.assertIn("ready for start", result["error"])
+        movement = {"kind": "pickup", "qty": 1, "house_id": "WH1", "person": "T", "team": "A",
+                    "date": date.today().isoformat()}
+        with server.connect_db() as db:
+            db.execute("INSERT INTO materials(name, unit, opening_qty) VALUES ('Mesh', 'units', 10)")
+            mesh = db.execute("SELECT id FROM materials WHERE name = 'Mesh'").fetchone()[0]
+        self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 409)
+        self.assertEqual(self.summary()["active"], 0)
+        self.plan({"id": "WH1", "ready": True})
+        self.assertEqual(self.call("POST", "/api/houses", {"id": "WH1"})[0], 201)
+        self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 201)
+
+    def test_house_moved_back_to_not_started_cannot_be_activated(self):
+        self.plan({"id": "WH1", "ready": True})
+        self.plan({"id": "WH1", "ready": False})
+        self.assertEqual(self.call("POST", "/api/houses", {"id": "WH1"})[0], 409)
+
+    def test_active_house_cannot_be_marked_ready(self):
+        self.activate({"id": "WH2"})
+        self.assertEqual(self.plan({"id": "WH2", "ready": True})[0], 409)
+        self.assertEqual(self.plan({"id": "WH1", "ready": "yes"})[0], 400)
+
+    def test_unknown_house_has_no_checklist(self):
+        self.assertEqual(self.call("GET", "/api/house-checklist/NOPE")[0], 404)
+
+
 class FrontEndLogicTests(unittest.TestCase):
     def run_js(self, body):
         start = APP_JS.index("const materialKey")
@@ -747,7 +859,91 @@ class FrontEndLogicTests(unittest.TestCase):
         self.assertEqual([(e["material"], e["qty"]) for e in result], [("Mesh", 2)])
 
 
+class StageTests(HttpBase):
+    def test_active_house_can_be_marked_stage_1_or_2_and_cleared(self):
+        self.provide("WH1", "T1", "1 Elm", "Owner")
+        self.assertEqual(self.call("POST", "/api/houses/stage", {"id": "WH1", "stage": 1})[0], 404)
+        self.assertEqual(self.activate({"id": "WH1"})[0], 201)
+
+        def stage():
+            _, data, _ = self.call("GET", "/api/dashboard")
+            return {h["id"]: h["stage"] for h in data["house_list"]}["WH1"]
+
+        self.assertEqual(stage(), 1)
+        with server.connect_db() as db:
+            db.execute("UPDATE houses SET stage = 0 WHERE id = 'WH1'")
+        server.initialize_db()
+        self.assertEqual(stage(), 1)
+        for value in (2, 1):
+            self.assertEqual(self.call("POST", "/api/houses/stage", {"id": "WH1", "stage": value})[0], 200)
+            self.assertEqual(stage(), value)
+        self.assertEqual(self.call("POST", "/api/houses/stage", {"id": "WH1", "stage": 3})[0], 400)
+        self.assertEqual(self.call("POST", "/api/houses/stage", {"id": "WH1", "stage": 0})[0], 400)
+
+
+class SnagTests(HttpBase):
+    def setUp(self):
+        super().setUp()
+        self.provide("WH1", "T1", "1 Elm", "Owner")
+
+    def snag(self, payload):
+        return self.call("POST", "/api/houses/snags", payload)
+
+    def test_add_toggle_and_delete_snags_on_not_started_house(self):
+        status, result, _ = self.snag({"id": "WH1", "text": "  Cracked sill  "})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["snags"], [{"id": result["snags"][0]["id"], "text": "Cracked sill", "done": False}])
+        snag_id = result["snags"][0]["id"]
+        _, result, _ = self.snag({"snag_id": snag_id, "done": True})
+        self.assertTrue(result["snags"][0]["done"])
+        _, found, _ = self.call("GET", "/api/calculator/houses?status=not_started")
+        self.assertTrue(found["houses"][0]["snags"][0]["done"])
+        _, result, _ = self.snag({"snag_id": snag_id, "done": False})
+        self.assertFalse(result["snags"][0]["done"])
+        _, result, _ = self.snag({"snag_id": snag_id, "delete": True})
+        self.assertEqual(result["snags"], [])
+
+    def test_snags_survive_activation_and_show_in_dashboard(self):
+        self.snag({"id": "WH1", "text": "Paint touch-up"})
+        self.activate({"id": "WH1"})
+        _, dash, _ = self.call("GET", "/api/dashboard")
+        house = next(h for h in dash["house_list"] if h["id"] == "WH1")
+        self.assertEqual([s["text"] for s in house["snags"]], ["Paint touch-up"])
+
+    def test_open_snags_listed_before_done_ones(self):
+        self.snag({"id": "WH1", "text": "first"})
+        _, result, _ = self.snag({"id": "WH1", "text": "second"})
+        self.snag({"snag_id": result["snags"][0]["id"], "done": True})
+        _, result, _ = self.snag({"id": "WH1", "text": "third"})
+        self.assertEqual([(s["text"], s["done"]) for s in result["snags"]],
+                         [("second", False), ("third", False), ("first", True)])
+
+    def test_validation(self):
+        self.assertEqual(self.snag({"id": "WH1", "text": "   "})[0], 400)
+        self.assertEqual(self.snag({"id": "WH1", "text": "x" * 501})[0], 400)
+        self.assertEqual(self.snag({"id": "NOPE", "text": "a"})[0], 404)
+        self.assertEqual(self.snag({"snag_id": 999, "done": True})[0], 404)
+        _, result, _ = self.snag({"id": "WH1", "text": "a"})
+        self.assertEqual(self.snag({"snag_id": result["snags"][0]["id"], "done": "yes"})[0], 400)
+
+
 class UiWiringTests(unittest.TestCase):
+    def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
+        self.assertIn('${isReady ? `<button class="text-button seai-activate"', APP_JS)
+
+    def test_plan_lists_refresh_without_flashing_loading_state(self):
+        body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]
+        body = body[: body.index("function openHouseNote")]
+        self.assertIn("planStale", body)
+        self.assertIn("list.dataset.planHtml !== html", body)
+        refresh = APP_JS[APP_JS.index("async function refresh("):]
+        self.assertNotIn("planCache = {}", refresh[: refresh.index("async function searchMovementHistory")])
+
+    def test_snags_are_clickable_and_styled_red_and_green(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn("snag-row", APP_JS)
+        self.assertIn(".snag-row.done .snag-text", css)
+        self.assertIn("line-through", css)
     def test_finish_toggle_updates_instantly_and_guards_repeat_clicks(self):
         body = APP_JS[APP_JS.index("async function toggleHouseFinished"):]
         body = body[: body.index("async function submitStocktake")]

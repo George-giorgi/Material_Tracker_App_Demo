@@ -638,10 +638,6 @@ class TrackerTests(unittest.TestCase):
                 server._upsert_house(db, "H-OPEN")
                 server._upsert_house(db, "H-CLOSED")
                 server._upsert_house(db, "H-UNASSIGNED")
-                db.execute(
-                    "UPDATE houses SET is_finished = 1 WHERE id = ?",
-                    ("H-CLOSED",),
-                )
 
         for house_id in ("H-OPEN", "H-OPEN", "H-CLOSED"):
             self.add_movement(
@@ -653,6 +649,9 @@ class TrackerTests(unittest.TestCase):
                 team="Crew A",
                 department="Electrical",
             )
+        with server.connect_db() as db:
+            with db:
+                db.execute("UPDATE houses SET is_finished = 1 WHERE id = ?", ("H-CLOSED",))
         self.add_movement(
             material_id,
             "pickup",
@@ -1158,7 +1157,7 @@ class TrackerTests(unittest.TestCase):
                 db.execute("UPDATE houses SET is_finished = 1 WHERE id = 'P-2'")
             summary = server._dashboard(db)["house_summary"]
         self.assertEqual(
-            summary, {"provided": 3, "active": 1, "closed": 1, "not_started": 1}
+            summary, {"provided": 3, "active": 1, "closed": 1, "ready": 0, "not_started": 1}
         )
 
     def test_dashboard_orders_open_houses_by_latest_status_change(self):
