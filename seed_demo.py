@@ -7,6 +7,77 @@ import server
 
 ROOT = Path(__file__).resolve().parent
 CATALOG_PATH = ROOT / "demo_catalog.json"
+DEMO_STOCK_BONUS = 2000
+DEMO_HOUSE_TOTAL = 50
+DEMO_PROVIDED_HOUSES = (
+    (
+        "SAMPLE-SEAI-001",
+        "SAMPLE-001",
+        "1 Sample Road, Sampletown",
+        "Sample Owner 001",
+        78.0,
+        34.6,
+    ),
+    (
+        "SAMPLE-SEAI-002",
+        "SAMPLE-002",
+        "2 Example Lane, Sampletown",
+        "Sample Owner 002",
+        96.5,
+        40.2,
+    ),
+    (
+        "SAMPLE-SEAI-003",
+        "SAMPLE-003",
+        "3 Demo Crescent, Sampletown",
+        "Sample Owner 003",
+        124.0,
+        46.8,
+    ),
+    (
+        "SAMPLE-SEAI-004",
+        "SAMPLE-004",
+        "4 Fiction Street, Sampletown",
+        "Sample Owner 004",
+        158.0,
+        53.4,
+    ),
+)
+
+
+def sample_house(index):
+    if index <= len(DEMO_PROVIDED_HOUSES):
+        return DEMO_PROVIDED_HOUSES[index - 1]
+    return (
+        f"SAMPLE-SEAI-{index:03d}",
+        f"SAMPLE-{index:03d}",
+        f"{index} Sample Road, Sampletown",
+        f"Sample Owner {index:03d}",
+        70.0 + (index * 18.5 % 100),
+        30.0 + (index * 5.6 % 40),
+    )
+
+
+def seed_sample_houses(db):
+    added = 0
+    index = 1
+    while db.execute("SELECT COUNT(*) FROM provided_houses").fetchone()[0] < DEMO_HOUSE_TOTAL:
+        house = sample_house(index)
+        cursor = db.execute(
+            """
+            INSERT OR IGNORE INTO provided_houses
+                (id, postcode, address, owner_name, area_m2, perimeter_m, source)
+            VALUES (?, ?, ?, ?, ?, ?, 'fictional_sample')
+            """,
+            house,
+        )
+        added += cursor.rowcount
+        index += 1
+    return added
+
+
+def demo_opening_quantity(index):
+    return 40 + (index * 17 % 121) + DEMO_STOCK_BONUS
 
 
 def seed_demo():
@@ -20,7 +91,7 @@ def seed_demo():
         with db:
             material_ids = []
             for index, material in enumerate(materials):
-                opening_qty = 40 + (index * 17 % 121)
+                opening_qty = demo_opening_quantity(index)
                 cursor = db.execute(
                     """
                     INSERT INTO materials(code, name, unit, opening_qty)
@@ -39,6 +110,7 @@ def seed_demo():
             server._upsert_house(
                 db, "DEMO-202", "D02 DEMO", "Morgan Example", "Taylor Demo"
             )
+            seed_sample_houses(db)
 
             common = {
                 "date": date.today().isoformat(),
@@ -111,6 +183,6 @@ def seed_demo():
 if __name__ == "__main__":
     count = seed_demo()
     print(
-        f"Seeded {count} materials and fictional demo activity in "
+        f"Seeded {count} materials, fictional houses, and demo activity in "
         f"{server.DB_PATH}. No live tracker data was copied."
     )

@@ -9,6 +9,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 import server
+import seed_demo
 
 
 class TrackerTests(unittest.TestCase):
@@ -476,6 +477,56 @@ class TrackerTests(unittest.TestCase):
                 cookie=employee_cookie,
             )
             self.assertEqual(status, 403)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_fictional_demo_houses_provide_auto_calculator_dimensions(self):
+        self.assertEqual(seed_demo.demo_opening_quantity(0), 2040)
+        self.assertEqual(seed_demo.demo_opening_quantity(1), 2057)
+        with server.connect_db() as db:
+            with db:
+                self.assertEqual(seed_demo.seed_sample_houses(db), 50)
+                self.assertEqual(seed_demo.seed_sample_houses(db), 0)
+            rows = db.execute(
+                """
+                SELECT id, postcode, address, owner_name, area_m2, perimeter_m, source
+                FROM provided_houses WHERE source = 'fictional_sample'
+                ORDER BY id
+                """
+            ).fetchall()
+        self.assertEqual(len(rows), 50)
+        self.assertEqual(rows[0]["id"], "SAMPLE-SEAI-001")
+        self.assertEqual(rows[0]["postcode"], "SAMPLE-001")
+        self.assertEqual(rows[0]["area_m2"], 78.0)
+        self.assertEqual(rows[0]["perimeter_m"], 34.6)
+
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/calculator/houses?q=SAMPLE-SEAI-001",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(len(result["houses"]), 1)
+            house = result["houses"][0]
+            self.assertEqual(house["area_m2"], 78.0)
+            self.assertEqual(house["perimeter_m"], 34.6)
+            self.assertEqual(house["source"], "fictional_sample")
         finally:
             httpd.shutdown()
             httpd.server_close()

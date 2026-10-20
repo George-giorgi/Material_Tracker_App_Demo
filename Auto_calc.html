@@ -983,7 +983,7 @@ function renderHouseResults(list,msg){
     const b=document.createElement("button");b.type="button";b.setAttribute("role","option");
     const l=document.createElement("span"),s=document.createElement("strong"),sm=document.createElement("small"),r=document.createElement("span");
     const LBL={not_started:"not started",active:"active",closed:"closed"};
-    s.textContent=h.id;sm.textContent=[h.owner_name,h.postcode,h.address,LBL[h.status]].filter(Boolean).join(" · ");
+    s.textContent=h.id;sm.textContent=[h.source==="fictional_sample"?"FICTIONAL SAMPLE — NOT SEAI DATA":null,h.owner_name,h.postcode,h.address,LBL[h.status]].filter(Boolean).join(" · ");
     l.append(s,sm);r.className="meta-right";r.textContent=fmt(h.area_m2,"m²")+" · "+fmt(h.perimeter_m,"m");
     b.append(l,r);b.onclick=()=>chooseHouse(h);hr.appendChild(b);houseItems.push(b)
   });
@@ -1010,7 +1010,7 @@ function chooseHouse(h){
   [["House",h.id],["Owner",h.owner_name||"—"],["Postcode",h.postcode||"—"],["Area",fmt(h.area_m2,"m²")],["Perimeter",fmt(h.perimeter_m,"m")]].forEach(([k,v])=>{
     const s=document.createElement("span"),b=document.createElement("b");b.textContent=v;s.append(k+": ",b);hc.appendChild(s)});
   const c=document.createElement("button");c.type="button";c.className="secondary";c.textContent="Change house";c.onclick=()=>{selectedHouse=null;hc.hidden=true;hs.focus()};hc.appendChild(c);
-  hc.hidden=false;hstat.textContent="Details loaded from the database. You can still edit any field.";
+  hc.hidden=false;hstat.textContent=h.source==="fictional_sample"?"Fictional sample data for testing only — replace with verified SEAI house measurements before planning a real job.":"Details loaded from the database. You can still edit any field.";
   calc()
 }
 hs.addEventListener("input",()=>{clearTimeout(houseTimer);houseTimer=setTimeout(searchHouses,200)});

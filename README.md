@@ -71,6 +71,12 @@ The demo database is already seeded. If you create a fresh demo database,
 run `py seed_demo.py` once before starting the server. The seed script
 refuses to overwrite a database that already has materials. To keep the demo
 independent, do not set `EWI_DB_PATH` to the live tracker's database path.
+The demo also includes enough clearly labeled fictional house records to bring
+the provided-house list to 50 total entries, preserving any existing records.
+Each sample has a postcode, wall area, and perimeter
+for testing the automatic calculator. Fictional warehouse opening stock is
+increased by 2,000 units for each material. These example houses and quantities
+are not real SEAI or stock data and must not be used for real jobs.
 
 ## Present the demo
 

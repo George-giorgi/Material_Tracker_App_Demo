@@ -1390,7 +1390,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     f"""
                     SELECT p.id, p.postcode, p.address, p.owner_name,
                            COALESCE(h.employee_name, '') AS employee_name,
-                           p.area_m2, p.perimeter_m, p.notes,
+                           p.area_m2, p.perimeter_m, p.notes, p.source,
                            p.plan_scaffolding, p.plan_esb, p.plan_plumber,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
