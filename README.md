@@ -78,6 +78,36 @@ for testing the automatic calculator. Fictional warehouse opening stock is
 increased by 2,000 units for each material. These example houses and quantities
 are not real SEAI or stock data and must not be used for real jobs.
 
+## Navigate and test the demo
+
+After signing in as an administrator or employee, click **Navigation test
+flow** to step through Overview, Inventory, Houses, Teams, the house map, and
+Movements. Use Back, Next, or Close at any time. The tour only changes views;
+it does not save changes to stock or house records. Surveyor accounts do not
+see the tour because their navigation is limited to surveys.
+
+Run the automated navigation-flow tests with:
+
+```powershell
+py -m unittest tests.test_navigation_flow
+```
+
+These exercise the real navigation routing logic and check that menu and
+shortcut destinations match the app's pages. Run the full application tests
+with `py -m unittest discover -s tests`.
+
+For the end-to-end browser test, install the test dependencies and Chromium
+once, then run:
+
+```powershell
+py -m pip install -r requirements-test.txt
+py -m playwright install chromium
+py -m unittest tests.test_navigation_browser
+```
+
+The browser test creates an administrator and runs the full tour against a
+temporary database; it does not use or change the demo database.
+
 ## Present the demo
 
 Open the app and click **Presentation guide**. It walks through adding a
@@ -95,12 +125,14 @@ video script and scene order.
 ## SEAI house map
 
 Click **From SEAI** on Overview to open the house map. The current demo map
-and Ready for start list combine the original 50 houses with the nine added
-Eircode test records. The nine added records are marked Ready for start.
-Overview totals use the complete combined database, and the map shows all
-Ready or Active houses. Markers use their stored coordinates and identify
-active Stage 1 or 2 houses. Selecting a marker or list entry opens that
-house's available workflow actions.
+and Ready for start list combine the original 50 houses with nine saved
+Eircode records. The nine Eircode records are Ready for start; the original
+50 houses are Not started. The map opens to an Ireland-wide OpenStreetMap view.
+Eligible houses appear in the map's house list even when they have no approved
+coordinates. The saved map-test houses appear as approximate demo pins, clearly
+distinguished from verified locations; they do not show the exact Eircode
+locations. Map markers identify Ready houses and active Stage 1 or 2 houses.
+Selecting a marker or list entry opens that house's available workflow actions.
 Activating a Ready house copies its saved Eircode and owner from the provided
 house record; the house remains on the map with its Active status.
 
@@ -116,9 +148,10 @@ Map imagery is loaded from the public OpenStreetMap tile service, which can
 observe tile requests and the approximate map area being viewed. OpenStreetMap
 attribution is displayed on the map.
 
-Map-test records use the `map_test` source, have synthetic coordinates, and are
-labelled in the map UI. They are for exercising marker/status behavior only;
-their coordinates do not represent the real locations of their Eircodes.
+Map-test records use the `map_test` source and have synthetic coordinates for
+demonstration only. Their pins are explicitly labeled approximate and do not
+represent the real locations of their Eircodes. Import approved
+latitude/longitude coordinates to place these houses accurately on the map.
 
 ## House surveys and calculator measurements
 

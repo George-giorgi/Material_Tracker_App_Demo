@@ -17,6 +17,7 @@ const state = {
   selectedMapHouseId: "",
   houseMapCamera: null,
   presentation: null,
+  navigationTour: null,
   user: null,
   setupRequired: false,
 };
@@ -145,6 +146,44 @@ const presentationSteps = [
     instruction:
       "The 50-house provided pool and its Not started count are preserved. Only the isolated demo database was used.",
     example: "For the matching spoken narration and recording order, open DEMO-PRESENTATION.md.",
+  },
+];
+const navigationTourSteps = [
+  {
+    key: "overview",
+    title: "Overview",
+    instruction: "Check the headline stock and house counts, recent activity, and shortcuts into inventory, houses, and movements.",
+    note: "Navigation check 1 of 6 · Overview",
+  },
+  {
+    key: "inventory",
+    title: "Inventory",
+    instruction: "Inventory is open. Review material balances and locate the stocktake and movement actions.",
+    note: "This tour only navigates; it does not change stock.",
+  },
+  {
+    key: "houses",
+    title: "Houses",
+    instruction: "Houses & teams is open on the house list. Use search or status filters to find a house.",
+    note: "No house status or checklist is changed by this tour.",
+  },
+  {
+    key: "teams",
+    title: "Teams",
+    instruction: "The Teams view is open. Review the crews and their house counts; select a count to inspect assigned houses.",
+    note: "Returning to Houses restores the regular house list.",
+  },
+  {
+    key: "map",
+    title: "House map",
+    instruction: "The From SEAI map view is open. Review the eligible-house list and select a marker or list entry to inspect it.",
+    note: "Demo pins are approximate; they are not exact Eircode locations.",
+  },
+  {
+    key: "movements",
+    title: "Movements",
+    instruction: "The movement ledger is open. Try its search. Record movement opens a form, but nothing is saved unless you submit it.",
+    note: "Navigation check 6 of 6 · Movements",
   },
 ];
 let toastTimer;
@@ -290,6 +329,7 @@ function showWorkspace(user) {
   $$(".nav-item[data-tab]").forEach((item) => item.classList.toggle("hidden", isSurveyor && item.dataset.tab !== "houses"));
   $("#new-movement-top").classList.toggle("hidden", isSurveyor);
   $("#start-presentation").classList.toggle("hidden", isSurveyor || user.role !== "admin");
+  $("#start-navigation-tour").classList.toggle("hidden", isSurveyor);
   $("#houses-teams-tabs").classList.toggle("hidden", isSurveyor);
   $("#teams-section").classList.toggle("hidden", isSurveyor);
   $("#open-house").classList.toggle("hidden", isSurveyor);
@@ -309,6 +349,7 @@ function showWorkspace(user) {
   $("#go-overview").classList.add("hidden");
   updateMovementFields();
   if (user.role !== "admin") closePresentation();
+  if (isSurveyor) closeNavigationTour();
 }
 
 async function checkAuthentication() {
@@ -323,6 +364,10 @@ async function checkAuthentication() {
 
 function setTab(tab) {
   stickyHouses.clear();
+  if (tab === "overview" && state.housesTeamsTab !== "houses") {
+    state.housesTeamsTab = "houses";
+    renderHouses();
+  }
   $("#go-overview").classList.toggle("hidden", tab === "overview");
   $$(".nav-item").forEach((button) => {
     const active = button.dataset.tab === tab;
@@ -385,6 +430,7 @@ function renderPresentationGuide() {
 }
 
 function startPresentation() {
+  closeNavigationTour();
   state.presentation = { index: 0, houseId: nextPresentationHouseId() };
   $("#presentation-guide").classList.remove("hidden");
   $("#resume-presentation").classList.add("hidden");
@@ -396,6 +442,82 @@ function closePresentation() {
   state.presentation = null;
   $("#presentation-guide").classList.add("hidden");
   $("#resume-presentation").classList.add("hidden");
+}
+
+function renderNavigationTour() {
+  if (!state.navigationTour) return;
+  const { index } = state.navigationTour;
+  const step = navigationTourSteps[index];
+  $("#navigation-tour-progress").textContent =
+    `NAVIGATION TEST FLOW · ${index + 1} / ${navigationTourSteps.length}`;
+  $("#navigation-tour-title").textContent = step.title;
+  $("#navigation-tour-instruction").textContent = step.instruction;
+  $("#navigation-tour-note").textContent = step.note;
+  $("#navigation-tour-previous").disabled = index === 0;
+  $("#navigation-tour-next").textContent =
+    index === navigationTourSteps.length - 1 ? "Finish" : "Next";
+}
+
+function openNavigationTourStep(stepKey) {
+  const step = navigationTourSteps.find((item) => item.key === stepKey);
+  if (!step) throw new Error(`Unknown navigation tour step: ${stepKey}`);
+  if (stepKey === "overview") {
+    state.houseMapMode = false;
+    setTab("overview");
+    showHousesOverview();
+    return;
+  }
+  if (stepKey === "inventory") {
+    setTab("inventory");
+    return;
+  }
+  if (stepKey === "movements") {
+    setTab("movements");
+    return;
+  }
+  state.houseMapMode = stepKey === "map";
+  state.housesTeamsTab = stepKey === "teams" ? "teams" : "houses";
+  state.houseTeamFilter = null;
+  state.houseStatusFilter = null;
+  state.selectedMapHouseId = "";
+  state.houseMapCamera = null;
+  $("#house-search").value = "";
+  $("#team-search").value = "";
+  if (stepKey === "map") {
+    setTab("houses");
+    renderHouses();
+    return;
+  }
+  showHousesOverview();
+  setTab("houses");
+  renderHouses();
+}
+
+function startNavigationTour() {
+  if (!state.user || state.user.role === "surveyor") return;
+  closePresentation();
+  state.navigationTour = { index: 0 };
+  $("#navigation-tour").classList.remove("hidden");
+  openNavigationTourStep(navigationTourSteps[0].key);
+  renderNavigationTour();
+}
+
+function closeNavigationTour() {
+  state.navigationTour = null;
+  $("#navigation-tour").classList.add("hidden");
+}
+
+function moveNavigationTour(stepDelta) {
+  if (!state.navigationTour) return;
+  const nextIndex = state.navigationTour.index + stepDelta;
+  if (nextIndex >= navigationTourSteps.length) {
+    closeNavigationTour();
+    return;
+  }
+  state.navigationTour.index = Math.max(0, nextIndex);
+  const step = navigationTourSteps[state.navigationTour.index];
+  openNavigationTourStep(step.key);
+  renderNavigationTour();
 }
 
 function minimizePresentation() {
@@ -775,6 +897,14 @@ async function saveSnag(payload) {
 function noteHtml(text) {
   return text ? `<div class="house-note"><div class="house-stock-title">Notes</div><p>${escapeHtml(text)}</p></div>` : "";
 }
+function houseCardNote(house) {
+  const notes = String(house.notes || "");
+  if (house.source !== "map_test") return notes;
+  return notes
+    .replace(/TEST ONLY:\s*synthetic coordinates do not identify the Eircode locatio(?:n)?\.?/gi, "")
+    .replace(/[.\s]+$/g, "")
+    .trim();
+}
 function findPlanHouse(houseId) {
   return Object.values(planCache).flat().find((item) => item.id === houseId) ||
     state.houseMapData?.find((item) => item.id === houseId);
@@ -867,6 +997,20 @@ async function submitHouseSurvey(event) {
   } catch (error) { showToast(error.message, true); }
   finally { button.disabled = false; }
 }
+function houseWorkflowHtml(currentStep, showHint = false) {
+  const stages = ["Not started", "Ready for start", "Active", "Closed"];
+  return `<div class="house-workflow" role="group" aria-label="House workflow progress">
+    <div class="house-workflow-heading"><strong>House workflow</strong><span>Step ${currentStep} of ${stages.length}</span></div>
+    <ol class="house-workflow-steps" aria-label="House stages">
+      ${stages.map((stage, index) => {
+        const step = index + 1;
+        const stateClass = step < currentStep ? "complete" : step === currentStep ? "current" : "";
+        return `<li class="${stateClass}"${step === currentStep ? ' aria-current="step"' : ""}><span>${step}</span><small>${stage}</small></li>`;
+      }).join("")}
+    </ol>
+    ${showHint ? '<p class="house-workflow-hint">Mark ready when pre-start checks can begin. Stage 1/2 work stages appear after activation.</p>' : ""}
+  </div>`;
+}
 async function renderNotStartedHouses(query, mode = "not_started") {
   const list = $("#houses-list");
   list.classList.remove("house-grid-scrollable");
@@ -908,7 +1052,13 @@ async function renderNotStartedHouses(query, mode = "not_started") {
         .map((h) => {
           const id = escapeHtml(h.id);
             const workflowStep = isReady ? 2 : 1;
-            const locationDetails = [h.owner_name, h.address, h.postcode]
+            const isMapTestHouse = h.source === "map_test";
+          const cardNote = houseCardNote(h);
+            const locationDetails = [
+              isMapTestHouse ? "" : h.owner_name,
+              isMapTestHouse ? "" : h.address,
+              h.postcode,
+            ]
               .filter(Boolean)
               .join(" · ");
             const propertyDetails = [
@@ -919,23 +1069,15 @@ async function renderNotStartedHouses(query, mode = "not_started") {
                 ? `${formatQuantity(h.perimeter_m)} m perimeter`
                 : "",
             ].filter(Boolean);
-            return `<article class="card house-card ${isReady ? "house-ready" : "house-pending"}">
+            return `<article class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}">
           <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey) : ""}</div></div>
-          <div class="house-body">
-            <div class="house-workflow" aria-label="House workflow progress">
-              <div class="house-workflow-heading"><strong>Workflow</strong><span>Step ${workflowStep} of 3</span></div>
-              <ol class="house-workflow-steps">
-                <li class="${workflowStep === 1 ? "current" : "complete"}"><span>1</span><small>Not started</small></li>
-                <li class="${workflowStep === 2 ? "current" : ""}"><span>2</span><small>Ready</small></li>
-                <li><span>3</span><small>Active</small></li>
-              </ol>
-              ${!isReady ? `<p class="house-workflow-hint">Mark ready when pre-start checks can begin. Stage 1/2 work stages appear after activation.</p>` : ""}
-            </div>
-            ${noteHtml(h.notes)}${isReady ? snagsHtml(h) : ""}
-            <div class="house-checklist-card"><div class="house-stock-title">Pre-start checklist</div>${planChecklistHtml(h)}</div>
+          <div class="house-body"${!isReady ? ' tabindex="0" role="region" aria-label="House details and pre-start checklist"' : ""}>
+            ${houseWorkflowHtml(workflowStep, !isReady)}
+            ${isReady ? noteHtml(cardNote) : ""}${isReady ? snagsHtml(h) : ""}
+            ${isReady ? `<div class="house-checklist-card"><div class="house-stock-title">Pre-start checklist</div>${planChecklistHtml(h)}</div>` : ""}
           </div>
         <div class="house-card-actions">
-          ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${h.notes ? "Edit note" : "Add note"}</button>` : `
+          ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : `
             <button class="text-button seai-activate" type="button" data-house-id="${id}">&#43; Activate house</button>
             <button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${h.survey ? "Review completed survey" : "Enter survey measurements"}">${h.survey ? "Review survey" : "Enter survey measurements"}</button>
             <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>
@@ -1003,6 +1145,14 @@ async function toggleHouseReady(houseId, ready) {
 }
 
 const HOUSE_MAP_TILE_SIZE = 256;
+const HOUSE_MAP_DEFAULT_CENTER = { latitude: 53.4, longitude: -8, zoom: 6 };
+
+function hasUsableHouseCoordinates(house) {
+  return Number.isFinite(Number(house.latitude)) &&
+    Number.isFinite(Number(house.longitude)) &&
+    house.latitude !== null &&
+    house.longitude !== null;
+}
 
 function projectMapPoint(latitude, longitude, zoom) {
   const scale = HOUSE_MAP_TILE_SIZE * 2 ** zoom;
@@ -1030,12 +1180,15 @@ function mapHouseStatusClass(house) {
 
 function fitHouseMap() {
   const houses = (state.houseMapData || []).filter(
-    (house) => Number.isFinite(Number(house.latitude)) &&
-      Number.isFinite(Number(house.longitude)) &&
-      house.latitude !== null && house.longitude !== null,
+    hasUsableHouseCoordinates,
   );
   if (!houses.length) {
-    state.houseMapCamera = null;
+    const center = projectMapPoint(
+      HOUSE_MAP_DEFAULT_CENTER.latitude,
+      HOUSE_MAP_DEFAULT_CENTER.longitude,
+      HOUSE_MAP_DEFAULT_CENTER.zoom,
+    );
+    state.houseMapCamera = { ...center, zoom: HOUSE_MAP_DEFAULT_CENTER.zoom };
     renderHouseMapCanvas();
     return;
   }
@@ -1087,19 +1240,30 @@ function renderHouseMapCanvas() {
   tiles.replaceChildren();
   markers.replaceChildren();
   const mappedHouses = (state.houseMapData || []).filter(
-    (house) => Number.isFinite(Number(house.latitude)) &&
-      Number.isFinite(Number(house.longitude)) &&
-      house.latitude !== null && house.longitude !== null,
+    hasUsableHouseCoordinates,
   );
-  if (!state.houseMapCamera || !mappedHouses.length) {
+  if (!state.houseMapCamera) {
+    const center = projectMapPoint(
+      HOUSE_MAP_DEFAULT_CENTER.latitude,
+      HOUSE_MAP_DEFAULT_CENTER.longitude,
+      HOUSE_MAP_DEFAULT_CENTER.zoom,
+    );
+    state.houseMapCamera = { ...center, zoom: HOUSE_MAP_DEFAULT_CENTER.zoom };
+  }
+  if (!mappedHouses.length) {
     const empty = document.createElement("div");
     empty.className = "house-map-empty";
     const total = (state.houseMapData || []).length;
-    empty.textContent = total
-      ? `${total} active or ready house${total === 1 ? "" : "s"} shown in the list. Import approved Eircodes and coordinates to place them on the map.`
-      : "No active or ready houses to show on the map yet.";
+    empty.innerHTML = total
+      ? `<strong>${total} eligible house${total === 1 ? "" : "s"}</strong><span>The map shows Ireland. Select a house from the list; accurate pins need approved coordinates.</span>`
+      : "<strong>No active or ready houses</strong><span>Houses will appear here when marked Ready for start or Active.</span>";
     tiles.append(empty);
-    return;
+  }
+  if (mappedHouses.some((house) => house.source === "map_test")) {
+    const notice = document.createElement("div");
+    notice.className = "house-map-empty house-map-approximate";
+    notice.innerHTML = "<strong>Approximate demo pins</strong><span>These positions are for demonstration only and do not show the exact Eircode locations.</span>";
+    tiles.append(notice);
   }
   const { x: centerX, y: centerY, zoom } = state.houseMapCamera;
   const tileCount = 2 ** zoom;
@@ -1129,18 +1293,21 @@ function renderHouseMapCanvas() {
     const marker = document.createElement("button");
     const statusClass = mapHouseStatusClass(house);
     const activeStage = house.status === "active" ? ` · Stage ${house.stage || 1}` : "";
+    const isApproximate = house.source === "map_test";
+    const locationLabel = isApproximate ? " · approximate demo location, not exact Eircode location" : "";
     marker.type = "button";
-    marker.className = `house-map-marker map-status-${statusClass}${house.id === state.selectedMapHouseId ? " selected" : ""}`;
+    marker.className = `house-map-marker map-status-${statusClass}${isApproximate ? " house-map-marker-approximate" : ""}${house.id === state.selectedMapHouseId ? " selected" : ""}`;
     marker.dataset.mapHouseId = house.id;
+    if (isApproximate) marker.dataset.locationAccuracy = "approximate";
     if (house.status === "active") marker.dataset.stage = String(house.stage || 1);
     marker.style.left = `${point.x - centerX + width / 2}px`;
     marker.style.top = `${point.y - centerY + height / 2}px`;
     marker.textContent = house.status === "active" ? String(house.stage || 1) : "R";
     marker.setAttribute(
       "aria-label",
-      `${house.id}, ${mapHouseStatusLabel(house)}${activeStage}${house.source === "map_test" ? ", test only, synthetic coordinates" : ""}`,
+      `${house.id}, ${mapHouseStatusLabel(house)}${activeStage}${locationLabel}`,
     );
-    marker.title = `${house.id} · ${mapHouseStatusLabel(house)}${house.source === "map_test" ? " · TEST ONLY: synthetic coordinates" : ""}`;
+    marker.title = `${house.id} · ${mapHouseStatusLabel(house)}${activeStage}${locationLabel}`;
     markers.append(marker);
   });
 }
@@ -1157,7 +1324,7 @@ function mapHouseActions(house) {
   if (house.status === "closed") {
     return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
   }
-  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button><span class="stage-switch" role="group" aria-label="Stage">${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>${admin ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
+  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button><span class="stage-switch" role="group" aria-label="Stage"><span class="map-stage-caption">WORK STAGE</span>${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>${admin ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
 }
 
 function selectMapHouse(houseId) {
@@ -1167,15 +1334,12 @@ function selectMapHouse(houseId) {
   const tracked = state.dashboard.house_list.find((item) => item.id === houseId);
   const displayHouse = { ...tracked, ...house };
   const address = [house.address, house.postcode].filter(Boolean).join(" · ");
-  const testNotice = house.source === "map_test"
-    ? '<p class="map-test-warning">Test record only: these map coordinates are synthetic and do not identify the Eircode location.</p>'
-    : "";
   const measures = [
     house.area_m2 === null ? "" : `${formatQuantity(house.area_m2)} m²`,
     house.perimeter_m === null ? "" : `${formatQuantity(house.perimeter_m)} m perimeter`,
   ].filter(Boolean).join(" · ");
   $("#house-map-selection").innerHTML = `
-    <div class="house-map-selected-heading"><div><strong>${escapeHtml(house.id)}</strong><span class="status-pill ${house.status === "active" ? "active" : house.status === "ready" ? "ready" : house.status === "closed" ? "finished" : "pending"}">${escapeHtml(mapHouseStatusLabel(house))}</span></div><p>${escapeHtml([house.owner_name, address, measures].filter(Boolean).join(" · ") || "No location details recorded")}</p>${testNotice}</div>
+    <div class="house-map-selected-heading"><div><strong>${escapeHtml(house.id)}</strong><span class="status-pill ${house.status === "active" ? "active" : house.status === "ready" ? "ready" : house.status === "closed" ? "finished" : "pending"}">${escapeHtml(mapHouseStatusLabel(house))}</span></div><p>${escapeHtml([house.owner_name, address, measures].filter(Boolean).join(" · ") || "No location details recorded")}</p></div>
     <div class="house-card-actions">${mapHouseActions(displayHouse)}</div>`;
   $("#house-map-house-list").querySelectorAll("[data-map-house-id]").forEach((button) =>
     button.classList.toggle("selected", button.dataset.mapHouseId === houseId),
@@ -1186,9 +1350,10 @@ function selectMapHouse(houseId) {
 function renderHouseMapList() {
   const houses = state.houseMapData || [];
   const list = $("#house-map-house-list");
+  $("#house-map-list-count").textContent = String(houses.length);
   list.innerHTML = houses.map((house) => `
     <button class="house-map-list-item${house.id === state.selectedMapHouseId ? " selected" : ""}" type="button" data-map-house-id="${escapeHtml(house.id)}">
-      <span><strong>${escapeHtml(house.id)}</strong><small>${escapeHtml([house.address, house.postcode].filter(Boolean).join(" · ") || "Location details missing")}${house.source === "map_test" ? '<br><b class="map-test-warning">TEST ONLY · synthetic coordinates</b>' : ""}</small></span>
+      <span><strong>${escapeHtml(house.id)}</strong><small>${escapeHtml([house.address, house.postcode].filter(Boolean).join(" · ") || "Location details missing")}</small></span>
       <span class="house-map-list-status map-list-status-${mapHouseStatusClass(house)}"${house.status === "active" ? ` data-stage="${house.stage || 1}"` : ""}>${escapeHtml(mapHouseStatusLabel(house))}</span>
     </button>`).join("");
 }
@@ -1198,6 +1363,17 @@ async function loadHouseMap() {
     const result = await request("/api/calculator/houses?status=map");
     if (!state.houseMapMode) return;
     state.houseMapData = result.houses;
+    const houses = state.houseMapData;
+    const mappedCount = houses.filter(
+      hasUsableHouseCoordinates,
+    ).length;
+    const readyCount = houses.filter((house) => house.status === "ready").length;
+    const activeCount = houses.filter((house) => house.status === "active").length;
+    $("#house-map-summary").innerHTML = `
+      <span><strong>${houses.length}</strong> eligible</span>
+      <span><strong>${mappedCount}</strong> mapped</span>
+      <span class="map-summary-ready"><strong>${readyCount}</strong> ready</span>
+      <span class="map-summary-active"><strong>${activeCount}</strong> active</span>`;
     renderHouseMapList();
     if (!state.houseMapCamera) fitHouseMap();
     else renderHouseMapCanvas();
@@ -1320,7 +1496,7 @@ function renderHouses() {
     return `
       <article class="card house-card ${house.is_finished ? "house-finished" : "house-active"}">
         <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
-        <div class="house-body"><div class="house-stock"><div class="house-stock-title">Materials on site</div>
+        <div class="house-body" data-house-id="${escapeHtml(house.id)}">${houseWorkflowHtml(house.is_finished ? 4 : 3)}<div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) || house.is_finished ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${!house.is_finished && held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
         ${noteHtml(house.notes)}${house.is_finished ? "" : snagsHtml(house)}
@@ -1416,11 +1592,21 @@ function renderHouses() {
   delete housesList.dataset.planHtml;
   const listScroll = housesList.scrollTop;
   const pageScroll = window.scrollY;
+  const houseBodyScroll = new Map(
+    [...housesList.querySelectorAll(".house-body[data-house-id]")].map((body) => [
+      body.dataset.houseId,
+      body.scrollTop,
+    ]),
+  );
   housesList.innerHTML = houseCards.join("");
   housesList.classList.toggle(
     "house-grid-scrollable",
     matchingHouses.length > 6,
   );
+  housesList.querySelectorAll(".house-body[data-house-id]").forEach((body) => {
+    const scrollTop = houseBodyScroll.get(body.dataset.houseId);
+    if (scrollTop !== undefined) body.scrollTop = scrollTop;
+  });
   // Keep the view exactly where it was when a card is re-rendered in place.
   housesList.scrollTo({ top: listScroll, behavior: "instant" });
   if (window.scrollY !== pageScroll) window.scrollTo({ top: pageScroll, behavior: "instant" });
@@ -1537,6 +1723,14 @@ function renderHouseDetail(result) {
     closed: "Closed",
   }[house.status] || (house.is_finished ? "Closed" : "Active");
   $("#house-detail-title").textContent = house.id;
+  const detailStatus = $("#house-detail-status");
+  detailStatus.textContent = statusLabel;
+  detailStatus.className = `status-pill house-detail-status ${
+    house.status === "ready" ? "ready"
+      : house.status === "active" ? "active"
+        : house.status === "closed" || house.is_finished ? "finished"
+          : "pending"
+  }`;
   $("#house-detail-subtitle").textContent =
     [house.owner_name, house.employee_name, house.postcode, house.address]
       .filter(Boolean)
@@ -1552,12 +1746,50 @@ function renderHouseDetail(result) {
   ]
     .map(
       ([label, value]) => `
-        <article class="card house-detail-fact">
+        <article class="card house-detail-fact${label === "Status" ? " house-detail-fact-status" : ""}">
           <div class="house-stock-title">${escapeHtml(label)}</div>
           <strong>${escapeHtml(value || "Not recorded")}</strong>
         </article>`,
     )
     .join("");
+
+  const checklistItems = [
+    [
+      "Scaffolding",
+      house.scaffolding_status,
+      { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
+    ],
+    [
+      "ESB cable unclipped",
+      house.esb_unclipped,
+      { yes: "Yes", no: "No", not_esb: "Not ESB" },
+    ],
+    [
+      "Plumber work",
+      house.plumber_status,
+      { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
+    ],
+  ];
+  const checklistHasValues = checklistItems.some(([, value]) => value !== null && value !== undefined);
+  const recordedChecklistCount = checklistItems.filter(
+    ([, value]) => value !== null && value !== undefined,
+  ).length;
+  $("#house-detail-checklist-summary").textContent =
+    `${recordedChecklistCount} of ${checklistItems.length} recorded`;
+  $("#house-detail-checklist").innerHTML = checklistHasValues
+    ? checklistItems
+        .map(([label, value, labels]) => {
+          const tone = value === "done" || value === "yes"
+            ? "positive"
+            : value === "not_done" || value === "no"
+              ? "negative"
+              : value === "not_necessary" || value === "not_esb"
+                ? "unnecessary"
+                : "unset";
+          return `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${tone}">${escapeHtml(labels[value] || "Not set")}</strong></div>`;
+        })
+        .join("")
+    : `<p class="muted">No pre-start checklist has been recorded.</p>`;
 
   const noteRows = [
     ["House note", house.notes],
@@ -1693,6 +1925,9 @@ function openHouseDetail(houseId) {
   $("#house-detail-title").textContent = houseId;
   $("#house-detail-subtitle").textContent = "Loading house record…";
   $("#house-detail-facts").innerHTML = "";
+  $("#house-detail-checklist").innerHTML = "";
+  $("#house-detail-checklist-summary").textContent = "";
+  $("#house-detail-status").textContent = "";
   $("#house-detail-stock").innerHTML = "";
   $("#house-detail-notes").innerHTML = "";
   $("#house-detail-snags").innerHTML = "";
@@ -1882,10 +2117,7 @@ function fillSeaiHouse(h) {
     ["Perimeter", fmt(h.perimeter_m, "m")],
   ]
     .map(([k, v]) => `<span>${k}: <b>${escapeHtml(String(v))}</b></span>`)
-    .join("") +
-    (h.source === "map_test"
-      ? '<span class="map-test-warning"><b>TEST ONLY</b> · synthetic address, area, perimeter, and map coordinates</span>'
-      : "");
+    .join("");
   $("#seai-info").classList.remove("hidden");
   $("#seai-results").classList.add("hidden");
   $("#seai-search").value = "";
@@ -2522,6 +2754,14 @@ function bindEvents() {
     }),
   );
   $("#start-presentation").addEventListener("click", startPresentation);
+  $("#start-navigation-tour").addEventListener("click", startNavigationTour);
+  $("#close-navigation-tour").addEventListener("click", closeNavigationTour);
+  $("#navigation-tour-previous").addEventListener("click", () =>
+    moveNavigationTour(-1),
+  );
+  $("#navigation-tour-next").addEventListener("click", () =>
+    moveNavigationTour(1),
+  );
   $("#account-button").addEventListener("click", () =>
     $("#account-dialog").showModal(),
   );
@@ -2594,6 +2834,14 @@ function bindEvents() {
   );
   $("#open-house").addEventListener("click", openHouseDialog);
   $("#back-to-houses").addEventListener("click", showHousesOverview);
+  $$(".house-detail-nav [data-house-detail-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.getElementById(button.dataset.houseDetailTarget)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  });
   $("#open-stocktake").addEventListener("click", () => openStocktake());
   $("#inventory-table").addEventListener("click", (event) => {
     const button = event.target.closest(".stock-edit");

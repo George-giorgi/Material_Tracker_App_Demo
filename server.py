@@ -1829,6 +1829,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                            COALESCE(NULLIF(p.owner_name, ''), h.owner_name) AS owner_name,
                            COALESCE(h.employee_name, '') AS employee_name,
                            p.address, p.area_m2, p.perimeter_m,
+                           COALESCE(hc.scaffolding_status, p.plan_scaffolding) AS scaffolding_status,
+                           COALESCE(hc.esb_unclipped, p.plan_esb) AS esb_unclipped,
+                           COALESCE(hc.plumber_status, p.plan_plumber) AS plumber_status,
                            COALESCE(h.is_finished, 0) AS is_finished,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
@@ -1840,6 +1843,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                            COALESCE(hs.updated_at, '') AS survey_updated_at
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
+                    LEFT JOIN house_checklists hc ON hc.house_id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
                     WHERE p.id = ?
                     """,
@@ -1849,11 +1853,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                     house = db.execute(
                         """
                         SELECT id, postcode, owner_name, employee_name, NULL AS address,
-                               NULL AS area_m2, NULL AS perimeter_m, is_finished,
+                               NULL AS area_m2, NULL AS perimeter_m,
+                               hc.scaffolding_status, hc.esb_unclipped,
+                               hc.plumber_status, is_finished,
                                CASE WHEN is_finished = 1 THEN 'closed' ELSE 'active' END AS status,
                                '' AS notes, '' AS survey_notes,
                                '' AS survey_updated_by, '' AS survey_updated_at
-                        FROM houses WHERE id = ?
+                        FROM houses
+                        LEFT JOIN house_checklists hc ON hc.house_id = houses.id
+                        WHERE id = ?
                         """,
                         (house_id,),
                     ).fetchone()
@@ -1862,6 +1870,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 movements = _house_movement_rows(db, house_id)
                 house_data = dict(house)
+                house_data["esb_unclipped"] = _esb_unclipped_status(
+                    house_data["esb_unclipped"]
+                )
                 house_data["snags"] = _snags_by_house(db, include_created_at=True).get(
                     house_id, []
                 )

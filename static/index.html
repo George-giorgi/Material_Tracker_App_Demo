@@ -50,6 +50,7 @@
           <button class="button button-secondary overview-shortcut" id="go-overview" type="button" aria-label="Return to Overview">← Overview</button>
           <div class="topbar-spacer"></div>
           <button class="button button-secondary" id="account-button">Account</button>
+          <button class="button button-secondary" id="start-navigation-tour" type="button">Navigation test flow</button>
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
           <button class="button button-primary" id="new-movement-top"><span>＋</span> Record movement</button>
         </header>
@@ -131,7 +132,7 @@
           </div>
           <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
             <div class="page-heading houses-list-toolbar">
-              <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Showing houses that are Ready for start or Active. Select a marker or list entry to review its available workflow actions.</p></div>
+              <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Explore houses with approved locations. Select a marker or list entry to review its status and actions.</p><div id="house-map-summary" class="house-map-summary" aria-live="polite"></div></div>
               <button class="button button-secondary" id="house-map-list-view" type="button">Back to house list</button>
             </div>
             <article class="card house-map-import hidden" id="house-map-import-card">
@@ -157,36 +158,55 @@
                 </div>
               </div>
               <aside class="card house-map-side">
-                <div class="house-map-legend">
+                <div class="house-map-sidebar-heading"><div><span class="eyebrow">MAP KEY</span><h3>House status</h3></div></div>
+                <div class="house-map-legend" aria-label="Map status legend">
                   <span><i class="map-status-ready"></i>Ready for start</span>
                   <span><i class="map-status-active" data-stage="1"></i>Active · Stage 1</span>
                   <span><i class="map-status-active" data-stage="2"></i>Active · Stage 2</span>
                 </div>
+                <div class="house-map-sidebar-heading house-map-selection-heading"><div><span class="eyebrow">SELECTED LOCATION</span><h3>House details</h3></div></div>
                 <div id="house-map-selection" class="house-map-selection"><strong>Select a house</strong><p>Choose a marker or an address from the list below.</p></div>
+                <div class="house-map-sidebar-heading house-map-list-heading"><div><span class="eyebrow">BROWSE</span><h3>Eligible houses</h3></div><span id="house-map-list-count" class="house-map-list-count"></span></div>
                 <div id="house-map-house-list" class="house-map-house-list" aria-label="Houses on map"></div>
               </aside>
             </div>
           </section>
           <section id="house-detail" class="hidden" aria-labelledby="house-detail-title">
             <button class="text-button back-button house-back" id="back-to-houses" type="button">← Back to houses &amp; teams</button>
-            <div class="page-heading house-detail-heading"><div><div class="eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div><h1 id="house-detail-title"></h1><p class="page-subtitle" id="house-detail-subtitle"></p></div></div>
+            <div class="page-heading house-detail-heading">
+              <div class="house-detail-title-group">
+                <div class="eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div>
+                <div class="house-detail-title-line"><h1 id="house-detail-title"></h1><span id="house-detail-status" class="status-pill house-detail-status"></span></div>
+                <p class="page-subtitle" id="house-detail-subtitle"></p>
+              </div>
+            </div>
+            <nav class="house-detail-nav" aria-label="House record sections">
+              <button type="button" data-house-detail-target="house-detail-checklist-card">Pre-start checklist</button>
+              <button type="button" data-house-detail-target="house-detail-stock-card">Materials on site</button>
+              <button type="button" data-house-detail-target="house-detail-records-card">Notes &amp; snags</button>
+              <button type="button" data-house-detail-target="house-history-card">Movement history</button>
+            </nav>
             <div id="house-detail-facts" class="house-detail-facts"></div>
+            <article class="card house-detail-checklist-card" id="house-detail-checklist-card">
+              <div class="card-heading"><div><h2>Pre-start checklist</h2><p>Saved preparation checks for this house.</p></div><span id="house-detail-checklist-summary" class="house-detail-checklist-summary"></span></div>
+              <div id="house-detail-checklist" class="house-detail-checklist"></div>
+            </article>
             <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">
               <div class="card-heading"><div><h2>Materials used on this finished house</h2><p>Recorded usage plus the remaining on-site quantities automatically closed out when the house was finished.</p></div></div>
               <div id="house-detail-usage" class="house-detail-stock"></div>
             </article>
-            <article class="card house-detail-stock-card">
+            <article class="card house-detail-stock-card" id="house-detail-stock-card">
               <div class="card-heading"><div><h2>Materials currently on site</h2><p>Balances reflect all recorded movements and stock counts.</p></div></div>
               <div id="house-detail-stock" class="house-detail-stock"></div>
             </article>
-            <article class="card house-detail-records-card">
+            <article class="card house-detail-records-card" id="house-detail-records-card">
               <div class="card-heading"><div><h2>Notes &amp; snag history</h2><p>House notes, survey notes, and both open and completed snags.</p></div></div>
               <div class="house-detail-records-grid">
                 <section><h3>Notes</h3><div id="house-detail-notes"></div></section>
                 <section><h3>Snag history</h3><div id="house-detail-snags"></div></section>
               </div>
             </article>
-            <article class="card house-history-card">
+            <article class="card house-history-card" id="house-history-card">
               <div class="card-heading"><div><h2>Complete movement history</h2><p>Includes records where this house was either the source or destination.</p></div></div>
               <div class="table-wrap"><table><thead><tr><th>Date</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>Responsible</th><th>Notes</th></tr></thead><tbody id="house-movement-history"></tbody></table></div>
               <div id="house-history-empty" class="empty-state hidden"><div class="empty-symbol">↔</div><strong>No movements recorded yet</strong><p>This house's delivery, return, use, and transfer history will appear here.</p></div>
@@ -416,6 +436,16 @@
         <button class="button button-secondary" id="presentation-previous" type="button">Back</button>
         <button class="button button-secondary hidden" id="presentation-do-action" type="button"></button>
         <button class="button button-primary" id="presentation-next" type="button">Next</button>
+      </div>
+    </aside>
+    <aside id="navigation-tour" class="presentation-guide navigation-tour-guide hidden" aria-labelledby="navigation-tour-title" aria-live="polite">
+      <div class="presentation-topline"><span id="navigation-tour-progress"></span><button class="icon-button" id="close-navigation-tour" type="button" aria-label="Close navigation test flow">×</button></div>
+      <h2 id="navigation-tour-title"></h2>
+      <p id="navigation-tour-instruction" class="presentation-instruction"></p>
+      <p id="navigation-tour-note" class="presentation-example"></p>
+      <div class="presentation-actions">
+        <button class="button button-secondary" id="navigation-tour-previous" type="button">Back</button>
+        <button class="button button-primary" id="navigation-tour-next" type="button">Next</button>
       </div>
     </aside>
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>

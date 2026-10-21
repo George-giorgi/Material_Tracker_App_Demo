@@ -468,6 +468,163 @@ class EndToEndFlowTests(HttpBase):
         self.assertEqual(balances["house:WH2140"], 40)
         self.assertEqual(self.summary(), {"provided": 1, "active": 1, "closed": 0, "ready": 0, "not_started": 0})
 
+    def test_house_lifecycle_and_warehouse_balances_stay_synchronized(self):
+        house_id = "WH-FULL-FLOW"
+        board = self.add_material("Board 100mm", 100)
+        mesh = self.add_material("Mesh", 20)
+        self.provide(house_id, "T1", "1 Test Lane", "Test Owner", 120, 44)
+
+        _, dashboard, _ = self.call("GET", "/api/dashboard")
+        self.assertEqual(
+            dashboard["house_summary"],
+            {"provided": 1, "active": 0, "closed": 0, "ready": 0, "not_started": 1},
+        )
+        self.assertEqual(
+            self.call("POST", "/api/houses/plan", {"id": house_id, "ready": True})[0],
+            200,
+        )
+        self.assertEqual(self.summary()["ready"], 1)
+
+        survey = {
+            "windows": [{"w": 1.2, "h": 1.5, "qty": 2}],
+            "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
+            "house_corners": [2.4, 3.1],
+            "notes": "Access confirmed.",
+        }
+        status, saved, _ = self.call(
+            "POST", "/api/house-survey", {"house_id": house_id, "survey": survey}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["survey"], survey)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/houses",
+                {"id": house_id, "postcode": "T1", "owner_name": "Test Owner"},
+            )[0],
+            201,
+        )
+        _, houses, _ = self.call("GET", f"/api/calculator/houses?q={house_id}")
+        self.assertEqual(houses["houses"][0]["status"], "active")
+        self.assertEqual(houses["houses"][0]["survey"], survey)
+
+        request_data = {
+            "items": [
+                {"label": "Board 100mm", "material": "Board 100mm", "qty": 40},
+                {"label": "Mesh", "material": "Mesh", "qty": 5},
+            ],
+            "manual": [],
+        }
+        status, _, _ = self.call(
+            "POST",
+            "/api/calculator/requests",
+            {"house_id": house_id, "data": request_data},
+        )
+        self.assertEqual(status, 201)
+        _, requests, _ = self.call(
+            "GET", f"/api/calculator/requests?house_id={house_id}"
+        )
+        self.assertEqual(requests["requests"][0]["data"], request_data)
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/movements/batch",
+            {
+                "kind": "pickup",
+                "date": date.today().isoformat(),
+                "house_id": house_id,
+                "person": "Admin One",
+                "team": "Team A",
+                "items": [
+                    {"material_id": board, "qty": 40},
+                    {"material_id": mesh, "qty": 5},
+                ],
+            },
+        )
+        self.assertEqual(status, 201)
+
+        def stock(material_id):
+            _, current, _ = self.call("GET", "/api/dashboard")
+            material = next(item for item in current["materials"] if item["id"] == material_id)
+            balances = {
+                location: quantity
+                for location, quantity in material["balances"].items()
+                if abs(quantity) > 1e-9
+            }
+            return material["warehouse_qty"], balances
+
+        self.assertEqual(
+            stock(board),
+            (60, {"warehouse": 60, f"house:{house_id}": 40}),
+        )
+        self.assertEqual(
+            stock(mesh),
+            (15, {"warehouse": 15, f"house:{house_id}": 5}),
+        )
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/movements",
+            {
+                "kind": "use",
+                "date": date.today().isoformat(),
+                "house_id": house_id,
+                "material_id": board,
+                "qty": 10,
+                "person": "Admin One",
+                "team": "Team A",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, _ = self.call(
+            "POST",
+            "/api/movements",
+            {
+                "kind": "return",
+                "date": date.today().isoformat(),
+                "house_id": house_id,
+                "material_id": mesh,
+                "qty": 2,
+                "person": "Admin One",
+                "team": "Team A",
+            },
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            stock(board),
+            (60, {"warehouse": 60, f"house:{house_id}": 30, "consumed": 10}),
+        )
+        self.assertEqual(
+            stock(mesh),
+            (17, {"warehouse": 17, f"house:{house_id}": 3}),
+        )
+
+        status, closed, _ = self.call(
+            "POST", "/api/houses/status", {"id": house_id, "finished": True}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(closed["materials_closed_out"], 2)
+        self.assertEqual(self.summary()["closed"], 1)
+        self.assertEqual(
+            stock(board), (60, {"warehouse": 60, "consumed": 40})
+        )
+        self.assertEqual(stock(mesh), (17, {"warehouse": 17, "consumed": 3}))
+
+        status, reopened, _ = self.call(
+            "POST", "/api/houses/status", {"id": house_id, "finished": False}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(reopened["materials_restored"], 2)
+        self.assertEqual(self.summary()["active"], 1)
+        self.assertEqual(
+            stock(board),
+            (60, {"warehouse": 60, f"house:{house_id}": 30, "consumed": 10}),
+        )
+        self.assertEqual(
+            stock(mesh),
+            (17, {"warehouse": 17, f"house:{house_id}": 3}),
+        )
+
     def test_closing_a_house_updates_overview_numbers(self):
         self.provide("A")
         self.provide("B")
@@ -1083,6 +1240,40 @@ class ReadyForStartAndNotesTests(HttpBase):
              details["house"]["area_m2"], details["house"]["perimeter_m"]),
             ("T1", "1 Elm", 142.5, 51.2),
         )
+        self.assertEqual(
+            (
+                details["house"]["scaffolding_status"],
+                details["house"]["esb_unclipped"],
+                details["house"]["plumber_status"],
+            ),
+            ("done", "no", "not_necessary"),
+        )
+
+    def test_house_detail_includes_checklist_for_house_without_provided_record(self):
+        with server.connect_db() as db:
+            db.execute("PRAGMA foreign_keys = OFF")
+            db.execute(
+                "INSERT INTO houses(id, postcode, owner_name) VALUES (?, ?, ?)",
+                ("WH-LEGACY", "T1", "Legacy Owner"),
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists
+                    (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("WH-LEGACY", "done", "no", "not_necessary"),
+            )
+
+        _, details, _ = self.call("GET", "/api/houses/WH-LEGACY")
+        self.assertEqual(
+            (
+                details["house"]["scaffolding_status"],
+                details["house"]["esb_unclipped"],
+                details["house"]["plumber_status"],
+            ),
+            ("done", "no", "not_necessary"),
+        )
 
     def test_activation_uses_saved_house_details_and_map_status(self):
         self.provide("WH-ACTIVE", "T12 AB12", "17 Main Street, Cork", "Owner", 142.5, 51.2)
@@ -1287,6 +1478,14 @@ class SnagTests(HttpBase):
 
 
 class UiWiringTests(unittest.TestCase):
+    def test_teams_tab_cards_are_compact_and_size_to_content(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("#teams-list.house-grid { grid-auto-rows: auto; align-items: start;", css)
+        self.assertIn("#teams-list .team-card { align-self: start;", css)
+        self.assertIn("#teams-list .team-house-counts { gap: 8px; margin-top: 10px; }", css)
+        self.assertIn('class="team-card"', app_js)
+        self.assertIn('class="team-house-counts"', app_js)
     def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
         self.assertIn('${!isReady ? `<button class="text-button plan-ready-toggle"', APP_JS)
         self.assertIn('${h.survey ? "Review survey" : "Enter survey measurements"}', APP_JS)
@@ -1304,6 +1503,9 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn("snag-row", APP_JS)
         self.assertIn(".snag-row.done .snag-text", css)
         self.assertIn("line-through", css)
+        self.assertIn('class="house-body" data-house-id="${escapeHtml(house.id)}"', APP_JS)
+        self.assertIn('const houseBodyScroll = new Map(', APP_JS)
+        self.assertIn('body.scrollTop = scrollTop', APP_JS)
     def test_finish_toggle_updates_instantly_and_guards_repeat_clicks(self):
         body = APP_JS[APP_JS.index("async function toggleHouseFinished"):]
         body = body[: body.index("async function submitStocktake")]
@@ -1385,6 +1587,102 @@ class UiWiringTests(unittest.TestCase):
             self.assertIn(f".house-card .house-card-actions .{color}", css)
         self.assertIn(".house-card .house-card-actions .text-button:focus-visible", css)
 
+    def test_ready_queue_cards_use_flexible_layout_and_prominent_activation(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        ready_renderer = APP_JS[
+            APP_JS.index("async function renderNotStartedHouses"):
+            APP_JS.index("function openHouseNote")
+        ]
+        self.assertIn('const isMapTestHouse = h.source === "map_test"', ready_renderer)
+        self.assertIn("const cardNote = houseCardNote(h)", ready_renderer)
+        card_note_helper = APP_JS[
+            APP_JS.index("function houseCardNote"):
+            APP_JS.index("function findPlanHouse")
+        ]
+        self.assertIn('if (house.source !== "map_test") return notes', card_note_helper)
+        self.assertIn("synthetic coordinates do not identify the Eircode locatio", card_note_helper)
+        self.assertIn("return notes", card_note_helper)
+        result = subprocess.run(
+            [
+                "node",
+                "-e",
+                card_note_helper
+                + '\nconsole.log(JSON.stringify(['
+                + 'houseCardNote({source:"map_test",notes:"TEST ONLY: synthetic coordinates do not identify the Eircode location."}),'
+                + 'houseCardNote({source:"map_test",notes:"TEST ONLY: synthetic coordinates do not identify the Eircode location.Site access note"}),'
+                + 'houseCardNote({source:"map_test",notes:"Site access note"}),'
+                + 'houseCardNote({source:"government",notes:"Normal house note"})'
+                + "]));",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            ["", "Site access note", "Site access note", "Normal house note"],
+        )
+        self.assertIn("isMapTestHouse ? \"\" : h.owner_name", ready_renderer)
+        self.assertIn("isMapTestHouse ? \"\" : h.address", ready_renderer)
+        self.assertIn(
+            'class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}"',
+            APP_JS,
+        )
+        self.assertIn(".house-grid.house-grid-ready { grid-auto-rows: auto;", css)
+        self.assertIn(".house-grid.house-grid-ready .house-plan-ready { height: auto;", css)
+        self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-body { flex: 1 1 auto;", css)
+        self.assertIn("max-height: 280px; overflow-x: hidden; overflow-y: auto;", css)
+        self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions { height: auto;", css)
+        self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions .seai-activate { grid-column: 1 / -1;", css)
+        self.assertIn(".house-grid.house-grid-ready > .house-plan-ready .house-card-actions { flex: 0 0 auto; height: auto; min-height: 0; max-height: none; overflow: visible; }", css)
+
+    def test_not_started_queue_cards_match_design_and_scroll_overflow_content(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            'class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}"',
+            APP_JS,
+        )
+        self.assertIn(
+            '<div class="house-body"${!isReady ? \' tabindex="0" role="region" aria-label="House details and pre-start checklist"\' : ""}>',
+            APP_JS,
+        )
+        self.assertIn('${isReady ? `<div class="house-checklist-card">', APP_JS)
+        self.assertIn(".house-grid.house-grid-compact .house-plan-pending { height: 340px;", css)
+        self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-body { flex: 1 1 0;", css)
+        self.assertIn("overflow-y: auto; padding: 0 7px 10px 0;", css)
+        self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-card-actions { height: auto;", css)
+        self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-card-actions .plan-ready-toggle[data-ready=\"true\"] { grid-column: 1 / -1;", css)
+        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: auto; align-items: start; }", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending { height: auto; min-height: 0;", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-body { flex: 0 1 auto; max-height: 180px;", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-card-actions { flex: 0 0 auto;", css)
+        self.assertIn(".house-card .house-top,\n.house-card .house-body,\n.house-card .house-card-actions { scrollbar-color:", css)
+        self.assertIn(".house-card .house-body::-webkit-scrollbar-thumb:hover", css)
+
+    def test_house_cards_keep_one_shape_across_status_tabs(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            ".house-grid.house-grid-ready,\n.house-grid.house-grid-compact { grid-auto-rows: 460px;",
+            css,
+        )
+        self.assertIn(
+            ".house-grid > .house-card { height: 460px; min-height: 460px;",
+            css,
+        )
+        self.assertIn(
+            ".house-grid.house-grid-ready > .house-plan-ready,\n.house-grid.house-grid-compact > .house-plan-pending { height: 460px; min-height: 460px; }",
+            css,
+        )
+        self.assertIn(
+            ".house-grid > .house-card .house-body { flex: 1 1 0; min-height: 0; max-height: none; overflow-x: hidden; overflow-y: auto;",
+            css,
+        )
+        self.assertIn(
+            ".house-grid > .house-card .house-card-actions { display: grid; flex: 0 0 174px; height: 174px;",
+            css,
+        )
+
     def test_active_house_card_shows_content_without_nested_scroll_area(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(".house-card:has(.house-body) { min-height: 290px; height: auto;", css)
@@ -1394,7 +1692,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(".house-card .house-body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto;", css)
         self.assertIn(".house-card .house-card-actions { display: grid; height: 198px; min-height: 198px; max-height: 198px;", css)
         self.assertIn("list.classList.toggle(\"house-grid-compact\", !isReady)", APP_JS)
-        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: 380px; }", css)
+        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: 340px; }", css)
         self.assertIn(".house-grid.house-grid-compact .house-pending { height: 380px; min-height: 380px; }", css)
         self.assertIn(".house-grid.house-grid-compact .house-pending .house-card-actions { height: auto; min-height: 0; max-height: none; grid-template-rows: auto; }", css)
         self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", css)
@@ -1407,12 +1705,22 @@ class UiWiringTests(unittest.TestCase):
     def test_archive_feature_is_removed_and_not_started_cards_show_workflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="house-detail-checklist"', html)
+        self.assertIn('$("#house-detail-checklist").innerHTML', APP_JS)
+        self.assertIn('aria-label="House record sections"', html)
+        self.assertIn('id="house-detail-status"', html)
+        self.assertIn('id="house-detail-checklist-summary"', html)
+        self.assertIn("recordedChecklistCount", APP_JS)
+        self.assertIn("scrollIntoView({", APP_JS)
         self.assertNotIn("archived", html.lower())
         self.assertNotIn("is_archived", APP_JS)
         self.assertNotIn("house-archive-toggle", APP_JS)
         self.assertNotIn("archived", css.lower())
         self.assertIn('class="house-workflow"', APP_JS)
         self.assertIn("house-workflow-steps", css)
+        self.assertIn('const stages = ["Not started", "Ready for start", "Active", "Closed"]', APP_JS)
+        self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr))', css)
+        self.assertIn('${houseWorkflowHtml(house.is_finished ? 4 : 3)}', APP_JS)
         self.assertIn("Stage 1/2 work stages appear after activation.", APP_JS)
         self.assertIn('class="text-button house-open"', APP_JS)
         self.assertIn('id="house-detail-notes"', html)
@@ -1426,6 +1734,7 @@ class UiWiringTests(unittest.TestCase):
             APP_JS.index("async function renderNotStartedHouses"):
             APP_JS.index("function openHouseNote")
         ]
+        self.assertIn('${isReady ? noteHtml(h.notes) : ""}', not_started_html)
         not_started_actions = not_started_html[
             not_started_html.index('<div class="house-card-actions">'):
         ]
@@ -1439,7 +1748,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIsNotNone(closed)
         self.assertEqual(
             re.findall(r'<button class="text-button ([^"]+)', not_started.group(1)),
-            ["plan-ready-toggle", "house-note-open"],
+            ["plan-ready-toggle"],
         )
         self.assertEqual(
             re.findall(r'<button class="text-button ([^"]+)', closed.group(1)),
@@ -1469,6 +1778,8 @@ class UiWiringTests(unittest.TestCase):
             'id="house-map-canvas"',
             'id="house-map-markers"',
             'id="house-map-selection"',
+            'id="house-map-summary"',
+            'id="house-map-list-count"',
             'id="house-locations-import"',
         ):
             self.assertIn(element, html)
@@ -1481,18 +1792,80 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('if (tile.dataset.houseView === "")', APP_JS)
         self.assertIn('request("/api/calculator/houses?status=map")', APP_JS)
         self.assertIn('request(`/api/calculator/houses?status=${mode}`)', APP_JS)
-        self.assertIn(".house-grid.house-grid-ready { grid-auto-rows: 410px; }", css)
+        self.assertIn(".house-map-layout { grid-template-columns: minmax(0, 1.8fr) minmax(310px, .82fr);", css)
         self.assertIn("scroll-snap-type: y proximity", css)
         self.assertIn('marker.dataset.stage = String(house.stage || 1)', APP_JS)
-        self.assertIn("TEST ONLY: synthetic coordinates", APP_JS)
-        self.assertIn("do not identify the Eircode location", APP_JS)
-        self.assertIn("synthetic address, area, perimeter, and map coordinates", APP_JS)
+        map_code = APP_JS[
+            APP_JS.index("const HOUSE_MAP_TILE_SIZE"):
+            APP_JS.index("function mapHouseActions")
+        ]
+        self.assertIn('function hasUsableHouseCoordinates(house)', map_code)
+        self.assertIn(
+            "const HOUSE_MAP_DEFAULT_CENTER = { latitude: 53.4, longitude: -8, zoom: 6 }",
+            map_code,
+        )
+        self.assertIn('filter(\n    hasUsableHouseCoordinates,', map_code)
+        self.assertIn("if (!mappedHouses.length) {", map_code)
+        self.assertIn('className = "house-map-empty"', map_code)
+        self.assertIn("state.houseMapCamera = { ...center, zoom: HOUSE_MAP_DEFAULT_CENTER.zoom }", map_code)
+        self.assertIn(
+            'image.src = `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${tileY}.png`',
+            map_code,
+        )
+        self.assertLess(
+            map_code.index("tiles.append(empty);"),
+            map_code.index("image.src = `https://tile.openstreetmap.org/"),
+        )
+        coordinate_helper = map_code[
+            map_code.index("function hasUsableHouseCoordinates"):
+            map_code.index("function projectMapPoint")
+        ]
+        coordinate_result = subprocess.run(
+            [
+                "node",
+                "-e",
+                coordinate_helper
+                + '\nconsole.log(JSON.stringify(['
+                + 'hasUsableHouseCoordinates({source:"map_test",latitude:53.4,longitude:-8.1}),'
+                + 'hasUsableHouseCoordinates({source:"government",latitude:53.4,longitude:-8.1}),'
+                + 'hasUsableHouseCoordinates({source:"government",latitude:null,longitude:null})'
+                + "]));",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(coordinate_result.returncode, 0, coordinate_result.stderr)
+        self.assertEqual(json.loads(coordinate_result.stdout), [True, True, False])
+        self.assertIn('house.source === "map_test"', map_code)
+        self.assertIn('notice.className = "house-map-empty house-map-approximate"', map_code)
+        self.assertIn("Approximate demo pins", map_code)
+        self.assertIn("not exact Eircode location", map_code)
+        self.assertIn('marker.dataset.locationAccuracy = "approximate"', map_code)
+        self.assertIn('house-map-marker-approximate', map_code)
+        self.assertNotIn("TEST ONLY", map_code)
+        self.assertNotIn("synthetic coordinates", map_code)
+        self.assertNotIn("do not identify the Eircode location", map_code)
+        self.assertIn(
+            'marker.title = `${house.id} · ${mapHouseStatusLabel(house)}${activeStage}${locationLabel}`;',
+            APP_JS,
+        )
         self.assertIn('house.status === "active" ? String(house.stage || 1) : "R"', APP_JS)
         self.assertIn("mapHouseActions(displayHouse)", APP_JS)
         self.assertIn("https://tile.openstreetmap.org/", APP_JS)
         self.assertIn("map-status-active[data-stage=\"2\"]", css)
         self.assertIn(".house-map-selection .house-card-actions .seai-activate", css)
+        self.assertIn(".house-map-selection .house-card-actions .map-stage-caption", css)
+        self.assertIn('.house-map-selection .house-card-actions .stage-btn[data-stage="2"].on', css)
+        self.assertIn('class="map-stage-caption">WORK STAGE</span>', APP_JS)
         self.assertIn(".house-map-list-item:focus-visible", css)
+        self.assertIn(".house-map-empty strong", css)
+        self.assertIn("The map shows Ireland.", map_code)
+        self.assertIn(".house-map-marker-approximate", css)
+        self.assertIn(".house-map-approximate", css)
+        self.assertIn("house-map-sidebar-heading", html)
+        self.assertIn("mappedCount", APP_JS)
+        self.assertIn(".house-map-summary", css)
         self.assertIn("We will not invent a residential postcode", html)
 
     def test_presentation_guide_covers_survey_stages_and_house_history(self):
