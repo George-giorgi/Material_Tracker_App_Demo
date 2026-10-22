@@ -230,43 +230,206 @@ function formatLocation(location) {
   return `${kind === "house" ? "House" : "Team"} ${reference}`;
 }
 
+function groupedTeamLocations(locations, teamHouseCounts) {
+  const groups = new Map();
+  locations
+    .filter((location) =>
+      location.startsWith("team:") || location.startsWith("employee:"),
+    )
+    .forEach((location) => {
+      const [kind, ...parts] = location.split(":");
+      const reference = parts.join(":");
+      const isEmployee = kind === "employee";
+      let name;
+      let department = "";
+      if (isEmployee) {
+        name = decodeURIComponent(reference);
+      } else if (reference.includes("|")) {
+        const [encodedDepartment, encodedName] = reference.split("|", 2);
+        department = decodeURIComponent(encodedDepartment);
+        name = decodeURIComponent(encodedName);
+      } else {
+        name = decodeURIComponent(reference);
+      }
+      const normalizedName = name.trim().toLocaleLowerCase();
+      const key = department
+        ? `department:${department.toLocaleLowerCase()}|${normalizedName}`
+        : `name:${normalizedName}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          locations: [],
+          employeeName: "",
+          teamName: "",
+          department,
+          openHouseIds: new Set(),
+          closedHouseIds: new Set(),
+        };
+        groups.set(key, group);
+      }
+      group.locations.push(location);
+      if (isEmployee) group.employeeName ||= name;
+      else group.teamName ||= name;
+      const counts = teamHouseCounts[location] || {};
+      (counts.open_house_ids || []).forEach((id) => group.openHouseIds.add(id));
+      (counts.closed_house_ids || []).forEach((id) => group.closedHouseIds.add(id));
+    });
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      name: group.employeeName || `Team ${group.teamName}${group.department ? ` · ${group.department}` : ""}`,
+      openHouseIds: [...group.openHouseIds],
+      closedHouseIds: [...group.closedHouseIds],
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function formatAuditDateTime(value) {
   if (!value) return "Date/time not recorded";
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime())
     ? value
-    : parsed.toLocaleString();
+    : new Intl.DateTimeFormat("en-IE", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(parsed);
 }
 
-function houseAuditHtml(house) {
-  const statuses = new Map();
-  (house.status_history || []).forEach((entry) => {
-    statuses.set(entry.status, entry);
+function formatAuditDate(value) {
+  if (!value) return "Date not recorded";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : new Intl.DateTimeFormat("en-IE", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }).format(parsed);
+}
+
+function groupHouseDeliveries(activity) {
+  const grouped = [];
+  const deliveryByKey = new Map();
+  activity.forEach((entry) => {
+    if (entry.type !== "movement" ||
+        !["delivery", "pickup"].includes(entry.kind)) {
+      grouped.push(entry);
+      return;
+    }
+    const key = entry.delivery_number
+      ? `${entry.kind}:${entry.house_id || ""}:${entry.delivery_number}`
+      : `${entry.kind}:${entry.house_id || ""}:${entry.person || ""}:${entry.team || ""}:${entry.happened_on || ""}:${entry.recorded_at || ""}`;
+    let delivery = deliveryByKey.get(key);
+    if (!delivery) {
+      delivery = { ...entry, items: [] };
+      deliveryByKey.set(key, delivery);
+      grouped.push(delivery);
+    }
+    if (!delivery.house_employee && entry.house_employee) {
+      delivery.house_employee = entry.house_employee;
+    }
   });
+  return grouped;
+}
+
+function houseAuditHtml(house, readyOnly = false) {
   const statusLabels = {
     not_started: "Not started",
     ready: "Ready for start",
     active: "Active",
     closed: "Closed",
   };
-  const statusRows = [...statuses.values()]
+  const activity = [...(house.activity_history || [])];
+  if (!activity.some((entry) => entry.type === "survey") &&
+      (house.survey_updated_by || house.survey_updated_at)) {
+    activity.push({
+      type: "survey",
+      changed_by: house.survey_updated_by,
+      changed_at: house.survey_updated_at,
+    });
+  }
+  if (!activity.length) {
+    activity.push(...(house.status_history || []).filter((entry) =>
+      Object.prototype.hasOwnProperty.call(statusLabels, entry.status),
+    ));
+    if (house.last_movement) {
+      activity.push({ type: "movement", ...house.last_movement });
+    }
+  }
+  const uniqueActivity = groupHouseDeliveries(activity);
+  const latestOfType = (type, predicate = () => true) =>
+    uniqueActivity
+      .filter((entry) => (entry.type === type || (type === "status" && entry.status)) &&
+        predicate(entry))
+      .sort((left, right) => {
+        const leftTime = left.changed_at || left.created_at || left.recorded_at || "";
+        const rightTime = right.changed_at || right.created_at || right.recorded_at || "";
+        return new Date(rightTime).getTime() - new Date(leftTime).getTime();
+      })[0];
+  const activation = latestOfType("status", (entry) => entry.status === "active");
+  const ready = latestOfType("status", (entry) => entry.status === "ready");
+  const closed = latestOfType("status", (entry) => entry.status === "closed");
+  const survey = latestOfType("survey");
+  const deliveries = uniqueActivity
+    .filter((entry) => entry.type === "movement" &&
+      ["delivery", "pickup"].includes(entry.kind))
     .sort((left, right) =>
-      new Date(right.changed_at).getTime() - new Date(left.changed_at).getTime(),
-    )
-    .map((entry) =>
-    `<span><strong>${escapeHtml(statusLabels[entry.status] || entry.status)}</strong>: ${escapeHtml(entry.changed_by || "User not recorded")} · ${escapeHtml(formatAuditDateTime(entry.changed_at))}</span>`,
+      String(left.happened_on || left.recorded_at || "")
+        .localeCompare(String(right.happened_on || right.recorded_at || "")),
     );
-  const surveyRow = house.survey_updated_by || house.survey_updated_at
-    ? `<span><strong>Surveyor</strong>: ${escapeHtml(house.survey_updated_by || "Name not recorded")} · ${escapeHtml(formatAuditDateTime(house.survey_updated_at))}</span>`
-    : "";
-  const movement = house.last_movement;
-  const movementRow = movement
-    ? `<span><strong>Last movement</strong>: ${escapeHtml(movement.happened_on || "Date not recorded")} · ${escapeHtml(formatAuditDateTime(movement.recorded_at))}${movement.person ? ` · ${escapeHtml(movement.person)}` : ""}</span>`
-    : "";
-  const rows = [...statusRows, surveyRow, movementRow].filter(Boolean);
-  return rows.length
-    ? `<div class="house-audit" aria-label="House activity">${rows.join("")}</div>`
-    : "";
+  const firstDelivery = deliveries[0];
+  const lastDelivery = deliveries[deliveries.length - 1];
+  const latestDelivery = deliveries[deliveries.length - 1];
+  const auditField = (label, value, timestamp) =>
+    `<div class="house-audit-summary-field"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value || "Not recorded")}</span>${timestamp ? `<small>${escapeHtml(formatAuditDateTime(timestamp))}</small>` : ""}</div>`;
+  const hasAudit = uniqueActivity.some((entry) =>
+    (entry.type === "status" &&
+      (readyOnly
+        ? entry.status === "ready"
+        : ["ready", "active", "closed"].includes(entry.status))) ||
+    entry.type === "survey" ||
+    (!readyOnly && entry.type === "movement" &&
+      ["delivery", "pickup"].includes(entry.kind)),
+  );
+  if (!hasAudit) return "";
+  const highlights = `<div class="house-audit-summary">
+    ${ready ? auditField("Marked ready to start", ready.changed_by, ready.changed_at) : ""}
+    ${survey ? auditField("Surveyor", survey.changed_by, survey.changed_at) : ""}
+    ${!readyOnly && activation ? auditField("Activated by", activation.changed_by, activation.changed_at) : ""}
+    ${!readyOnly && closed ? auditField("Closed by", closed.changed_by, closed.changed_at) : ""}
+    ${!readyOnly && latestDelivery ? auditField(
+      "Delivery handoff",
+      `${latestDelivery.person || "Name not recorded"} → ${latestDelivery.house_employee || "Assigned employee not recorded"}`,
+      latestDelivery.recorded_at,
+    ) : ""}
+    ${!readyOnly && firstDelivery ? auditField("First delivery", formatAuditDate(firstDelivery.happened_on)) : ""}
+    ${!readyOnly && lastDelivery ? auditField("Last delivery", formatAuditDate(lastDelivery.happened_on)) : ""}
+  </div>`;
+  return `<div class="house-audit${readyOnly ? " house-audit-ready" : ""}" aria-label="House activity">${highlights}</div>`;
+}
+
+function houseAuditCount(house) {
+  const activity = [...(house.activity_history || [])];
+  if (!activity.some((entry) => entry.type === "survey") &&
+      (house.survey_updated_by || house.survey_updated_at)) {
+    activity.push({ type: "survey" });
+  }
+  if (!activity.length) {
+    activity.push(...(house.status_history || []));
+    if (house.last_movement) {
+      activity.push({ type: "movement", ...house.last_movement });
+    }
+  }
+  return groupHouseDeliveries(activity).filter((entry) =>
+    (entry.type === "status" &&
+      ["not_started", "ready", "active", "closed"].includes(entry.status)) ||
+      entry.type === "survey" ||
+      (entry.type === "movement" && ["delivery", "pickup"].includes(entry.kind)),
+  ).length;
 }
 
 function localDate() {
@@ -1063,7 +1226,7 @@ function openHouseSurvey(houseId) {
     if (!target.children.length) surveyRow(key);
   }
   $("#house-survey-title").textContent = `${houseId} · Surveyor room`;
-  $("#survey-meta").textContent = house.survey_updated_by ? `Last saved by ${house.survey_updated_by}${house.survey_updated_at ? ` - ${new Date(house.survey_updated_at).toLocaleString()}` : ""}` : "Not surveyed yet";
+  $("#survey-meta").textContent = house.survey_updated_by ? `Last saved by ${house.survey_updated_by}${house.survey_updated_at ? ` - ${formatAuditDateTime(house.survey_updated_at)}` : ""}` : "Not surveyed yet";
   updateSurveyStatusDisplay(house.survey);
   $("#survey-room-subtitle").textContent = [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "No house details recorded";
   $("#survey-room-summary").innerHTML = `
@@ -1213,7 +1376,7 @@ async function submitSurveyorSurveyNotes(event) {
       hasNotes ? result.notes : "No survey note";
     setNoteAction($("[data-edit-survey-notes]"), hasNotes);
     $("#survey-meta").textContent =
-      `Survey note saved by ${result.updated_by} - ${new Date(result.updated_at).toLocaleString()}`;
+      `Survey note saved by ${result.updated_by} - ${formatAuditDateTime(result.updated_at)}`;
     updateSurveyStatusDisplay(result.survey);
     form.elements.notes.value = "";
     showToast(`Survey note for ${houseId} saved.`);
@@ -1235,7 +1398,7 @@ async function loadHouseDocuments(houseId, requestId) {
         <div class="house-document-entry">
           <a class="house-document-link" href="/api/house-documents/${document.id}" target="_blank" rel="noreferrer">
             <span class="house-document-icon" aria-hidden="true">PDF</span>
-            <span class="house-document-copy"><strong>${escapeHtml(document.filename)}</strong><small>Uploaded by ${escapeHtml(document.uploaded_by)} · ${escapeHtml(new Date(document.uploaded_at).toLocaleString())} · ${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
+            <span class="house-document-copy"><strong>${escapeHtml(document.filename)}</strong><small>Uploaded by ${escapeHtml(document.uploaded_by)} · ${escapeHtml(formatAuditDateTime(document.uploaded_at))} · ${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
             <span class="house-document-open" aria-hidden="true">↗</span>
           </a>
           <button class="button button-secondary house-document-annotate" type="button" data-document-id="${document.id}" data-document-name="${escapeHtml(document.filename)}">Annotate</button>
@@ -1714,7 +1877,7 @@ async function submitHouseSurvey(event) {
   try {
     await request("/api/house-survey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ house_id: form.dataset.houseId, survey }) });
     const updatedAt = new Date().toISOString();
-    $("#survey-meta").textContent = `Last saved by ${state.user.display_name} - ${new Date(updatedAt).toLocaleString()}`;
+    $("#survey-meta").textContent = `Last saved by ${state.user.display_name} - ${formatAuditDateTime(updatedAt)}`;
     updateSurveyStatusDisplay(survey);
     const currentHouse = [...surveyHouses, ...Object.values(planCache).flat()].find((house) => house.id === form.dataset.houseId);
     if (currentHouse) {
@@ -1788,7 +1951,7 @@ async function renderNotStartedHouses(query, mode = "not_started") {
     ? rows
         .map((h) => {
           const id = escapeHtml(h.id);
-            const workflowStep = isReady ? 2 : 1;
+          const workflowStep = isReady ? 2 : 1;
             const isMapTestHouse = h.source === "map_test";
             const locationDetails = [
               isMapTestHouse ? "" : h.owner_name,
@@ -1806,7 +1969,7 @@ async function renderNotStartedHouses(query, mode = "not_started") {
                 : "",
             ].filter(Boolean);
             return `<article class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}" data-house-id="${id}">
-          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}${isReady ? houseAuditHtml(h) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey) : ""}</div></div>
+          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}${isReady ? houseAuditHtml(h, true) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey) : ""}</div></div>
           <div class="house-body" data-house-id="${id}"${!isReady ? ' tabindex="0" role="region" aria-label="House status"' : ""}>
             ${houseWorkflowHtml(workflowStep, !isReady)}
           </div>
@@ -2105,7 +2268,7 @@ function mapHouseActions(house) {
   if (house.status === "closed") {
     return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
   }
-  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button><span class="stage-switch" role="group" aria-label="Stage"><span class="map-stage-caption">WORK STAGE</span>${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>${admin ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
+  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><span class="stage-switch" role="group" aria-label="Stage"><span class="map-stage-caption">WORK STAGE</span>${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>${admin ? `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
 }
 
 function selectMapHouse(houseId) {
@@ -2119,9 +2282,23 @@ function selectMapHouse(houseId) {
     house.area_m2 === null ? "" : `${formatQuantity(house.area_m2)} m²`,
     house.perimeter_m === null ? "" : `${formatQuantity(house.perimeter_m)} m perimeter`,
   ].filter(Boolean).join(" · ");
+  const details = [
+    house.owner_name,
+    address,
+    house.employee_name ? `Assigned to ${house.employee_name}` : "",
+    measures,
+  ].filter(Boolean).join(" · ");
   $("#house-map-selection").innerHTML = `
-    <div class="house-map-selected-heading"><div><strong>${escapeHtml(house.id)}</strong><span class="status-pill ${house.status === "active" ? "active" : house.status === "ready" ? "ready" : house.status === "closed" ? "finished" : "pending"}">${escapeHtml(mapHouseStatusLabel(house))}</span></div><p>${escapeHtml([house.owner_name, address, measures].filter(Boolean).join(" · ") || "No location details recorded")}</p></div>
+    <div class="house-map-selected-heading"><div><strong>${escapeHtml(house.id)}</strong><span class="status-pill ${house.status === "active" ? "active" : house.status === "ready" ? "ready" : house.status === "closed" ? "finished" : "pending"}">${escapeHtml(mapHouseStatusLabel(house))}</span></div><p>${escapeHtml(details || "No location details recorded")}</p></div>
     <div class="house-card-actions">${mapHouseActions(displayHouse)}</div>`;
+  const activityCount = houseAuditCount(displayHouse);
+  $("#house-map-activity-count").textContent = String(activityCount);
+  $("#house-map-activity-count").setAttribute(
+    "aria-label",
+    `${activityCount} recorded ${activityCount === 1 ? "update" : "updates"}`,
+  );
+  $("#house-map-audit").innerHTML = houseAuditHtml(displayHouse) ||
+    '<div class="house-map-audit-empty"><span class="house-map-audit-empty-icon" aria-hidden="true">&#9711;</span><strong>No updates yet</strong><p>Ready, survey, material, activation, and close actions will appear here as they are recorded.</p></div>';
   $("#house-map-house-list").querySelectorAll("[data-map-house-id]").forEach((button) =>
     button.classList.toggle("selected", button.dataset.mapHouseId === houseId),
   );
@@ -2171,7 +2348,12 @@ async function loadHouseMap() {
     if (!state.houseMapCamera) fitHouseMap();
     else renderHouseMapCanvas();
     if (state.selectedMapHouseId) selectMapHouse(state.selectedMapHouseId);
-    else $("#house-map-selection").innerHTML = "<strong>Select a house</strong><p>Choose a marker or an address from the list below.</p>";
+    else {
+      $("#house-map-selection").innerHTML = "<strong>Select a house</strong><p>Choose a marker or an address from the list below.</p>";
+      $("#house-map-activity-count").textContent = "—";
+      $("#house-map-activity-count").removeAttribute("aria-label");
+      $("#house-map-audit").innerHTML = '<div class="house-map-audit-empty"><span class="house-map-audit-empty-icon" aria-hidden="true">&#8982;</span><strong>Choose a house</strong><p>Select a house to see who marked it ready, completed the survey, specified materials, activated or closed it, or recorded a material movement.</p></div>';
+    }
   } catch (error) {
     showToast(error.message, true);
   }
@@ -2191,9 +2373,15 @@ function renderHouses() {
   const teamFilter = state.houseTeamFilter;
   const statusFilter = state.houseStatusFilter;
   const filteredHouseIds = teamFilter
-    ? data.team_house_counts?.[teamFilter.location]?.[
-        teamFilter.status === "closed" ? "closed_house_ids" : "open_house_ids"
-      ] || []
+    ? [
+        ...new Set(
+          (teamFilter.locations || [teamFilter.location]).flatMap((location) =>
+            data.team_house_counts?.[location]?.[
+              teamFilter.status === "closed" ? "closed_house_ids" : "open_house_ids"
+            ] || [],
+          ),
+        ),
+      ]
     : null;
   const houseTeams = new Map();
   Object.entries(data.team_house_counts || {}).forEach(([location, counts]) => {
@@ -2208,6 +2396,7 @@ function renderHouses() {
   });
   if ((statusFilter === "not_started" || statusFilter === "ready") && !teamFilter) {
     const ready = statusFilter === "ready";
+    $("#houses-list").classList.remove("house-grid-active", "house-grid-closed");
     $("#houses-list-heading").textContent = ready ? "Houses ready for start" : "SEAI houses not started";
     $("#house-team-filter").classList.remove("hidden");
     const filterLabel = $("#house-team-filter-label");
@@ -2224,6 +2413,7 @@ function renderHouses() {
     (teamFilter?.status === "closed" ? "closed" : "active");
   $("#houses-list").classList.remove("house-grid-ready", "house-grid-compact");
   $("#houses-list").classList.toggle("house-grid-active", visibleStatus === "active");
+  $("#houses-list").classList.toggle("house-grid-closed", visibleStatus === "closed");
   const matchingHouses = data.house_list.filter((house) =>
     (!filteredHouseIds || filteredHouseIds.includes(house.id)) &&
     (!teamFilter || Boolean(house.is_finished) === (teamFilter.status === "closed")) &&
@@ -2332,36 +2522,31 @@ function renderHouses() {
         </div>
       </article>`;
   });
-  const teams = [
-    ...new Set(
-      data.locations.filter(
-        (location) =>
-          location.startsWith("team:") || location.startsWith("employee:"),
-      ),
-    ),
-  ];
+  const teams = groupedTeamLocations(
+    [...new Set(data.locations)],
+    data.team_house_counts || {},
+  );
   const teamQuery = $("#team-search").value.trim().toLocaleLowerCase();
   const matchingTeams = teams.filter((location) =>
-    formatLocation(location).toLocaleLowerCase().includes(teamQuery),
+    location.name.toLocaleLowerCase().includes(teamQuery),
   );
-  const teamCards = matchingTeams.map((location) => {
-    const name = formatLocation(location);
+  const teamCards = matchingTeams.map((team) => {
+    const name = team.name;
     const countsAvailable = Boolean(data.team_house_counts);
-    const houseCounts = data.team_house_counts?.[location] || {
-      open: countsAvailable ? 0 : null,
-      closed: countsAvailable ? 0 : null,
-      open_house_ids: [],
-      closed_house_ids: [],
+    const houseCounts = {
+      open: team.openHouseIds.length,
+      closed: team.closedHouseIds.length,
     };
+    const teamLocations = escapeHtml(JSON.stringify(team.locations));
     return `
       <article class="team-card">
-        <div class="house-top"><span class="house-avatar">♧</span><div class="house-meta"><h2>${escapeHtml(name)}</h2></div></div>
+        <div class="house-top"><span class="house-avatar"><svg class="team-avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><path d="M3.5 19v-1.2a5.5 5.5 0 0 1 11 0V19z"></path><path d="M16 5.3a3 3 0 0 1 0 5.8"></path><path d="M17 14a4.5 4.5 0 0 1 3.5 4.4V19"></path></svg></span><div class="house-meta"><h2>${escapeHtml(name)}</h2></div></div>
         <div class="team-house-counts">
-          <button class="team-house-count team-house-count-open" type="button" data-team-location="${escapeHtml(location)}" data-house-status="open" ${!countsAvailable || !houseCounts.open ? "disabled" : ""} aria-label="Show ${houseCounts.open ?? "unknown"} open houses for ${escapeHtml(name)}">
-            <strong>${houseCounts.open ?? "—"}</strong><span>Open houses</span>
+          <button class="team-house-count team-house-count-open" type="button" data-team-locations="${teamLocations}" data-house-status="open" ${!countsAvailable || !houseCounts.open ? "disabled" : ""} aria-label="Show ${houseCounts.open} open houses for ${escapeHtml(name)}">
+            <strong>${houseCounts.open}</strong><span>Open houses</span>
           </button>
-          <button class="team-house-count team-house-count-closed" type="button" data-team-location="${escapeHtml(location)}" data-house-status="closed" ${!countsAvailable || !houseCounts.closed ? "disabled" : ""} aria-label="Show ${houseCounts.closed ?? "unknown"} closed houses for ${escapeHtml(name)}">
-            <strong>${houseCounts.closed ?? "—"}</strong><span>Closed houses</span>
+          <button class="team-house-count team-house-count-closed" type="button" data-team-locations="${teamLocations}" data-house-status="closed" ${!countsAvailable || !houseCounts.closed ? "disabled" : ""} aria-label="Show ${houseCounts.closed} closed houses for ${escapeHtml(name)}">
+            <strong>${houseCounts.closed}</strong><span>Closed houses</span>
           </button>
         </div>
       </article>`;
@@ -3246,8 +3431,10 @@ async function toggleHouseFinished(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: stageButton.dataset.houseId, stage: next }),
     })
-      .then(() => {
-        if (house) house.stage = next;
+      .then((result) => {
+        if (house) {
+          house.stage = next;
+        }
         renderHouses();
       })
       .catch((error) => showToast(error.message, true));
@@ -3974,12 +4161,14 @@ function bindEvents() {
   $("#teams-list").addEventListener("click", (event) => {
     const button = event.target.closest(".team-house-count");
     if (!button || button.disabled) return;
+    const locations = JSON.parse(button.dataset.teamLocations);
     const selection = {
-      location: button.dataset.teamLocation,
+      locations,
       status: button.dataset.houseStatus,
     };
     state.houseTeamFilter =
-      state.houseTeamFilter?.location === selection.location &&
+      JSON.stringify(state.houseTeamFilter?.locations || [state.houseTeamFilter?.location]) ===
+        JSON.stringify(selection.locations) &&
       state.houseTeamFilter?.status === selection.status
         ? null
         : selection;
@@ -4342,7 +4531,15 @@ function renderHouseRequest() {
   const houseId = $("#movement-house-id").value.trim();
   const kind = $("#movement-kind").value;
   const assigned = requestCache[houseId];
-  if (kind !== "pickup" || !houseId || !assigned) {
+  if (kind === "pickup") {
+    const deliveryNumber = assigned?.next_delivery_number || 1;
+    $("#extra-delivery").checked = deliveryNumber > 1;
+    $("#extra-delivery").disabled = true;
+    $("#extra-delivery-hint").textContent = deliveryNumber > 1
+      ? `Delivery #${deliveryNumber} for this house; marked automatically.`
+      : "The first pickup is Delivery #1.";
+  }
+  if (kind !== "pickup" || !houseId || !assigned?.id) {
     box.classList.add("hidden");
     return;
   }
@@ -4398,16 +4595,19 @@ async function loadHouseRequest() {
   const houseId = $("#movement-house-id").value.trim();
   if (!houseId || houseId in requestCache) return renderHouseRequest();
   try {
-    const { requests, delivered } = await request(
+    const { requests, delivered, next_delivery_number: nextDeliveryNumber } = await request(
       `/api/calculator/requests?house_id=${encodeURIComponent(houseId)}`,
     );
-    requestCache[houseId] = requests[0]
-      ? {
-          ...requests[0],
-          data: typeof requests[0].data === "string" ? JSON.parse(requests[0].data) : requests[0].data,
-          delivered,
-        }
-      : null;
+    requestCache[houseId] = {
+      ...(requests[0] || {}),
+      data: requests[0]
+        ? typeof requests[0].data === "string"
+          ? JSON.parse(requests[0].data)
+          : requests[0].data
+        : null,
+      delivered,
+      next_delivery_number: nextDeliveryNumber,
+    };
   } catch (error) {
     requestCache[houseId] = null;
   }

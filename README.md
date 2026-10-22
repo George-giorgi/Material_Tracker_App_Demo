@@ -78,10 +78,11 @@ refuses to overwrite a database that already has materials. To keep the demo
 independent, do not set `EWI_DB_PATH` to the live tracker's database path.
 The demo also includes enough clearly labeled fictional house records to bring
 the provided-house list to 50 total entries, preserving any existing records.
-Each sample has a postcode, wall area, and perimeter
-for testing the automatic calculator. Fictional warehouse opening stock is
-increased by 2,000 units for each material. These example houses and quantities
-are not real SEAI or stock data and must not be used for real jobs.
+Each sample includes fictional occupant and address details, a deliberately
+invalid placeholder postcode, wall area, and perimeter for testing the automatic
+calculator. Fictional warehouse opening stock is increased by 2,000 units for
+each material. These example houses and quantities are not real SEAI or stock
+data and must not be used for real jobs.
 
 ## Navigate and test the demo
 
@@ -139,7 +140,10 @@ Eligible houses appear in the map's house list even when they have no approved
 coordinates. The saved map-test houses appear as approximate demo pins, clearly
 distinguished from verified locations; they do not show the exact Eircode
 locations. Map markers identify Ready houses and active Stage 1 or 2 houses.
-Selecting a marker or list entry opens that house's available workflow actions.
+Selecting a marker or list entry shows house details and a separate activity
+card with status changes, survey activity, movements, and work-stage changes,
+including who made each change and when. The sidebar scrolls independently so
+the complete eligible-house list remains accessible.
 Activating a Ready house copies its saved Eircode and owner from the provided
 house record; the house remains on the map with its Active status.
 

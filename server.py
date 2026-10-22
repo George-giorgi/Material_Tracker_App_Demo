@@ -1065,6 +1065,8 @@ CLOSEOUT_NOTE = "Automatically recorded from remaining house stock when the hous
 
 
 def _record_house_status(db, house_id, status, changed_by):
+    changed_at = datetime.now().isoformat(timespec="seconds")
+    changed_by = str(changed_by or "").strip()
     db.execute(
         """
         INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
@@ -1073,10 +1075,15 @@ def _record_house_status(db, house_id, status, changed_by):
         (
             house_id,
             status,
-            str(changed_by or "").strip(),
-            datetime.now().isoformat(timespec="seconds"),
+            changed_by,
+            changed_at,
         ),
     )
+    return {
+        "status": status,
+        "changed_by": changed_by,
+        "changed_at": changed_at,
+    }
 
 
 def _house_audit_by_id(db):
@@ -1088,41 +1095,109 @@ def _house_audit_by_id(db):
         ORDER BY id
         """
     ):
-        audit.setdefault(row["house_id"], {"status_history": [], "last_movement": None})
-        audit[row["house_id"]]["status_history"].append(
+        if row["status"] not in {"ready", "not_started", "active", "closed"}:
+            continue
+        entry = {
+            "type": "status",
+            "status": row["status"],
+            "changed_by": row["changed_by"],
+            "changed_at": row["changed_at"],
+        }
+        house_audit = audit.setdefault(
+            row["house_id"],
+            {"status_history": [], "activity_history": [], "last_movement": None},
+        )
+        house_audit["status_history"].append(entry)
+        house_audit["activity_history"].append(entry)
+
+    for row in db.execute(
+        """
+        SELECT house_id, created_at, created_by
+        FROM material_requests
+        ORDER BY id
+        """
+    ):
+        audit.setdefault(
+            row["house_id"],
+            {"status_history": [], "activity_history": [], "last_movement": None},
+        )["activity_history"].append(
             {
-                "status": row["status"],
-                "changed_by": row["changed_by"],
-                "changed_at": row["changed_at"],
+                "type": "material_request",
+                "created_by": row["created_by"],
+                "created_at": row["created_at"],
             }
         )
 
-    movement_rows = db.execute(
-        """
-        SELECT id, house_id, person, happened_on, recorded_at
-        FROM movements
-        WHERE house_id IS NOT NULL
-        UNION ALL
-        SELECT id, substr(source, 7), person, happened_on, recorded_at
-        FROM movements
-        WHERE source LIKE 'house:%'
-        UNION ALL
-        SELECT id, substr(destination, 7), person, happened_on, recorded_at
-        FROM movements
-        WHERE destination LIKE 'house:%'
-        """
-    )
+    for row in db.execute(
+        "SELECT house_id, updated_by, updated_at FROM house_surveys"
+    ):
+        audit.setdefault(
+            row["house_id"],
+            {"status_history": [], "activity_history": [], "last_movement": None},
+        )["activity_history"].append(
+            {
+                "type": "survey",
+                "changed_by": row["updated_by"],
+                "changed_at": row["updated_at"],
+            }
+        )
+
     latest_movements = {}
-    for row in movement_rows:
-        current = latest_movements.get(row["house_id"])
-        if current is None or (row["recorded_at"], row["id"]) > (
-            current["recorded_at"],
-            current["id"],
-        ):
-            latest_movements[row["house_id"]] = dict(row)
+    for row in db.execute(
+        """
+        SELECT m.id, m.house_id, m.kind, m.material_id, p.name AS material,
+               p.unit, m.qty, m.delivery_number, m.person, m.team, m.department,
+               m.happened_on, m.recorded_at, m.source, m.destination,
+               COALESCE(h.employee_name, '') AS house_employee
+        FROM movements m
+        JOIN materials p ON p.id = m.material_id
+        LEFT JOIN houses h ON h.id = m.house_id
+        WHERE m.house_id IS NOT NULL
+           OR m.source LIKE 'house:%'
+           OR m.destination LIKE 'house:%'
+        ORDER BY m.id
+        """
+    ):
+        movement = dict(row)
+        related_house_ids = {
+            movement["house_id"],
+            movement["source"][6:] if movement["source"].startswith("house:") else None,
+            movement["destination"][6:] if movement["destination"].startswith("house:") else None,
+        }
+        for house_id in filter(None, related_house_ids):
+            house_audit = audit.setdefault(
+                house_id,
+                {"status_history": [], "activity_history": [], "last_movement": None},
+            )
+            house_employee = movement["house_employee"]
+            if not house_employee:
+                assigned = db.execute(
+                    "SELECT employee_name FROM houses WHERE id = ?",
+                    (house_id,),
+                ).fetchone()
+                house_employee = assigned["employee_name"] if assigned else ""
+            house_audit["activity_history"].append(
+                {"type": "movement", **movement, "house_employee": house_employee}
+            )
+            current = latest_movements.get(house_id)
+            if current is None or (movement["recorded_at"], movement["id"]) > (
+                current["recorded_at"],
+                current["id"],
+            ):
+                latest_movements[house_id] = movement
     for house_id, movement in latest_movements.items():
-        audit.setdefault(house_id, {"status_history": [], "last_movement": None})
         audit[house_id]["last_movement"] = movement
+    for house_audit in audit.values():
+        house_audit["activity_history"].sort(
+            key=lambda entry: (
+                entry.get("changed_at")
+                or entry.get("created_at")
+                or entry.get("recorded_at")
+                or "",
+                entry.get("id") or 0,
+            ),
+            reverse=True,
+        )
     return audit
 
 
@@ -1739,7 +1814,7 @@ def _dashboard(db):
                 """
                 SELECT h.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
                        COALESCE(NULLIF(p.owner_name, ''), h.owner_name) AS owner_name,
-                       h.employee_name, p.address, p.area_m2, p.perimeter_m,
+                       h.employee_name, p.address, p.source, p.area_m2, p.perimeter_m,
                        p.latitude, p.longitude, h.is_finished,
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
                        COALESCE(hs.updated_by, '') AS survey_updated_by,
@@ -2238,6 +2313,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "map": "((h.id IS NOT NULL AND h.is_finished = 0) OR "
                        "(h.id IS NULL AND p.ready_for_start = 1))",
             }.get(status_filter)
+            if status_filter == "ready":
+                ordering = """
+                    (SELECT changed_at FROM house_status_history
+                     WHERE house_id = p.id AND status = 'ready'
+                     ORDER BY id DESC LIMIT 1) DESC,
+                    p.id COLLATE NOCASE
+                """
+            else:
+                ordering = "(h.is_finished = 1), p.id COLLATE NOCASE"
             like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             with connect_db() as db:
                 rows = db.execute(
@@ -2262,7 +2346,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     WHERE (p.id LIKE ? ESCAPE '\\' OR p.postcode LIKE ? ESCAPE '\\'
                        OR p.owner_name LIKE ? ESCAPE '\\' OR p.address LIKE ? ESCAPE '\\')
                       AND ({wanted or "1 = 1"})
-                    ORDER BY (h.is_finished = 1), p.id COLLATE NOCASE
+                    ORDER BY {ordering}
                     LIMIT ?
                     """,
                     (
@@ -2406,11 +2490,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                     (house_id,),
                 ).fetchall()
                 delivered = _delivered_to_house(db, house_id)
+                next_delivery_number = _next_delivery_number(db, house_id) if house_id else 1
             self._send_json(
                 200,
                 {
                     "requests": [{**dict(r), "data": json.loads(r["data"])} for r in rows],
                     "delivered": delivered,
+                    "next_delivery_number": next_delivery_number,
                 },
             )
         elif path == "/brusna-logo.jpg":
@@ -3258,12 +3344,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                     raise ApiError(400, "Stage must be 1 or 2.")
                 with connect_db() as db:
                     with db:
-                        cursor = db.execute(
-                            "UPDATE houses SET stage = ? WHERE id = ?", (stage, house_id)
-                        )
-                        if not cursor.rowcount:
+                        house = db.execute(
+                            "SELECT stage FROM houses WHERE id = ?", (house_id,)
+                        ).fetchone()
+                        if house is None:
                             raise ApiError(404, "House was not found.")
-                self._send_json(200, {"id": house_id, "stage": stage})
+                        if house["stage"] != stage:
+                            db.execute(
+                                "UPDATE houses SET stage = ? WHERE id = ?",
+                                (stage, house_id),
+                            )
+                self._send_json(
+                    200, {"id": house_id, "stage": stage}
+                )
             elif path == "/api/houses/plan":
                 user = self._login_required()
                 if user is None:

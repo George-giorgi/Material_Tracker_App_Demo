@@ -1459,8 +1459,16 @@ class TrackerTests(unittest.TestCase):
                     VALUES ('H-AUDIT', '{}', '', 'Surveyor Name', '2026-05-02T10:30:00')
                     """
                 )
+                db.execute(
+                    """
+                    INSERT INTO material_requests(house_id, created_at, created_by, data)
+                    VALUES ('H-AUDIT', '2026-05-02T10:35:00', 'Materials Planner', '{}')
+                    """
+                )
                 server._record_house_status(db, "H-AUDIT", "ready", "Admin Name")
                 server._record_house_status(db, "H-AUDIT", "active", "Employee Name")
+                server._record_house_status(db, "H-AUDIT", "closed", "Closing Admin")
+                server._record_house_status(db, "H-AUDIT", "stage_2", "Stage Actor")
         material_id = self.add_material()
         self.add_movement(
             material_id,
@@ -1479,12 +1487,32 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(house["employee_name"], "Assigned Worker")
         self.assertEqual(
             [event["status"] for event in house["status_history"]],
-            ["ready", "active"],
+            ["ready", "active", "closed"],
         )
         self.assertEqual(house["status_history"][0]["changed_by"], "Admin Name")
         self.assertEqual(house["survey_updated_by"], "Surveyor Name")
         self.assertEqual(house["last_movement"]["person"], "Movement Person")
         self.assertTrue(house["last_movement"]["recorded_at"])
+        activity_by_type = {}
+        for entry in house["activity_history"]:
+            activity_by_type.setdefault(entry["type"], []).append(entry)
+        self.assertEqual(
+            [entry["status"] for entry in activity_by_type["status"]],
+            ["ready", "active", "closed"],
+        )
+        self.assertEqual(
+            activity_by_type["status"][-1]["changed_by"], "Closing Admin"
+        )
+        self.assertEqual(
+            activity_by_type["survey"][0]["changed_by"], "Surveyor Name"
+        )
+        self.assertEqual(
+            activity_by_type["material_request"][0]["created_by"],
+            "Materials Planner",
+        )
+        self.assertEqual(
+            activity_by_type["movement"][0]["person"], "Movement Person"
+        )
 
     def test_house_status_history_migration_preserves_events_without_active_house_fk(self):
         with server.connect_db() as db:

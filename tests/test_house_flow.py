@@ -1399,12 +1399,21 @@ class FollowUpDeliveryTests(HttpBase):
         })
         self.assertEqual(self.delivered(), {})
 
+    def test_request_lookup_returns_next_delivery_number_even_without_a_request(self):
+        _, result, _ = self.call("GET", "/api/calculator/requests?house_id=WH1")
+        self.assertEqual(result["next_delivery_number"], 1)
+        self.move(self.board, "pickup", 40)
+        self.move(self.board, "return", 10)
+        _, result, _ = self.call("GET", "/api/calculator/requests?house_id=WH1")
+        self.assertEqual(result["next_delivery_number"], 2)
+        self.assertEqual(result["delivered"], {str(self.board): 30})
+
 
 @unittest.skipUnless(shutil.which("node"), "node is required for the front-end logic tests")
 class RequestPanelTests(unittest.TestCase):
     """Runs renderHouseRequest against a tiny DOM stub."""
 
-    def run_panel(self, delivered, entries, batch=()):
+    def run_panel(self, delivered, entries, batch=(), next_delivery_number=1):
         start = APP_JS.index("const requestCache")
         end = APP_JS.index("async function loadHouseRequest")
         script = """
@@ -1412,15 +1421,20 @@ const escapeHtml = (v) => String(v);
 const state = {dashboard:{materials:[{id:1,name:"Board 100mm"},{id:2,name:"Mesh"}]}, batchLines: %s};
 const list = {scrollTop: 0};
 const dialog = {scrollTop: 0};
+const extraDelivery = {checked:false, disabled:false};
+const extraDeliveryHint = {textContent:""};
 let renders = 0;
 const box = {dataset:{}, classList:{add(){}, remove(){}}, closest: () => dialog,
   set innerHTML(v) { this._html = v; renders++; }, get innerHTML() { return this._html || ""; }};
 const $$ = () => [];
 const $ = (sel, root) => sel === "#house-request" ? box : sel === "#movement-house-id" ? {value:"WH1"}
-  : sel === "#movement-kind" ? {value:"pickup"} : sel === ".req-list" ? (root && box.innerHTML ? list : null) : null;
+  : sel === "#movement-kind" ? {value:"pickup"} : sel === "#extra-delivery" ? extraDelivery
+  : sel === "#extra-delivery-hint" ? extraDeliveryHint
+  : sel === ".req-list" ? (root && box.innerHTML ? list : null) : null;
 %s
 list.scrollTop = 0;
-requestCache.WH1 = {created_by:"Tom", created_at:"2026-01-01T10:00:00", delivered: %s, data:{items: %s, manual: []}};
+requestCache.WH1 = {id:1, created_by:"Tom", created_at:"2026-01-01T10:00:00", delivered: %s,
+  next_delivery_number:%s, data:{items: %s, manual: []}};
 renderHouseRequest();
 list.scrollTop = 77;
 dialog.scrollTop = 310;
@@ -1428,8 +1442,10 @@ state.batchLines.push({material_id: 1, qty: "150"});
 renderHouseRequest();
 state.batchLines.length = 0;
 renderHouseRequest();
-console.log(JSON.stringify({html: box.innerHTML, scroll: list.scrollTop, dialogScroll: dialog.scrollTop, renders}));
-""" % (json.dumps(list(batch)), APP_JS[start:end], json.dumps(delivered), json.dumps(entries))
+console.log(JSON.stringify({html: box.innerHTML, scroll: list.scrollTop, dialogScroll: dialog.scrollTop, renders,
+  extraDelivery:extraDelivery.checked, extraDeliveryDisabled:extraDelivery.disabled,
+  extraDeliveryHint:extraDeliveryHint.textContent}));
+""" % (json.dumps(list(batch)), APP_JS[start:end], json.dumps(delivered), next_delivery_number, json.dumps(entries))
         out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)
@@ -1447,6 +1463,12 @@ console.log(JSON.stringify({html: box.innerHTML, scroll: list.scrollTop, dialogS
         html = self.run_panel({}, [self.BOARD])["html"]
         self.assertIn('data-qty="150"', html)
         self.assertNotIn("follow-up", html)
+
+    def test_follow_up_delivery_is_marked_automatically(self):
+        result = self.run_panel({"1": 40}, [self.BOARD], next_delivery_number=3)
+        self.assertTrue(result["extraDelivery"])
+        self.assertTrue(result["extraDeliveryDisabled"])
+        self.assertIn("Delivery #3", result["extraDeliveryHint"])
 
     def test_fully_delivered_item_is_disabled(self):
         html = self.run_panel({"1": 150}, [self.BOARD])["html"]
@@ -1651,6 +1673,27 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.plan({"id": "WH1", "ready": False})
         self.assertEqual(self.listing("ready"), {})
         self.assertEqual(self.summary()["not_started"], 2)
+
+    def test_newly_ready_house_is_first_in_ready_queue(self):
+        with server.connect_db() as db:
+            with db:
+                db.execute(
+                    "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'WH2'"
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_status_history(house_id,status,changed_by,changed_at)
+                    VALUES ('WH2','ready','Earlier readiness','2020-01-01T10:00:00')
+                    """
+                )
+
+        status, _, _ = self.plan({"id": "WH1", "ready": True})
+        self.assertEqual(status, 200)
+        _, result, _ = self.call("GET", "/api/calculator/houses?status=ready")
+        self.assertEqual(
+            [house["id"] for house in result["houses"]],
+            ["WH1", "WH2"],
+        )
 
     def test_not_started_listing_returns_address_area_and_perimeter(self):
         with server.connect_db() as db:
@@ -1947,6 +1990,19 @@ class ReadyForStartAndNotesTests(HttpBase):
 
 
 class FrontEndLogicTests(unittest.TestCase):
+    def test_audit_date_time_uses_readable_day_month_year_and_24_hour_time(self):
+        start = APP_JS.index("function formatAuditDateTime")
+        end = APP_JS.index("\nfunction houseAuditHtml", start)
+        script = (
+            APP_JS[start:end]
+            + '\nconsole.log(formatAuditDateTime("2026-10-22T12:30:00"));'
+        )
+        out = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, timeout=20
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "22 Oct 2026, 12:30")
+
     def run_js(self, body):
         start = APP_JS.index("const materialKey")
         end = APP_JS.index("function renderHouseRequest")
@@ -2264,18 +2320,44 @@ class UiWiringTests(unittest.TestCase):
             css,
         )
 
-    def test_active_house_card_shows_content_without_nested_scroll_area(self):
+    def test_active_house_cards_have_equal_height_and_scroll_overflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
-        active_card_layout = css[css.index("#houses-list:not(.house-grid-ready):not(.house-grid-compact) {"):]
+        active_card_layout = css[css.index(
+            "#houses-list.house-grid-active,\n.house-grid#houses-list.house-grid-closed {"
+        ):]
         active_card_layout = active_card_layout[:active_card_layout.index("\n}")]
+        active_card = css[css.index(
+            "#houses-list.house-grid-active > .house-active,\n"
+            ".house-grid#houses-list.house-grid-closed > .house-finished {"
+        ):]
+        active_card = active_card[:active_card.index("\n}")]
+        active_top = css[css.index(
+            "#houses-list.house-grid-active > .house-active .house-top,\n"
+            ".house-grid#houses-list.house-grid-closed > .house-finished .house-top {"
+        ):]
+        active_top = active_top[:active_top.index("\n}")]
+        active_body = css[css.index(
+            "#houses-list.house-grid-active > .house-active .house-body,\n"
+            ".house-grid#houses-list.house-grid-closed > .house-finished .house-body {"
+        ):]
+        active_body = active_body[:active_body.index("\n}")]
         active_actions = css[
-            css.index("#houses-list:not(.house-grid-ready):not(.house-grid-compact) > .house-active .house-card-actions {"):
+            css.index(
+                "#houses-list.house-grid-active > .house-active .house-card-actions,\n"
+                ".house-grid#houses-list.house-grid-closed > .house-finished .house-card-actions {"
+            ):
         ]
         active_actions = active_actions[:active_actions.index("\n}")]
         self.assertIn("grid-auto-rows: auto;", active_card_layout)
-        self.assertIn("height: auto;", css[css.index("#houses-list:not(.house-grid-ready):not(.house-grid-compact) > .house-active {"):])
-        self.assertIn("max-height: 280px;", css)
-        self.assertIn("height: auto;", active_actions)
+        self.assertIn("align-items: stretch;", active_card_layout)
+        self.assertIn("height: auto;", active_card)
+        self.assertIn("max-height: 150px;", active_top)
+        self.assertIn("overflow-y: auto;", active_top)
+        self.assertIn("scrollbar-width: thin;", active_top)
+        self.assertIn("overflow-y: auto;", active_body)
+        self.assertIn("max-height: 260px;", active_body)
+        self.assertIn("flex: 0 1 auto;", active_body)
+        self.assertIn("margin-top: 7px;", active_actions)
         self.assertIn("max-height: none;", active_actions)
         self.assertIn("overflow: visible;", active_actions)
         self.assertIn(

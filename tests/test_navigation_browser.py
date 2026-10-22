@@ -176,6 +176,57 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
+    def test_teams_tab_merges_same_name_employee_and_team_cards(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "PAIR-JACK", employee_name="Jack")
+                server._upsert_house(db, "PAIR-DAVIT-EMP", employee_name="Davit")
+                server._upsert_house(db, "PAIR-DAVIT-TEAM")
+                db.execute(
+                    "UPDATE houses SET is_finished = 1 "
+                    "WHERE id IN ('PAIR-DAVIT-EMP', 'PAIR-DAVIT-TEAM')"
+                )
+                material_id = db.execute(
+                    "INSERT INTO materials(name, unit, opening_qty) "
+                    "VALUES ('Team grouping test material', 'units', 10)"
+                ).lastrowid
+                for house_id, team in (
+                    ("PAIR-JACK", "Jack"),
+                    ("PAIR-DAVIT-TEAM", "Davit"),
+                ):
+                    db.execute(
+                        """
+                        INSERT INTO movements(
+                            happened_on, kind, material_id, qty, source, destination,
+                            house_id, person, team, department, notes, recorded_at
+                        ) VALUES (
+                            '2026-10-22', 'delivery', ?, 1, 'warehouse', ?, ?,
+                            'Test user', ?, '', '', '2026-10-22T10:00:00'
+                        )
+                        """,
+                        (material_id, f"house:{house_id}", house_id, team),
+                    )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        self.page.locator("#teams-tab").click()
+
+        cards = self.page.locator("#teams-list .team-card")
+        jack_card = cards.filter(has=self.page.locator("h2", has_text="Jack"))
+        davit_card = cards.filter(has=self.page.locator("h2", has_text="Davit"))
+        self.assertEqual(jack_card.count(), 1)
+        self.assertEqual(davit_card.count(), 1)
+        self.assertEqual(cards.filter(has=self.page.locator("h2", has_text="Team Jack")).count(), 0)
+        self.assertEqual(cards.filter(has=self.page.locator("h2", has_text="Team Davit")).count(), 0)
+        self.assertEqual(jack_card.locator(".team-house-count-open strong").inner_text(), "1")
+        self.assertEqual(davit_card.locator(".team-house-count-closed strong").inner_text(), "2")
+        self.assertEqual(jack_card.locator(".team-avatar-icon").count(), 1)
+
+        davit_card.locator(".team-house-count-closed").click()
+        house_list = self.page.locator("#houses-list")
+        self.assertTrue(house_list.get_by_text("PAIR-DAVIT-EMP").is_visible())
+        self.assertTrue(house_list.get_by_text("PAIR-DAVIT-TEAM").is_visible())
+        self.assertEqual(self.browser_errors, [])
+
     def test_active_house_card_shows_employee_and_audit_actors(self):
         with server.connect_db() as db:
             with db:
@@ -231,6 +282,71 @@ class NavigationBrowserTests(unittest.TestCase):
             stage_two.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(184, 119, 50)",
         )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_active_house_cards_keep_equal_height_and_scroll_long_content(self):
+        self.page.set_viewport_size({"width": 1440, "height": 900})
+        with server.connect_db() as db:
+            with db:
+                for house_id in ("CARD-SCROLL-TEST", "CARD-SHORT-TEST"):
+                    server._upsert_house(
+                        db,
+                        house_id,
+                        employee_name=(
+                            "Long assigned worker name " * 40
+                            if house_id == "CARD-SCROLL-TEST"
+                            else ""
+                        ),
+                    )
+                db.executemany(
+                    "INSERT INTO house_snags(house_id, text) VALUES (?, ?)",
+                    [
+                        ("CARD-SCROLL-TEST", f"Long content snag {index}")
+                        for index in range(30)
+                    ],
+                )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        cards = self.page.locator("#houses-list.house-grid-active > .house-active")
+        cards.first.wait_for()
+        long_card = cards.filter(
+            has=self.page.locator('.house-body[data-house-id="CARD-SCROLL-TEST"]')
+        )
+        short_card = cards.filter(
+            has=self.page.locator('.house-body[data-house-id="CARD-SHORT-TEST"]')
+        )
+        self.assertEqual(cards.count(), 2)
+        self.assertAlmostEqual(
+            long_card.bounding_box()["height"],
+            short_card.bounding_box()["height"],
+            delta=1,
+        )
+        self.assertLess(long_card.bounding_box()["height"], 680)
+        for house_card in (long_card, short_card):
+            body_box = house_card.locator(".house-body").bounding_box()
+            actions_box = house_card.locator(".house-card-actions").bounding_box()
+            self.assertAlmostEqual(actions_box["y"] - body_box["y"] - body_box["height"], 7, delta=1)
+        top = long_card.locator(".house-top")
+        body = long_card.locator(".house-body")
+        self.assertEqual(
+            top.evaluate("(element) => getComputedStyle(element).overflowY"),
+            "auto",
+        )
+        self.assertEqual(
+            body.evaluate("(element) => getComputedStyle(element).overflowY"),
+            "auto",
+        )
+        self.assertGreater(
+            top.evaluate("(element) => element.scrollHeight"),
+            top.evaluate("(element) => element.clientHeight"),
+        )
+        self.assertGreater(
+            body.evaluate("(element) => element.scrollHeight"),
+            body.evaluate("(element) => element.clientHeight"),
+        )
+        actions = long_card.locator(".house-card-actions").bounding_box()
+        card_box = long_card.bounding_box()
+        self.assertLess(actions["y"], card_box["y"] + card_box["height"])
         self.assertEqual(self.browser_errors, [])
 
     def test_house_list_defaults_to_active_and_status_titles_use_stage_colors(self):
@@ -430,6 +546,215 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
+    def test_map_shows_house_activity_without_recording_stage_changes(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(
+                    db,
+                    "MAP-AUDIT-TEST",
+                    postcode="D03 TEST",
+                    owner_name="Map Audit Owner",
+                    employee_name="Assigned Map Worker",
+                )
+                server._record_house_status(
+                    db, "MAP-AUDIT-TEST", "ready", "Ready Actor"
+                )
+                server._record_house_status(
+                    db, "MAP-AUDIT-TEST", "active", "Activation Actor"
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                    VALUES ('MAP-AUDIT-TEST', '{}', '', 'Survey Actor', '2026-10-21T09:00:00')
+                    """
+                )
+                material_id = db.execute(
+                    "INSERT INTO materials(code, name, unit, opening_qty) "
+                    "VALUES ('AUDIT-TEST', 'Audit board', 'packs', 5)"
+                ).lastrowid
+                second_material_id = db.execute(
+                    "INSERT INTO materials(code, name, unit, opening_qty) "
+                    "VALUES ('AUDIT-TEST-2', 'Audit fixings', 'boxes', 5)"
+                ).lastrowid
+                server._record_movement_batch(
+                    db,
+                    {
+                        "kind": "delivery",
+                        "date": "2026-10-20",
+                        "person": "Delivery Actor",
+                        "team": "Delivery Team",
+                        "house_id": "MAP-AUDIT-TEST",
+                        "items": [
+                            {"material_id": material_id, "qty": 1},
+                        ],
+                    },
+                )
+                server._record_movement_batch(
+                    db,
+                    {
+                        "kind": "delivery",
+                        "date": "2026-10-22",
+                        "person": "Latest Delivery Actor",
+                        "team": "Delivery Team",
+                        "house_id": "MAP-AUDIT-TEST",
+                        "items": [
+                            {"material_id": second_material_id, "qty": 2},
+                        ],
+                    },
+                )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-house-view=""]').click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        empty_activity = self.page.locator("#house-map-audit .house-map-audit-empty")
+        self.assertEqual(
+            empty_activity.locator("strong").inner_text(),
+            "Choose a house",
+        )
+        self.assertIn("marked it ready", empty_activity.inner_text())
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="active"]').click()
+        active_card = self.page.locator("#houses-list .house-active").filter(
+            has=self.page.locator("h2", has_text="MAP-AUDIT-TEST")
+        )
+        active_card.locator(".house-map-open").click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '#house-map-selection .house-map-selected-heading strong'
+            )?.textContent === 'MAP-AUDIT-TEST'"""
+        )
+        self.assertIn("Assigned to Assigned Map Worker", self.page.locator(
+            "#house-map-selection"
+        ).inner_text())
+        audit = self.page.locator("#house-map-audit")
+        audit_text = " ".join(audit.inner_text().split())
+        self.assertIn("Marked ready to start Ready Actor", audit_text)
+        self.assertIn("Surveyor Survey Actor", audit_text)
+        self.assertIn("Activated by Activation Actor", audit_text)
+        self.assertIn("Activation Actor", audit.inner_text())
+        self.assertIn("Delivery handoff Latest Delivery Actor → Assigned Map Worker", audit_text)
+        self.assertIn("First delivery 20 Oct 2026", audit_text)
+        self.assertIn("Last delivery 22 Oct 2026", audit_text)
+        self.assertNotIn("Materials specified", audit.inner_text())
+        self.assertEqual(
+            self.page.locator("#house-map-activity-title").inner_text(),
+            "Recent activity",
+        )
+        self.assertEqual(
+            self.page.locator("#house-map-activity-count").inner_text(),
+            "5",
+        )
+        side = self.page.locator(".house-map-side")
+        self.assertEqual(
+            side.evaluate("(element) => getComputedStyle(element).overflowY"),
+            "auto",
+        )
+        self.assertTrue(
+            self.page.locator(
+                '#house-map-house-list [data-map-house-id="MAP-AUDIT-TEST"]'
+            ).is_visible()
+        )
+        self.page.locator(
+            '#house-map-selection .stage-btn[data-stage="2"]'
+        ).click()
+        self.page.locator(
+            '#house-map-selection .stage-btn[data-stage="2"].on'
+        ).wait_for()
+        self.assertNotIn("Navigation Test Admin", audit.inner_text())
+        self.assertEqual(
+            self.page.locator("#house-map-activity-count").inner_text(),
+            "5",
+        )
+        self.page.locator(
+            '#house-map-selection .stage-btn[data-stage="1"]'
+        ).click()
+        self.page.locator(
+            '#house-map-selection .stage-btn[data-stage="1"].on'
+        ).wait_for()
+        self.assertEqual(
+            self.page.locator("#house-map-activity-count").inner_text(),
+            "5",
+        )
+        with server.connect_db() as db:
+            stage_events = db.execute(
+                "SELECT status, changed_by, changed_at FROM house_status_history "
+                "WHERE house_id = 'MAP-AUDIT-TEST' ORDER BY id"
+            ).fetchall()
+            stage = db.execute(
+                "SELECT stage FROM houses WHERE id = 'MAP-AUDIT-TEST'"
+            ).fetchone()["stage"]
+        self.assertEqual(stage, 1)
+        self.assertEqual(
+            [(event["status"], event["changed_by"]) for event in stage_events],
+            [
+                ("ready", "Ready Actor"),
+                ("active", "Activation Actor"),
+            ],
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_newly_ready_house_appears_first_in_ready_cards(self):
+        with server.connect_db() as db:
+            with db:
+                db.execute(
+                    "INSERT INTO provided_houses(id, source, ready_for_start) "
+                    "VALUES ('QUEUE-OLDER', 'government', 1)"
+                )
+                db.execute(
+                    "INSERT INTO provided_houses(id, source, ready_for_start) "
+                    "VALUES ('QUEUE-NEWER', 'government', 0)"
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_status_history(house_id,status,changed_by,changed_at)
+                    VALUES ('QUEUE-OLDER','ready','Earlier actor','2020-01-01T10:00:00')
+                    """
+                )
+
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-house-view="not_started"]').click()
+        new_card = self.page.locator(
+            '.house-plan-pending[data-house-id="QUEUE-NEWER"]'
+        )
+        new_card.locator(".plan-ready-toggle").click()
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="ready"]').click()
+        self.page.wait_for_function(
+            """() => {
+              const cards = [...document.querySelectorAll('#houses-list .house-plan-ready')];
+              return cards.length === 2 && cards[0].dataset.houseId === 'QUEUE-NEWER';
+            }"""
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list .house-plan-ready").evaluate_all(
+                "(cards) => cards.map((card) => card.dataset.houseId)"
+            ),
+            ["QUEUE-NEWER", "QUEUE-OLDER"],
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_fictional_house_cards_do_not_show_placeholder_badges(self):
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses "
+                "(id, postcode, address, owner_name, source) "
+                "VALUES (?, ?, ?, ?, 'fictional_sample')",
+                (
+                    "SAMPLE-BADGE-TEST",
+                    "DEMO-001",
+                    "1 Rowan Rise, Alderbrook Demo Village, Demo County",
+                    "Maeve Brennan",
+                ),
+            )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-house-view="not_started"]').click()
+        card = self.page.locator(
+            '.house-plan-pending[data-house-id="SAMPLE-BADGE-TEST"]'
+        )
+        card.wait_for()
+        self.assertEqual(card.locator(".fictional-house-badge").count(), 0)
+        self.assertEqual(self.browser_errors, [])
+
     def test_ready_house_activation_hides_search_but_generic_activation_keeps_it(self):
         with server.connect_db() as db:
             db.execute(
@@ -547,14 +872,79 @@ class NavigationBrowserTests(unittest.TestCase):
                 VALUES ('CLOSED-COMPACT-TEST', 'D01 TEST', 'Closed Owner', 1)
                 """
             )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, source, notes)
+                VALUES ('CLOSED-LONG-TEST', 'D02 TEST', 'Long Owner', 'government', ?)
+                """,
+                ("Long closed-house note. " * 120,),
+            )
+            db.execute(
+                """
+                INSERT INTO houses(id, postcode, owner_name, is_finished)
+                VALUES ('CLOSED-LONG-TEST', 'D02 TEST', 'Long Owner', 1)
+                """
+            )
+            server._record_house_status(
+                db, "CLOSED-COMPACT-TEST", "closed", "Closing Actor"
+            )
         self.page.reload(wait_until="domcontentloaded")
         self.page.locator('[data-tab="overview"]').click()
         self.page.locator('[data-house-view="closed"]').click()
-        card = self.page.locator("#houses-list .house-finished").filter(
+        cards = self.page.locator("#houses-list.house-grid-closed > .house-finished")
+        card = cards.filter(
             has=self.page.locator("h2").filter(has_text="CLOSED-COMPACT-TEST")
         )
+        long_card = cards.filter(
+            has=self.page.locator("h2").filter(has_text="CLOSED-LONG-TEST")
+        )
         card.wait_for()
-        self.assertLess(card.evaluate("(element) => element.getBoundingClientRect().height"), 460)
+        long_card.wait_for()
+        self.assertEqual(cards.count(), 2)
+        self.assertAlmostEqual(
+            card.bounding_box()["height"],
+            long_card.bounding_box()["height"],
+            delta=1,
+        )
+        self.assertLess(card.bounding_box()["height"], 620)
+        self.assertEqual(
+            card.locator(".house-top").evaluate(
+                "(element) => getComputedStyle(element).overflowY"
+            ),
+            "auto",
+        )
+        self.assertEqual(
+            card.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(248, 232, 229)",
+        )
+        self.assertEqual(
+            card.locator(".status-pill.finished").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(173, 71, 60)",
+        )
+        self.assertIn("Closed by", card.locator(".house-audit-summary").inner_text())
+        self.assertIn("Closing Actor", card.locator(".house-audit-summary").inner_text())
+        self.assertEqual(
+            card.locator(".status-pill.finished").evaluate(
+                "(element) => getComputedStyle(element, '::before').content"
+            ),
+            '"✓"',
+        )
+        self.assertEqual(
+            long_card.locator(".house-body").evaluate(
+                "(element) => getComputedStyle(element).overflowY"
+            ),
+            "auto",
+        )
+        self.assertGreater(
+            long_card.locator(".house-body").evaluate(
+                "(element) => element.scrollHeight"
+            ),
+            long_card.locator(".house-body").evaluate(
+                "(element) => element.clientHeight"
+            ),
+        )
         actions = card.locator(".house-card-actions")
         self.assertEqual(actions.evaluate("(element) => getComputedStyle(element).overflowY"), "visible")
         self.assertLessEqual(
@@ -617,7 +1007,63 @@ class NavigationBrowserTests(unittest.TestCase):
         toggle = card.locator(
             '.house-checklist-status[data-checklist-field="scaffolding_status"]'
         )
-        toggle.check()
+        input_position = toggle.evaluate(
+            """(input) => {
+              const rect = input.getBoundingClientRect();
+              const toggle = input.closest('.checklist-toggle').getBoundingClientRect();
+              return {
+                inputTop: rect.top,
+                inputLeft: rect.left,
+                toggleTop: toggle.top,
+                toggleLeft: toggle.left,
+                toggleBottom: toggle.bottom,
+                toggleRight: toggle.right
+              };
+            }"""
+        )
+        self.assertGreaterEqual(input_position["inputTop"], input_position["toggleTop"])
+        self.assertLessEqual(input_position["inputTop"], input_position["toggleBottom"])
+        self.assertGreaterEqual(input_position["inputLeft"], input_position["toggleLeft"])
+        self.assertLessEqual(input_position["inputLeft"], input_position["toggleRight"])
+        esb_toggle = card.locator(
+            '.house-checklist-status[data-checklist-field="esb_unclipped"]'
+        )
+        plumber_toggle = card.locator(
+            '.house-checklist-status[data-checklist-field="plumber_status"]'
+        )
+        self.page.evaluate(
+            """() => {
+              const card = document.querySelector(
+                '.house-active:has(.house-body[data-house-id="CHECKLIST-INLINE-TEST"])'
+              );
+              window.scrollTo(0, card.getBoundingClientRect().top + window.scrollY - 100);
+              const body = card.querySelector('.house-body');
+              body.style.height = '120px';
+              body.style.overflowY = 'auto';
+              body.scrollTop = body.scrollHeight;
+            }"""
+        )
+        before_scroll = self.page.evaluate("window.scrollY")
+        body = card.locator(".house-body")
+        before_body_scroll = body.evaluate("(element) => element.scrollTop")
+        before_card_top = card.evaluate("(element) => element.getBoundingClientRect().top")
+        toggle_box = card.locator(".checklist-toggle").first.bounding_box()
+        self.page.mouse.click(
+            toggle_box["x"] + toggle_box["width"] / 2,
+            toggle_box["y"] + toggle_box["height"] / 2,
+        )
+        self.assertTrue(toggle.is_checked())
+        self.assertAlmostEqual(self.page.evaluate("window.scrollY"), before_scroll, delta=2)
+        self.assertAlmostEqual(
+            body.evaluate("(element) => element.scrollTop"),
+            before_body_scroll,
+            delta=2,
+        )
+        self.assertAlmostEqual(
+            card.evaluate("(element) => element.getBoundingClientRect().top"),
+            before_card_top,
+            delta=2,
+        )
         self.page.wait_for_function(
             """() => {
               const input = document.querySelector(
@@ -638,22 +1084,55 @@ class NavigationBrowserTests(unittest.TestCase):
                 'rgb(232, 246, 238)';
             }"""
         )
+        self.assertFalse(esb_toggle.is_checked())
+        self.assertFalse(plumber_toggle.is_checked())
+        esb_toggle.check()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '.house-active:has(.house-body[data-house-id="CHECKLIST-INLINE-TEST"]) ' +
+              '.house-checklist-status[data-checklist-field="esb_unclipped"]'
+            )?.dataset.savedValue === "yes" """
+        )
+        self.assertTrue(toggle.is_checked())
+        self.assertFalse(plumber_toggle.is_checked())
+        plumber_toggle.check()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '.house-active:has(.house-body[data-house-id="CHECKLIST-INLINE-TEST"]) ' +
+              '.house-checklist-status[data-checklist-field="plumber_status"]'
+            )?.dataset.savedValue === "done" """
+        )
+        toggle.uncheck()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '.house-active:has(.house-body[data-house-id="CHECKLIST-INLINE-TEST"]) ' +
+              '.house-checklist-status[data-checklist-field="scaffolding_status"]'
+            )?.dataset.savedValue === "not_done" """
+        )
+        self.assertFalse(toggle.is_checked())
+        self.assertTrue(esb_toggle.is_checked())
+        self.assertTrue(plumber_toggle.is_checked())
         with server.connect_db() as db:
             checklist = db.execute(
-                "SELECT scaffolding_status FROM house_checklists "
+                "SELECT scaffolding_status, esb_unclipped, plumber_status "
+                "FROM house_checklists "
                 "WHERE house_id = 'CHECKLIST-INLINE-TEST'"
             ).fetchone()
-        self.assertEqual(checklist["scaffolding_status"], "done")
+        self.assertEqual(
+            tuple(checklist),
+            ("not_done", "yes", "done"),
+        )
         self.assertEqual(
             toggle.evaluate(
                 """(input) => JSON.stringify({
                   className: input.closest('.checklist-toggle').className,
                   background: getComputedStyle(input.closest('.checklist-toggle')).backgroundColor,
                   indicator: getComputedStyle(input.closest('.checklist-toggle').querySelector('.checklist-toggle-indicator')).backgroundColor,
-                  ruleMatches: input.closest('.checklist-toggle').matches('.house-card .house-checklist-card .checklist-toggle.is-done')
+                  ruleMatches: input.closest('.checklist-toggle').matches('.house-card .house-checklist-card .checklist-toggle.is-done'),
+                  label: input.closest('.checklist-toggle').querySelector('.checklist-toggle-label').textContent
                 })"""
             ),
-            '{"className":"checklist-toggle is-done","background":"rgb(232, 246, 238)","indicator":"rgb(33, 134, 83)","ruleMatches":true}',
+            '{"className":"checklist-toggle","background":"rgb(247, 249, 248)","indicator":"rgb(255, 255, 255)","ruleMatches":false,"label":"Not done yet"}',
         )
         self.assertEqual(self.browser_errors, [])
 
@@ -1276,7 +1755,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#houses-overview").is_visible())
         self.assertEqual(self.browser_errors, [])
 
-    def test_stage_history_is_shown_on_ready_cards_not_not_started_cards(self):
+    def test_ready_card_only_shows_ready_and_survey_audit(self):
         with server.connect_db() as db:
             with db:
                 db.execute(
@@ -1311,8 +1790,12 @@ class NavigationBrowserTests(unittest.TestCase):
         ready_card.wait_for()
         audit = ready_card.locator(".house-audit")
         self.assertTrue(audit.is_visible())
-        self.assertIn("Ready for start actor", audit.inner_text())
-        self.assertIn("Active actor", audit.inner_text())
+        audit_text = audit.inner_text()
+        self.assertIn("Marked ready to start", audit_text)
+        self.assertIn("Ready for start actor", audit_text)
+        self.assertNotIn("Active actor", audit_text)
+        self.assertNotIn("Activated by", audit_text)
+        self.assertNotIn("Not recorded", audit_text)
         self.assertEqual(self.browser_errors, [])
 
 
