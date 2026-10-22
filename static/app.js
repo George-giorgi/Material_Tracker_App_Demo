@@ -18,6 +18,11 @@ const state = {
   houseMapCamera: null,
   presentation: null,
   navigationTour: null,
+  surveyRoomHouseId: "",
+  surveyRoomReturn: "list",
+  surveyRoomRequest: 0,
+  preparedHouseShare: null,
+  pdfAnnotator: null,
   user: null,
   setupRequired: false,
 };
@@ -44,7 +49,7 @@ const presentationSteps = [
     narration:
       "The pre-start queue separates houses that still need preparation from houses ready for a survey. We will use an existing ready house so the 50-house pool stays intact.",
     instruction:
-      "Open the Ready for start list. Choose one house, click Enter survey measurements or Review survey, and save a short sample survey. The guide will use that house for the next scenes.",
+      "Open the Ready for start list. Choose one house, open Surveyor room or Review survey, and save a short sample survey. The guide will use that house for the next scenes.",
     example: "Keep the house ID visible; the remaining scenes follow that same job.",
     action: "ready-houses",
     actionLabel: "Show ready houses",
@@ -164,7 +169,7 @@ const navigationTourSteps = [
   {
     key: "houses",
     title: "Houses",
-    instruction: "Houses & teams is open on the house list. Use search or status filters to find a house.",
+    instruction: "Houses & teams is open on the house list. Use search or status filters to find a house and open Surveyor room when it is ready.",
     note: "No house status or checklist is changed by this tour.",
   },
   {
@@ -176,7 +181,7 @@ const navigationTourSteps = [
   {
     key: "map",
     title: "House map",
-    instruction: "The From SEAI map view is open. Review the eligible-house list and select a marker or list entry to inspect it.",
+    instruction: "The From SEAI map view is open. Review the eligible-house list and select a marker or list entry to inspect it. Ready houses include the Surveyor room action.",
     note: "Demo pins are approximate; they are not exact Eircode locations.",
   },
   {
@@ -221,7 +226,47 @@ function formatLocation(location) {
     const [department, team] = reference.split("|", 2).map(decodeURIComponent);
     return `Team ${team}${department ? ` · ${department}` : ""}`;
   }
+  if (kind === "employee") return decodeURIComponent(reference);
   return `${kind === "house" ? "House" : "Team"} ${reference}`;
+}
+
+function formatAuditDateTime(value) {
+  if (!value) return "Date/time not recorded";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleString();
+}
+
+function houseAuditHtml(house) {
+  const statuses = new Map();
+  (house.status_history || []).forEach((entry) => {
+    statuses.set(entry.status, entry);
+  });
+  const statusLabels = {
+    not_started: "Not started",
+    ready: "Ready for start",
+    active: "Active",
+    closed: "Closed",
+  };
+  const statusRows = [...statuses.values()]
+    .sort((left, right) =>
+      new Date(right.changed_at).getTime() - new Date(left.changed_at).getTime(),
+    )
+    .map((entry) =>
+    `<span><strong>${escapeHtml(statusLabels[entry.status] || entry.status)}</strong>: ${escapeHtml(entry.changed_by || "User not recorded")} · ${escapeHtml(formatAuditDateTime(entry.changed_at))}</span>`,
+    );
+  const surveyRow = house.survey_updated_by || house.survey_updated_at
+    ? `<span><strong>Surveyor</strong>: ${escapeHtml(house.survey_updated_by || "Name not recorded")} · ${escapeHtml(formatAuditDateTime(house.survey_updated_at))}</span>`
+    : "";
+  const movement = house.last_movement;
+  const movementRow = movement
+    ? `<span><strong>Last movement</strong>: ${escapeHtml(movement.happened_on || "Date not recorded")} · ${escapeHtml(formatAuditDateTime(movement.recorded_at))}${movement.person ? ` · ${escapeHtml(movement.person)}` : ""}</span>`
+    : "";
+  const rows = [...statusRows, surveyRow, movementRow].filter(Boolean);
+  return rows.length
+    ? `<div class="house-audit" aria-label="House activity">${rows.join("")}</div>`
+    : "";
 }
 
 function localDate() {
@@ -363,7 +408,6 @@ async function checkAuthentication() {
 }
 
 function setTab(tab) {
-  stickyHouses.clear();
   if (tab === "overview" && state.housesTeamsTab !== "houses") {
     state.housesTeamsTab = "houses";
     renderHouses();
@@ -763,7 +807,7 @@ function renderOverview() {
       (item) => `
     <div class="activity-item">
       <span class="activity-icon ${escapeHtml(item.kind)}">${movementIcon(item.kind)}</span>
-      <div class="activity-copy"><strong>${escapeHtml(item.material)}</strong>${isExtraDelivery(item) ? `<span class="status-pill extra-delivery">Extra delivery #${item.delivery_number}</span>` : `<span class="${isHouseToHouseTransfer(item) ? "status-pill house-transfer" : ""}">${escapeHtml(movementDisplayLabel(item))}</span>`}<span>${escapeHtml(item.date)}${item.department ? ` · ${escapeHtml(item.department)}` : ""}${item.team ? ` · ${escapeHtml(item.team)}` : ""}</span></div>
+      <div class="activity-copy"><strong>${escapeHtml(item.material)}</strong>${isExtraDelivery(item) ? `<span class="status-pill extra-delivery">Extra delivery #${item.delivery_number}</span>` : `<span class="${isHouseToHouseTransfer(item) ? "status-pill house-transfer" : ""}">${escapeHtml(movementDisplayLabel(item))}</span>`}<span>${escapeHtml(item.date)} · Recorded ${escapeHtml(formatAuditDateTime(item.recorded_at))}${item.department ? ` · ${escapeHtml(item.department)}` : ""}${item.team ? ` · ${escapeHtml(item.team)}` : ""}</span></div>
       <span class="activity-qty">${escapeHtml(formatQuantity(item.qty))}</span>
     </div>`,
     )
@@ -822,31 +866,27 @@ const STOCK_PREVIEW = 3;
 
 const expandedStock = new Set();
 
-const stickyHouses = new Set();
 let planCache = {};
 const planStale = new Set();
-const PLAN_LABELS = {
-  scaffolding: { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
-  esb: { yes: "Yes", no: "No", not_esb: "Not ESB" },
-  plumber: { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
-};
-function planChecklistHtml(h) {
-  const tone = (value) =>
-    value === "done" || value === "yes"
-      ? "positive"
-      : value === "not_done" || value === "no"
-        ? "negative"
-        : value ? "unnecessary" : "unset";
-  return [
-    ["Scaffolding", h.plan_scaffolding, PLAN_LABELS.scaffolding],
-    ["ESB cable unclipped", h.plan_esb, PLAN_LABELS.esb],
-    ["Plumber work", h.plan_plumber, PLAN_LABELS.plumber],
-  ]
-    .map(
-      ([label, value, labels]) =>
-        `<div class="checklist-card-row"><span>${label}</span><strong class="checklist-value checklist-value-${tone(value)}">${value ? labels[value] : "Not set"}</strong></div>`,
-    )
-    .join("");
+const workPlanSaveStates = new WeakMap();
+function checklistRequirementBadge(required, status) {
+  if (required === 1 || required === true) {
+    return '<span class="checklist-requirement required">Required</span>';
+  }
+  if (required === 0 || required === false || status === "not_necessary" || status === "not_esb") {
+    return '<span class="checklist-requirement not-required">Not required</span>';
+  }
+  return '<span class="checklist-requirement requirement-unknown">Requirement not set</span>';
+}
+
+function activeChecklistToggle(houseId, field, label, status, required) {
+  const requirement = checklistRequirementBadge(required, status);
+  if (required === 0 || required === false || status === "not_necessary" || status === "not_esb") {
+    return requirement;
+  }
+  const done = status === "done" || status === "yes";
+  const notDoneStatus = field === "esb_unclipped" ? "no" : "not_done";
+  return `<div class="checklist-toggle-wrap">${requirement}<label class="checklist-toggle${done ? " is-done" : ""}"><input type="checkbox" class="house-checklist-status" data-house-id="${escapeHtml(houseId)}" data-checklist-field="${field}" data-saved-value="${status || notDoneStatus}" aria-label="Mark ${escapeHtml(label)} done"${done ? " checked" : ""}><span class="checklist-toggle-indicator" aria-hidden="true">${done ? "✓" : ""}</span><span class="checklist-toggle-label">${done ? "Done" : "Not done yet"}</span></label></div>`;
 }
 function snagRowHtml(snag, houseId) {
   return `<button type="button" class="snag-row${snag.done ? " done" : ""}" data-snag-id="${snag.id}" data-house-id="${escapeHtml(houseId)}" data-done="${snag.done ? "false" : "true"}" aria-pressed="${snag.done}" title="${snag.done ? "Mark as not done" : "Mark as done"}"><span class="snag-box">${snag.done ? "✓" : ""}</span><span class="snag-text">${escapeHtml(snag.text)}</span></button>`;
@@ -897,24 +937,36 @@ async function saveSnag(payload) {
 function noteHtml(text) {
   return text ? `<div class="house-note"><div class="house-stock-title">Notes</div><p>${escapeHtml(text)}</p></div>` : "";
 }
-function houseCardNote(house) {
-  const notes = String(house.notes || "");
-  if (house.source !== "map_test") return notes;
-  return notes
-    .replace(/TEST ONLY:\s*synthetic coordinates do not identify the Eircode locatio(?:n)?\.?/gi, "")
-    .replace(/[.\s]+$/g, "")
-    .trim();
+function houseNoteActionClass(notes) {
+  return String(notes || "").trim() ? "note-action-edit" : "note-action-add";
 }
+
+function houseMapButtonHtml(houseId) {
+  return `<button class="text-button house-map-open" type="button" data-house-id="${escapeHtml(houseId)}"><svg class="house-map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg><span>View on map</span></button>`;
+}
+
 function findPlanHouse(houseId) {
   return Object.values(planCache).flat().find((item) => item.id === houseId) ||
     state.houseMapData?.find((item) => item.id === houseId);
 }
 let surveyHouses = [];
 function surveyCountText(survey) {
-  if (!survey) return "Not surveyed";
-  const windows = (survey.windows || []).reduce((sum, row) => sum + row.qty, 0);
-  const doors = (survey.doors || []).reduce((sum, row) => sum + row.qty, 0);
-  return `Survey recorded · ${windows} ${windows === 1 ? "window" : "windows"} · ${doors} ${doors === 1 ? "door" : "doors"}`;
+  return survey ? "Survey recorded" : "Not surveyed";
+}
+function updateSurveyStatusDisplay(survey) {
+  const isRecorded = Boolean(survey);
+  const summary = $("#survey-room-summary .survey-room-summary-survey strong");
+  if (summary) {
+    summary.textContent = surveyCountText(survey);
+    summary.className = isRecorded ? "survey-recorded" : "survey-not-surveyed";
+  }
+  const status = $("#survey-room-status");
+  if (status) {
+    status.classList.toggle("survey-complete", isRecorded);
+    status.classList.toggle("survey-not-surveyed", !isRecorded);
+    status.classList.remove("ready");
+    status.textContent = surveyCountText(survey);
+  }
 }
 function surveyStatusBadge(survey) {
   return survey ? '<span class="status-pill survey-complete">Survey recorded</span>' : "";
@@ -932,10 +984,12 @@ async function loadSurveyorHouses() {
 function renderSurveyorHouses() {
   const query = $("#house-search").value.trim().toLocaleLowerCase();
   const rows = surveyHouses.filter((h) => [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query));
-  $("#houses-list").innerHTML = rows.length ? rows.map((h) => `<article class="card house-card house-ready">
+  $("#houses-list").classList.remove("house-grid-compact");
+  $("#houses-list").classList.add("house-grid-ready");
+  $("#houses-list").innerHTML = rows.length ? rows.map((h) => `<article class="card house-card house-ready house-plan-ready" data-house-id="${escapeHtml(h.id)}">
     <div class="house-top"><span class="house-avatar">&#8962;</span><div class="house-meta"><h2>${escapeHtml(h.id)}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" - ") || "No details")}</p></div><div class="house-status-stack"><span class="status-pill ready">Ready for start</span>${surveyStatusBadge(h.survey)}</div></div>
-    <div class="house-body">${noteHtml(h.notes)}<div class="house-stock-title">Survey status</div><p>${escapeHtml(surveyCountText(h.survey))}${h.survey_updated_by ? ` - Updated by ${escapeHtml(h.survey_updated_by)}` : ""}</p></div>
-    <div class="house-card-actions"><button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="${h.survey ? "Review completed survey" : "Enter survey measurements"}">${h.survey ? "Review survey" : "Enter survey measurements"}</button></div>
+    <div class="house-body">${houseWorkflowHtml(2)}<div class="house-stock-title">Survey status</div><p>${escapeHtml(surveyCountText(h.survey))}${h.survey_updated_by ? ` - Updated by ${escapeHtml(h.survey_updated_by)}` : ""}</p></div>
+    <div class="house-card-actions"><button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="${h.survey ? "Review completed survey" : "Open surveyor room"}">${h.survey ? "Review survey" : "Surveyor room"}</button>${houseMapButtonHtml(h.id)}</div>
   </article>`).join("") : `<p class="muted">${query ? "No matching ready houses." : "No houses are ready for survey."}</p>`;
 }
 function surveyRow(list, value = {}) {
@@ -955,22 +1009,680 @@ function surveyRow(list, value = {}) {
   }
   $("#survey-" + list).append(row);
 }
+
+function setNoteAction(button, hasNote) {
+  button.textContent = hasNote ? "Edit note" : "Add note";
+  button.classList.toggle("note-action-edit", hasNote);
+  button.classList.toggle("note-action-add", !hasNote);
+}
+
 function openHouseSurvey(houseId) {
   const house = surveyHouses.find((item) => item.id === houseId) || findPlanHouse(houseId);
   if (!house) return;
+  if (!["admin", "surveyor"].includes(state.user?.role)) {
+    showToast("Surveyor access is required to open this room.", true);
+    return;
+  }
+  state.surveyRoomReturn = state.houseMapMode ? "map" : "list";
+  state.surveyRoomHouseId = houseId;
+  state.surveyRoomRequest += 1;
   const form = $("#house-survey-form");
   form.dataset.houseId = houseId;
+  const workPlanForm = $("#surveyor-work-plan-form");
+  workPlanForm.dataset.houseId = houseId;
+  const workPlanStatus = $("#surveyor-work-plan-save-status");
+  workPlanStatus.textContent =
+    "Requirement choices and work details save automatically. You can also save manually.";
+  workPlanStatus.classList.remove("save-error");
+  workPlanForm.classList.toggle(
+    "hidden",
+    house.status !== "ready" || !["admin", "surveyor"].includes(state.user?.role),
+  );
+  for (const trade of ["scaffolding", "esb", "plumber"]) {
+    const required = house[`plan_${trade}_required`];
+    workPlanForm.elements[`${trade}_required`].value =
+      required === null || required === undefined ? "" : String(Boolean(required));
+    workPlanForm.elements[`${trade}_notes`].value =
+      house[`plan_${trade}_notes`] || "";
+  }
+  const houseNotesForm = $("#surveyor-house-notes-form");
+  houseNotesForm.dataset.houseId = houseId;
+  houseNotesForm.elements.notes.value = house.notes || "";
   const survey = house.survey || {};
+  const surveyNotesForm = $("#surveyor-survey-notes-form");
+  surveyNotesForm.dataset.houseId = houseId;
+  surveyNotesForm.elements.notes.value = "";
+  const hasHouseNotes = Boolean(house.notes?.trim());
+  const hasSurveyNote = Boolean(survey.notes?.trim());
+  const houseNoteActionClass = hasHouseNotes ? "note-action-edit" : "note-action-add";
+  const surveyNoteActionClass = hasSurveyNote ? "note-action-edit" : "note-action-add";
   for (const key of ["windows", "doors", "house_corners"]) {
     const target = $("#survey-" + key);
     target.replaceChildren();
     (survey[key] || []).forEach((item) => surveyRow(key, key.endsWith("corners") ? { length: item } : item));
     if (!target.children.length) surveyRow(key);
   }
-  form.elements.notes.value = survey.notes || "";
-  $("#house-survey-title").textContent = `${houseId} survey measurements`;
+  $("#house-survey-title").textContent = `${houseId} · Surveyor room`;
   $("#survey-meta").textContent = house.survey_updated_by ? `Last saved by ${house.survey_updated_by}${house.survey_updated_at ? ` - ${new Date(house.survey_updated_at).toLocaleString()}` : ""}` : "Not surveyed yet";
-  $("#house-survey-dialog").showModal();
+  updateSurveyStatusDisplay(house.survey);
+  $("#survey-room-subtitle").textContent = [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "No house details recorded";
+  $("#survey-room-summary").innerHTML = `
+    <div><span>House ID</span><strong>${escapeHtml(house.id)}</strong></div>
+    <div><span>Owner</span><strong>${escapeHtml(house.owner_name || "Not recorded")}</strong></div>
+    <div><span>Eircode / postcode</span><strong>${escapeHtml(house.postcode || "Not recorded")}</strong></div>
+    <div><span>Address</span><strong>${escapeHtml(house.address || "Not recorded")}</strong></div>
+    <div class="survey-room-summary-survey"><span>Survey status</span><strong class="${house.survey ? "survey-recorded" : "survey-not-surveyed"}">${escapeHtml(surveyCountText(house.survey))}</strong></div>
+    <div class="survey-room-house-notes"><div class="survey-room-house-notes-heading"><span>House notes</span><button class="text-button ${houseNoteActionClass}" type="button" data-edit-house-notes>${hasHouseNotes ? "Edit note" : "Add note"}</button></div><strong id="survey-room-summary-house-notes">${escapeHtml(house.notes || "No house notes")}</strong></div>
+    <div class="survey-room-house-notes survey-room-survey-notes"><div class="survey-room-house-notes-heading"><span>Survey note</span><button class="text-button ${surveyNoteActionClass}" type="button" data-edit-survey-notes>${hasSurveyNote ? "Edit note" : "Add note"}</button></div><strong id="survey-room-summary-survey-notes">${escapeHtml(survey.notes || "No survey note")}</strong></div>`;
+  $("#house-document-file").value = "";
+  $("#house-document-file-name").textContent = "No file selected";
+  $("#house-documents-list").innerHTML = '<p class="muted">Loading survey documents…</p>';
+  $("#house-document-form").classList.toggle(
+    "hidden",
+    !["admin", "surveyor"].includes(state.user?.role),
+  );
+  $("#houses-overview").classList.add("hidden");
+  $("#house-map-view").classList.add("hidden");
+  $("#house-detail").classList.add("hidden");
+  $("#surveyor-room").classList.remove("hidden");
+  setTab("houses");
+  loadHouseDocuments(houseId, state.surveyRoomRequest);
+}
+async function submitSurveyorHouseNotes(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  try {
+    const result = await request("/api/house-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: form.dataset.houseId,
+        notes: form.elements.notes.value,
+      }),
+    });
+    const houseId = form.dataset.houseId;
+    const house = [
+      ...surveyHouses,
+      ...Object.values(planCache).flat(),
+      ...(state.houseMapData || []),
+    ].find((item) => item.id === houseId);
+    if (house) house.notes = result.notes;
+    const hasNotes = Boolean(result.notes?.trim());
+    $("#survey-room-summary-house-notes").textContent =
+      hasNotes ? result.notes : "No house notes";
+    setNoteAction($("[data-edit-house-notes]"), hasNotes);
+    form.elements.notes.value = "";
+    planStale.add("ready");
+    showToast(`House notes for ${houseId} saved.`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+async function submitHouseWorkPlan(event) {
+  event.preventDefault();
+  await saveHouseWorkPlan(event.currentTarget, true);
+}
+async function saveHouseWorkPlan(form, manual = false) {
+  const button = $("button[type='submit']", form);
+  const status = $("#surveyor-work-plan-save-status");
+  const values = new FormData(form);
+  const payload = { house_id: form.dataset.houseId };
+  for (const trade of ["scaffolding", "esb", "plumber"]) {
+    const required = values.get(`${trade}_required`);
+    payload[`${trade}_required`] = required === "" ? null : required === "true";
+    payload[`${trade}_notes`] = values.get(`${trade}_notes`);
+  }
+  const saveState = workPlanSaveStates.get(form) || { revision: 0, pending: Promise.resolve() };
+  const revision = ++saveState.revision;
+  const previousSave = saveState.pending;
+  const save = previousSave
+    .catch(() => {})
+    .then(() =>
+      request("/api/house-work-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+  saveState.pending = save;
+  workPlanSaveStates.set(form, saveState);
+  if (manual) button.disabled = true;
+  status.textContent = "Saving work plan…";
+  status.classList.remove("save-error");
+  try {
+    await save;
+    const houseId = form.dataset.houseId;
+    const matchingHouses = [
+      ...surveyHouses,
+      ...Object.values(planCache).flat(),
+      ...(state.houseMapData || []),
+    ].filter((house) => house.id === houseId);
+    for (const house of matchingHouses) {
+      for (const trade of ["scaffolding", "esb", "plumber"]) {
+        house[`plan_${trade}_required`] = payload[`${trade}_required`];
+        house[`plan_${trade}_notes`] = payload[`${trade}_notes`];
+      }
+    }
+    planStale.add("ready");
+    if (revision === saveState.revision) {
+      status.textContent = "Work plan saved automatically.";
+      if (manual) showToast(`Pre-start work plan for ${houseId} saved.`);
+    }
+  } catch (error) {
+    if (revision === saveState.revision) {
+      status.textContent = `Could not save work plan: ${error.message}`;
+      status.classList.add("save-error");
+    }
+    showToast(`Work plan was not saved: ${error.message}`, true);
+  } finally {
+    if (manual) button.disabled = false;
+  }
+}
+async function submitSurveyorSurveyNotes(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  try {
+    const result = await request("/api/survey-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: form.dataset.houseId,
+        notes: form.elements.notes.value,
+      }),
+    });
+    const houseId = form.dataset.houseId;
+    const matchingHouses = [
+      ...surveyHouses,
+      ...Object.values(planCache).flat(),
+      ...(state.houseMapData || []),
+      ...(state.dashboard?.house_list || []),
+    ].filter((item) => item.id === houseId);
+    matchingHouses.forEach((house) => {
+      house.survey = { ...(house.survey || {}), ...result.survey };
+      house.survey_updated_by = result.updated_by;
+      house.survey_updated_at = result.updated_at;
+    });
+    const hasNotes = Boolean(result.notes?.trim());
+    $("#survey-room-summary-survey-notes").textContent =
+      hasNotes ? result.notes : "No survey note";
+    setNoteAction($("[data-edit-survey-notes]"), hasNotes);
+    $("#survey-meta").textContent =
+      `Survey note saved by ${result.updated_by} - ${new Date(result.updated_at).toLocaleString()}`;
+    updateSurveyStatusDisplay(result.survey);
+    form.elements.notes.value = "";
+    showToast(`Survey note for ${houseId} saved.`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+async function loadHouseDocuments(houseId, requestId) {
+  const list = $("#house-documents-list");
+  try {
+    const result = await request(
+      `/api/house-documents?house_id=${encodeURIComponent(houseId)}`,
+    );
+    if (requestId !== state.surveyRoomRequest) return;
+    list.innerHTML = result.documents.length
+      ? result.documents.map((document) => `
+        <div class="house-document-entry">
+          <a class="house-document-link" href="/api/house-documents/${document.id}" target="_blank" rel="noreferrer">
+            <span class="house-document-icon" aria-hidden="true">PDF</span>
+            <span class="house-document-copy"><strong>${escapeHtml(document.filename)}</strong><small>Uploaded by ${escapeHtml(document.uploaded_by)} · ${escapeHtml(new Date(document.uploaded_at).toLocaleString())} · ${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
+            <span class="house-document-open" aria-hidden="true">↗</span>
+          </a>
+          <button class="button button-secondary house-document-annotate" type="button" data-document-id="${document.id}" data-document-name="${escapeHtml(document.filename)}">Annotate</button>
+          <button class="button button-secondary house-document-share" type="button" data-document-id="${document.id}" data-document-name="${escapeHtml(document.filename)}">Share PDF</button>
+        </div>`).join("")
+      : '<p class="muted house-documents-empty">No survey PDFs uploaded for this house yet.</p>';
+  } catch (error) {
+    if (requestId === state.surveyRoomRequest) {
+      list.innerHTML = `<p class="house-documents-error">Could not load survey documents: ${escapeHtml(error.message)}</p>`;
+    }
+  }
+}
+function closeHouseDocumentAnnotator() {
+  const annotator = state.pdfAnnotator;
+  if (annotator?.previewUrl) URL.revokeObjectURL(annotator.previewUrl);
+  state.pdfAnnotator = null;
+  $("#pdf-annotator-dialog").close();
+  $("#pdf-annotator-image").removeAttribute("src");
+  $("#pdf-annotator-canvas").width = 0;
+  $("#pdf-annotator-canvas").height = 0;
+}
+function updatePdfPageZoom(preserveCenter = true) {
+  const annotator = state.pdfAnnotator;
+  const image = $("#pdf-annotator-image");
+  const viewport = $("#pdf-annotator-viewport");
+  const surface = $("#pdf-page-surface");
+  if (!annotator || !image.naturalWidth || !image.naturalHeight) return;
+  const oldWidth = surface.clientWidth;
+  const oldHeight = surface.clientHeight;
+  const centerX = oldWidth
+    ? (viewport.scrollLeft + viewport.clientWidth / 2) / oldWidth
+    : 0.5;
+  const centerY = oldHeight
+    ? (viewport.scrollTop + viewport.clientHeight / 2) / oldHeight
+    : 0.5;
+  const availableWidth = Math.max(1, viewport.clientWidth - 28);
+  const availableHeight = Math.max(1, viewport.clientHeight - 28);
+  annotator.fitScale = Math.min(
+    availableWidth / image.naturalWidth,
+    availableHeight / image.naturalHeight,
+  );
+  annotator.fitWidth = image.naturalWidth * annotator.fitScale;
+  const width = Math.round(annotator.fitWidth * annotator.zoom);
+  const height = Math.round(image.naturalHeight * annotator.fitScale * annotator.zoom);
+  surface.style.width = `${width}px`;
+  surface.style.height = `${height}px`;
+  image.style.width = `${width}px`;
+  image.style.height = `${height}px`;
+  $("#pdf-annotator-zoom-level").textContent =
+    `${Math.round(annotator.zoom * 100)}%`;
+  $("#pdf-annotator-zoom-out").disabled = annotator.zoom <= 0.5;
+  $("#pdf-annotator-zoom-in").disabled = annotator.zoom >= 3;
+  drawPdfAnnotations();
+  if (preserveCenter) {
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = centerX * surface.clientWidth - viewport.clientWidth / 2;
+      viewport.scrollTop = centerY * surface.clientHeight - viewport.clientHeight / 2;
+    });
+  }
+}
+function drawPdfAnnotations() {
+  const annotator = state.pdfAnnotator;
+  const canvas = $("#pdf-annotator-canvas");
+  const image = $("#pdf-annotator-image");
+  if (!annotator || !image.naturalWidth || !image.naturalHeight) return;
+  const width = image.clientWidth;
+  const height = image.clientHeight;
+  if (!width || !height) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const backingWidth = Math.round(width * ratio);
+  const backingHeight = Math.round(height * ratio);
+  if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+    canvas.width = backingWidth;
+    canvas.height = backingHeight;
+  }
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  annotator.annotations
+    .filter((annotation) => annotation.page === annotator.page)
+    .forEach((annotation) => {
+      context.save();
+      context.strokeStyle = annotation.color;
+      context.fillStyle = annotation.color;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      if (annotation.tool === "text") {
+        context.textBaseline = "top";
+        context.font = `600 ${Math.max(14, annotation.font_size * width)}px system-ui, sans-serif`;
+        context.fillText(
+          annotation.text,
+          annotation.point[0] * width,
+          annotation.point[1] * height,
+        );
+      } else {
+        context.globalAlpha = annotation.tool === "highlighter" ? 0.38 : 1;
+        context.lineWidth = annotation.width * width;
+        context.beginPath();
+        annotation.points.forEach(([x, y], index) => {
+          if (index === 0) context.moveTo(x * width, y * height);
+          else context.lineTo(x * width, y * height);
+        });
+        if (annotation.points.length === 1) {
+          context.arc(
+            annotation.points[0][0] * width,
+            annotation.points[0][1] * height,
+            Math.max(1, context.lineWidth / 2),
+            0,
+            Math.PI * 2,
+          );
+          context.fill();
+        } else {
+          context.stroke();
+        }
+      }
+      context.restore();
+    });
+  $("#pdf-annotator-undo").disabled = annotator.annotations.length === 0;
+  $("#pdf-annotator-save").disabled =
+    annotator.annotations.length === 0 || annotator.saving;
+  $("#pdf-annotator-page-count").textContent =
+    `Page ${annotator.page} of ${annotator.pageCount || 1}`;
+  $("#pdf-annotator-previous").disabled = annotator.page <= 1 || annotator.loading;
+  $("#pdf-annotator-next").disabled =
+    annotator.page >= annotator.pageCount || annotator.loading;
+}
+function drawPdfStrokeSegment(annotation, start, end) {
+  const canvas = $("#pdf-annotator-canvas");
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (!width || !height) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const context = canvas.getContext("2d");
+  context.save();
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.strokeStyle = annotation.color;
+  context.globalAlpha = annotation.tool === "highlighter" ? 0.38 : 1;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = annotation.width * width;
+  context.beginPath();
+  context.moveTo(start[0] * width, start[1] * height);
+  context.lineTo(end[0] * width, end[1] * height);
+  context.stroke();
+  context.restore();
+}
+async function loadHouseDocumentPage(pageNumber) {
+  const annotator = state.pdfAnnotator;
+  if (!annotator) return;
+  annotator.page = pageNumber;
+  annotator.loading = true;
+  $("#pdf-annotator-error").classList.add("hidden");
+  $("#pdf-annotator-page-count").textContent = `Loading page ${pageNumber}…`;
+  drawPdfAnnotations();
+  try {
+    const response = await fetch(
+      `/api/house-documents/${annotator.documentId}/preview?page=${pageNumber}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      let result = {};
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error(`Could not open this PDF page (${response.status}).`);
+      }
+      throw new Error(result.error || `Could not open this PDF page (${response.status}).`);
+    }
+    const pageCount = Number(response.headers.get("X-PDF-Page-Count"));
+    if (!Number.isInteger(pageCount) || pageCount < 1) {
+      throw new Error("The PDF page count could not be read.");
+    }
+    const previewUrl = URL.createObjectURL(await response.blob());
+    const image = $("#pdf-annotator-image");
+    const previousUrl = annotator.previewUrl;
+    annotator.previewUrl = previewUrl;
+    image.onload = () => {
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      annotator.loading = false;
+      updatePdfPageZoom(false);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(previewUrl);
+      annotator.previewUrl = "";
+      annotator.loading = false;
+      $("#pdf-annotator-error").textContent = "This PDF page could not be displayed.";
+      $("#pdf-annotator-error").classList.remove("hidden");
+      drawPdfAnnotations();
+    };
+    annotator.pageCount = pageCount;
+    image.src = previewUrl;
+  } catch (error) {
+    annotator.loading = false;
+    $("#pdf-annotator-error").textContent = error.message;
+    $("#pdf-annotator-error").classList.remove("hidden");
+    drawPdfAnnotations();
+  }
+}
+function openHouseDocumentAnnotator(button) {
+  state.pdfAnnotator = {
+    documentId: button.dataset.documentId,
+    filename: button.dataset.documentName,
+    houseId: state.surveyRoomHouseId,
+    page: 1,
+    pageCount: 1,
+    tool: "pen",
+    penSize: 2.5,
+    zoom: 1,
+    fitScale: 1,
+    fitWidth: 1,
+    annotations: [],
+    previewUrl: "",
+    loading: false,
+    saving: false,
+    drawing: null,
+  };
+  $("#pdf-annotator-title").textContent = button.dataset.documentName;
+  $("#pdf-annotator-color").value = "#d93025";
+  $("#pdf-annotator-size").value = "2.5";
+  $("#pdf-annotator-zoom-level").textContent = "100%";
+  $("#pdf-annotator-text").value = "";
+  $("#pdf-annotator-text-panel").classList.add("hidden");
+  $$(".pdf-tool-button").forEach((toolButton) => {
+    const active = toolButton.dataset.pdfTool === "pen";
+    toolButton.classList.toggle("active", active);
+    toolButton.setAttribute("aria-pressed", String(active));
+  });
+  $("#pdf-annotator-dialog").showModal();
+  loadHouseDocumentPage(1);
+}
+async function saveHouseDocumentAnnotations() {
+  const annotator = state.pdfAnnotator;
+  if (!annotator || !annotator.annotations.length || annotator.saving) return;
+  annotator.saving = true;
+  drawPdfAnnotations();
+  try {
+    const result = await request(
+      `/api/house-documents/${annotator.documentId}/annotations`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ annotations: annotator.annotations }),
+      },
+    );
+    closeHouseDocumentAnnotator();
+    await loadHouseDocuments(result.house_id, state.surveyRoomRequest);
+    showToast("Annotated PDF saved as a separate copy.");
+  } catch (error) {
+    annotator.saving = false;
+    drawPdfAnnotations();
+    showToast(error.message, true);
+  }
+}
+async function prepareHouseDocumentShare(button) {
+  const documentId = button.dataset.documentId;
+  const filename = button.dataset.documentName;
+  const houseId = state.surveyRoomHouseId;
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/house-documents/${documentId}/share`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let result = {};
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error(`Could not prepare the PDF (${response.status}).`);
+      }
+      if (response.status === 409 && result.error?.includes("survey note")) {
+        const surveyNote = $("#surveyor-survey-notes-form textarea[name='notes']");
+        showToast(
+          "Only the Survey note is added to the shared PDF. Enter it in the Survey note field and click Save survey note first.",
+          true,
+        );
+        surveyNote.scrollIntoView({ behavior: "smooth", block: "center" });
+        surveyNote.focus();
+        return;
+      }
+      throw new Error(result.error || `Could not prepare the PDF (${response.status}).`);
+    }
+    const blob = await response.blob();
+    const shareFilename =
+      `${houseId}-${filename.replace(/\.pdf$/i, "")}-with-survey-note.pdf`;
+    const file = new File([blob], shareFilename, { type: "application/pdf" });
+    state.preparedHouseShare = { file, houseId, filename };
+    $("#house-document-share-title").textContent = `${houseId} · ${filename}`;
+    $("#house-document-share-dialog").showModal();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+function downloadPreparedHouseShare() {
+  const prepared = state.preparedHouseShare;
+  if (!prepared) return;
+  const url = URL.createObjectURL(prepared.file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = prepared.file.name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function sharePreparedHouseFile(target = "share") {
+  const prepared = state.preparedHouseShare;
+  if (!prepared) return;
+  let canShareFile = false;
+  try {
+    canShareFile =
+      typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [prepared.file] });
+  } catch {
+    canShareFile = false;
+  }
+  if (canShareFile) {
+    try {
+      await navigator.share({
+        files: [prepared.file],
+        title: `${target === "share" ? "" : `${target} · `}House ${prepared.houseId} survey PDF`,
+        text: `Survey PDF for house ${prepared.houseId}. The saved survey note is appended on a separate page.`,
+      });
+      $("#house-document-share-dialog").close();
+      showToast("Combined PDF shared with the selected app.");
+      return;
+    } catch (error) {
+      if (error.name === "AbortError") {
+        showToast("Sharing was cancelled.");
+        return;
+      }
+      downloadPreparedHouseShare();
+      $("#house-document-share-dialog").close();
+      showToast("Your browser could not open its share sheet. The combined PDF was downloaded; attach it to your email or WhatsApp message.");
+      return;
+    }
+  }
+  downloadPreparedHouseShare();
+  $("#house-document-share-dialog").close();
+  showToast("Combined PDF downloaded. Attach it to your email or WhatsApp message.");
+}
+function sendPreparedHouseShare() {
+  return sharePreparedHouseFile();
+}
+async function emailPreparedHouseShare() {
+  const prepared = state.preparedHouseShare;
+  if (!prepared) return;
+  let canShareFile = false;
+  try {
+    canShareFile =
+      typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [prepared.file] });
+  } catch {
+    canShareFile = false;
+  }
+  if (canShareFile) return sharePreparedHouseFile("email");
+  downloadPreparedHouseShare();
+  const subject = `House ${prepared.houseId} survey PDF`;
+  const body = `The combined PDF has been downloaded. Attach it to this email before sending.`;
+  $("#house-document-share-dialog").close();
+  window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  showToast("Combined PDF downloaded. Attach it to the email before sending.");
+}
+async function whatsappPreparedHouseShare() {
+  const prepared = state.preparedHouseShare;
+  if (!prepared) return;
+  let canShareFile = false;
+  try {
+    canShareFile =
+      typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [prepared.file] });
+  } catch {
+    canShareFile = false;
+  }
+  if (canShareFile) return sharePreparedHouseFile("whatsapp");
+  downloadPreparedHouseShare();
+  const message = [
+    `Survey PDF for house ${prepared.houseId}.`,
+    "The combined PDF was downloaded separately. Attach it in WhatsApp before sending.",
+  ].join(" ");
+  window.open(
+    `https://wa.me/?text=${encodeURIComponent(message)}`,
+    "_blank",
+    "noopener,noreferrer",
+  );
+  $("#house-document-share-dialog").close();
+  showToast("Combined PDF downloaded. Attach it in WhatsApp before sending.");
+}
+async function submitHouseDocument(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const file = $("#house-document-file").files[0];
+  if (!file) {
+    showToast("Choose a PDF file to upload.", true);
+    return;
+  }
+  if (!file.name.toLocaleLowerCase().endsWith(".pdf")) {
+    showToast("House documents must be PDF files.", true);
+    return;
+  }
+  if (file.size > 8_000_000) {
+    showToast("PDF files must be 8 MB or smaller.", true);
+    return;
+  }
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  const payload = new FormData();
+  payload.append("house_id", state.surveyRoomHouseId);
+  payload.append("file", file);
+  try {
+    await request("/api/house-documents", { method: "POST", body: payload });
+    $("#house-document-file").value = "";
+    $("#house-document-file-name").textContent = "No file selected";
+    await loadHouseDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
+    showToast("Survey PDF uploaded and shared with the surveyor.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+function closeSurveyorRoom() {
+  $("#surveyor-room").classList.add("hidden");
+  state.surveyRoomHouseId = "";
+  state.surveyRoomRequest += 1;
+  if (state.surveyRoomReturn === "map") {
+    state.houseMapMode = true;
+    $("#houses-overview").classList.add("hidden");
+    $("#house-map-view").classList.remove("hidden");
+    renderHouses();
+    return;
+  }
+  state.houseMapMode = false;
+  showHousesOverview();
+  state.houseStatusFilter = "ready";
+  state.houseTeamFilter = null;
+  state.housesTeamsTab = "houses";
+  if (state.user?.role === "surveyor") {
+    setTab("houses");
+    loadSurveyorHouses();
+  } else {
+    renderHouses();
+  }
 }
 async function submitHouseSurvey(event) {
   event.preventDefault();
@@ -986,14 +1698,38 @@ async function submitHouseSurvey(event) {
     });
     if (partial) { showToast("Complete all dimensions and quantity in each window or door row.", true); partial.querySelector("input").focus(); return; }
   }
-  const survey = { windows: dims("windows"), doors: dims("doors"), house_corners: lengths("house_corners"), notes: form.elements.notes.value.trim() };
+  const currentHouse = [
+    ...surveyHouses,
+    ...Object.values(planCache).flat(),
+    ...(state.houseMapData || []),
+    ...(state.dashboard?.house_list || []),
+  ].find((house) => house.id === form.dataset.houseId);
+  const survey = {
+    windows: dims("windows"),
+    doors: dims("doors"),
+    house_corners: lengths("house_corners"),
+    notes: currentHouse?.survey?.notes || "",
+  };
   button.disabled = true;
   try {
     await request("/api/house-survey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ house_id: form.dataset.houseId, survey }) });
-    $("#house-survey-dialog").close();
+    const updatedAt = new Date().toISOString();
+    $("#survey-meta").textContent = `Last saved by ${state.user.display_name} - ${new Date(updatedAt).toLocaleString()}`;
+    updateSurveyStatusDisplay(survey);
+    const currentHouse = [...surveyHouses, ...Object.values(planCache).flat()].find((house) => house.id === form.dataset.houseId);
+    if (currentHouse) {
+      currentHouse.survey = survey;
+      currentHouse.survey_updated_by = state.user.display_name;
+      currentHouse.survey_updated_at = updatedAt;
+    }
+    planStale.add("ready");
     showToast(`Survey for ${form.dataset.houseId} saved.`);
-    if (state.user.role === "surveyor") await loadSurveyorHouses();
-    else { planStale.add("ready"); await refresh(); }
+    state.houseStatusFilter = "ready";
+    state.houseTeamFilter = null;
+    state.housesTeamsTab = "houses";
+    $("#house-search").value = "";
+    state.surveyRoomReturn = "list";
+    closeSurveyorRoom();
   } catch (error) { showToast(error.message, true); }
   finally { button.disabled = false; }
 }
@@ -1005,7 +1741,7 @@ function houseWorkflowHtml(currentStep, showHint = false) {
       ${stages.map((stage, index) => {
         const step = index + 1;
         const stateClass = step < currentStep ? "complete" : step === currentStep ? "current" : "";
-        return `<li class="${stateClass}"${step === currentStep ? ' aria-current="step"' : ""}><span>${step}</span><small>${stage}</small></li>`;
+        return `<li class="${stateClass} workflow-stage-${step}"${step === currentStep ? ' aria-current="step"' : ""}><span>${step}</span><small>${stage}</small></li>`;
       }).join("")}
     </ol>
     ${showHint ? '<p class="house-workflow-hint">Mark ready when pre-start checks can begin. Stage 1/2 work stages appear after activation.</p>' : ""}
@@ -1043,6 +1779,7 @@ async function renderNotStartedHouses(query, mode = "not_started") {
   }
   const isReady = mode === "ready";
   const canManageHouses = state.user?.role === "admin";
+  const canSurveyHouses = ["admin", "surveyor"].includes(state.user?.role);
   list.classList.toggle("house-grid-ready", isReady);
   const rows = planCache[cacheKey].filter((h) =>
     [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query),
@@ -1053,7 +1790,6 @@ async function renderNotStartedHouses(query, mode = "not_started") {
           const id = escapeHtml(h.id);
             const workflowStep = isReady ? 2 : 1;
             const isMapTestHouse = h.source === "map_test";
-          const cardNote = houseCardNote(h);
             const locationDetails = [
               isMapTestHouse ? "" : h.owner_name,
               isMapTestHouse ? "" : h.address,
@@ -1069,20 +1805,18 @@ async function renderNotStartedHouses(query, mode = "not_started") {
                 ? `${formatQuantity(h.perimeter_m)} m perimeter`
                 : "",
             ].filter(Boolean);
-            return `<article class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}">
-          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey) : ""}</div></div>
-          <div class="house-body"${!isReady ? ' tabindex="0" role="region" aria-label="House details and pre-start checklist"' : ""}>
+            return `<article class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}" data-house-id="${id}">
+          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}${isReady ? houseAuditHtml(h) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey) : ""}</div></div>
+          <div class="house-body" data-house-id="${id}"${!isReady ? ' tabindex="0" role="region" aria-label="House status"' : ""}>
             ${houseWorkflowHtml(workflowStep, !isReady)}
-            ${isReady ? noteHtml(cardNote) : ""}${isReady ? snagsHtml(h) : ""}
-            ${isReady ? `<div class="house-checklist-card"><div class="house-stock-title">Pre-start checklist</div>${planChecklistHtml(h)}</div>` : ""}
           </div>
         <div class="house-card-actions">
           ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : `
-            <button class="text-button seai-activate" type="button" data-house-id="${id}">&#43; Activate house</button>
-            <button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${h.survey ? "Review completed survey" : "Enter survey measurements"}">${h.survey ? "Review survey" : "Enter survey measurements"}</button>
+            <button class="text-button seai-activate" type="button" data-house-id="${id}"${h.survey ? "" : " disabled"}>&#43; Activate house</button>
+            ${canSurveyHouses ? `<button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${h.survey ? "Review completed survey" : "Open surveyor room"}">${h.survey ? "Review survey" : "Surveyor room"}</button>` : ""}
             <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>
-            <button class="text-button house-note-open" type="button" data-house-id="${id}">${h.notes ? "Edit note" : "Add note"}</button>
-            ${canManageHouses ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history <span>→</span></button><button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button>` : ""}`}
+            ${houseMapButtonHtml(h.id)}
+            `}
         </div>
       </article>`;
         })
@@ -1090,12 +1824,26 @@ async function renderNotStartedHouses(query, mode = "not_started") {
     : `<p class="muted">${isReady ? "No houses are ready for start yet." : "No SEAI houses waiting to start."}</p>`;
   list.classList.toggle("house-grid-compact", !isReady);
   if (list.dataset.planHtml !== html) {
-    const scroll = list.scrollTop;
+    const listScroll = list.scrollTop;
+    const pageScroll = window.scrollY;
+    const houseBodyScroll = new Map(
+      [...list.querySelectorAll(".house-body[data-house-id]")].map((body) => [
+        body.dataset.houseId,
+        body.scrollTop,
+      ]),
+    );
     list.innerHTML = html;
     list.dataset.planHtml = html;
-    list.scrollTop = scroll;
+    list.querySelectorAll(".house-body[data-house-id]").forEach((body) => {
+      const scrollTop = houseBodyScroll.get(body.dataset.houseId);
+      if (scrollTop !== undefined) body.scrollTop = scrollTop;
+    });
+    list.scrollTo({ top: listScroll, behavior: "instant" });
+    if (window.scrollY !== pageScroll) {
+      window.scrollTo({ top: pageScroll, behavior: "instant" });
+    }
   }
-  list.classList.toggle("house-grid-scrollable", rows.length > 6);
+  list.classList.toggle("house-grid-scrollable", rows.length > 6 && !isReady);
 }
 
 function openHouseNote(houseId) {
@@ -1108,7 +1856,40 @@ function openHouseNote(houseId) {
   $("#house-note-dialog").showModal();
   form.elements.notes.focus();
 }
-
+async function updateHouseChecklistStatus(event) {
+  const checkbox = event.target.closest(".house-checklist-status");
+  if (!checkbox || checkbox.type !== "checkbox" || checkbox.disabled) return;
+  const { houseId, checklistField } = checkbox.dataset;
+  const checked = checkbox.checked;
+  const value = checklistField === "esb_unclipped"
+    ? checked ? "yes" : "no"
+    : checked ? "done" : "not_done";
+  checkbox.disabled = true;
+  try {
+    await request("/api/house-checklist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: houseId,
+        [checklistField]: value,
+      }),
+    });
+    const house = state.dashboard.house_list.find((item) => item.id === houseId);
+    if (house) house[checklistField] = value;
+    checkbox.dataset.savedValue = value;
+    const toggle = checkbox.closest(".checklist-toggle");
+    toggle.classList.toggle("is-done", checked);
+    $(".checklist-toggle-indicator", toggle).textContent = checked ? "✓" : "";
+    $(".checklist-toggle-label", toggle).textContent = checked ? "Done" : "Not done yet";
+    showToast(`${checkbox.getAttribute("aria-label")} updated.`);
+  } catch (error) {
+    checkbox.checked = checkbox.dataset.savedValue === "done" ||
+      checkbox.dataset.savedValue === "yes";
+    showToast(error.message, true);
+  } finally {
+    checkbox.disabled = false;
+  }
+}
 async function submitHouseNote(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1316,15 +2097,15 @@ function mapHouseActions(house) {
   const id = escapeHtml(house.id);
   const admin = state.user?.role === "admin";
   if (house.status === "not_started") {
-    return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button>`;
+    return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>`;
   }
   if (house.status === "ready") {
-    return `<button class="text-button seai-activate" type="button" data-house-id="${id}">＋ Activate house</button><button class="text-button house-survey-open ${house.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}">${house.survey ? "Review survey" : "Enter survey measurements"}</button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button>` : ""}`;
+    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${house.survey ? "" : " disabled"}>＋ Activate house</button>${["admin", "surveyor"].includes(state.user?.role) ? `<button class="text-button house-survey-open ${house.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${house.survey ? "Review completed survey" : "Open surveyor room"}">${house.survey ? "Review survey" : "Surveyor room"}</button>` : ""}<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`;
   }
   if (house.status === "closed") {
     return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
   }
-  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><button class="text-button house-note-open" type="button" data-house-id="${id}">${house.notes ? "Edit note" : "Add note"}</button><span class="stage-switch" role="group" aria-label="Stage"><span class="map-stage-caption">WORK STAGE</span>${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>${admin ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
+  return `<button class="text-button house-record-movement" type="button" data-house-id="${id}">＋ Record movement</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button><span class="stage-switch" role="group" aria-label="Stage"><span class="map-stage-caption">WORK STAGE</span>${[1, 2].map((stage) => `<button class="stage-btn${(Number(house.stage) || 1) === stage ? " on" : ""}" type="button" data-house-id="${id}" data-stage="${stage}" aria-pressed="${(Number(house.stage) || 1) === stage}">Stage ${stage}</button>`).join("")}</span><button class="text-button house-snags-open" type="button" data-house-id="${id}">Snags</button>${admin ? `<button class="text-button house-checklist-open" type="button" data-house-id="${id}">Edit checklist</button><button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button><button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="false">Mark house finished</button>` : ""}`;
 }
 
 function selectMapHouse(houseId) {
@@ -1345,6 +2126,18 @@ function selectMapHouse(houseId) {
     button.classList.toggle("selected", button.dataset.mapHouseId === houseId),
   );
   renderHouseMapCanvas();
+}
+
+function openHouseMap(houseId) {
+  showHousesOverview();
+  state.houseTeamFilter = null;
+  state.houseStatusFilter = null;
+  state.housesTeamsTab = "houses";
+  state.houseMapMode = true;
+  state.selectedMapHouseId = houseId;
+  state.houseMapCamera = null;
+  setTab("houses");
+  renderHouses();
 }
 
 function renderHouseMapList() {
@@ -1393,6 +2186,7 @@ function renderHouses() {
   }
   const data = state.dashboard;
   const canManageHouses = state.user?.role === "admin";
+  const canEditHouseChecklist = ["admin", "employee"].includes(state.user?.role);
   const query = $("#house-search").value.trim().toLocaleLowerCase();
   const teamFilter = state.houseTeamFilter;
   const statusFilter = state.houseStatusFilter;
@@ -1403,6 +2197,7 @@ function renderHouses() {
     : null;
   const houseTeams = new Map();
   Object.entries(data.team_house_counts || {}).forEach(([location, counts]) => {
+    if (!location.startsWith("team:")) return;
     [...(counts.open_house_ids || []), ...(counts.closed_house_ids || [])].forEach(
       (houseId) => {
         const names = houseTeams.get(houseId) || [];
@@ -1415,7 +2210,9 @@ function renderHouses() {
     const ready = statusFilter === "ready";
     $("#houses-list-heading").textContent = ready ? "Houses ready for start" : "SEAI houses not started";
     $("#house-team-filter").classList.remove("hidden");
-    $("#house-team-filter-label").textContent = ready
+    const filterLabel = $("#house-team-filter-label");
+    filterLabel.className = `house-team-filter-label filter-status-${statusFilter}`;
+    filterLabel.textContent = ready
       ? "Showing houses ready for start"
       : "Showing SEAI houses not started yet";
     $("#houses-empty").classList.add("hidden");
@@ -1423,11 +2220,14 @@ function renderHouses() {
     renderNotStartedHouses(query, statusFilter);
     return;
   }
+  const visibleStatus = statusFilter ||
+    (teamFilter?.status === "closed" ? "closed" : "active");
+  $("#houses-list").classList.remove("house-grid-ready", "house-grid-compact");
+  $("#houses-list").classList.toggle("house-grid-active", visibleStatus === "active");
   const matchingHouses = data.house_list.filter((house) =>
     (!filteredHouseIds || filteredHouseIds.includes(house.id)) &&
     (!teamFilter || Boolean(house.is_finished) === (teamFilter.status === "closed")) &&
-    (!statusFilter || stickyHouses.has(house.id) ||
-      (statusFilter === "closed" ? Boolean(house.is_finished) : statusFilter === "active" ? !house.is_finished : true)) &&
+    (visibleStatus === "closed" ? Boolean(house.is_finished) : visibleStatus === "active" ? !house.is_finished : true) &&
     [house.id, house.owner_name, house.employee_name, house.postcode]
       .filter(Boolean)
       .join(" ")
@@ -1453,27 +2253,36 @@ function renderHouses() {
         house.scaffolding_status,
         checklistStatus(house.scaffolding_status, {
           done: "Done",
-          not_done: "Not done",
+          not_done: "Not done yet",
           not_necessary: "Not necessary",
         }),
+        "scaffolding_status",
+        house.plan_scaffolding_notes,
+        house.plan_scaffolding_required,
       ],
       [
-        "ESB cable unclipped",
+        "ESB work",
         house.esb_unclipped,
         checklistStatus(house.esb_unclipped, {
-          yes: "Yes",
-          no: "No",
-          not_esb: "Not ESB",
+          yes: "Done",
+          no: "Not done yet",
+          not_esb: "Not necessary",
         }),
+        "esb_unclipped",
+        house.plan_esb_notes,
+        house.plan_esb_required,
       ],
       [
         "Plumber work",
         house.plumber_status,
         checklistStatus(house.plumber_status, {
           done: "Done",
-          not_done: "Not done",
+          not_done: "Not done yet",
           not_necessary: "Not necessary",
         }),
+        "plumber_status",
+        house.plan_plumber_notes,
+        house.plan_plumber_required,
       ],
     ];
     const held = data.materials.flatMap((material) => {
@@ -1495,14 +2304,14 @@ function renderHouses() {
     ].filter(Boolean);
     return `
       <article class="card house-card ${house.is_finished ? "house-finished" : "house-active"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.employee_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${houseAuditHtml(house)}${propertyDetails.length ? `<div class="house-property-details">${propertyDetails.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div>` : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-body" data-house-id="${escapeHtml(house.id)}">${houseWorkflowHtml(house.is_finished ? 4 : 3)}<div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) || house.is_finished ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${!house.is_finished && held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>
         ${noteHtml(house.notes)}${house.is_finished ? "" : snagsHtml(house)}
         <div class="house-checklist-card">
           <div class="house-stock-title">House checklist</div>
-          ${checklist.map(([label, status, value]) => `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></div>`).join("")}
+          ${checklist.map(([label, status, value, field, notes, required]) => `<div class="checklist-card-row"><span class="checklist-card-label">${escapeHtml(label)}${notes ? `<small>${escapeHtml(notes)}</small>` : ""}</span>${canEditHouseChecklist && !house.is_finished ? activeChecklistToggle(house.id, field, label, status, required) : `<span class="checklist-static-status">${checklistRequirementBadge(required, status)}<strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></span>`}</div>`).join("")}
         </div>
         </div>
         <div class="house-card-actions">
@@ -1510,8 +2319,9 @@ function renderHouses() {
             <button class="text-button house-finish-toggle" type="button" data-house-id="${escapeHtml(house.id)}" data-finished="true">Reopen house</button>
             ${canManageHouses ? `<button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>` : ""}
           ` : `
+          ${houseMapButtonHtml(house.id)}
           <button class="text-button house-record-movement" type="button" data-house-id="${escapeHtml(house.id)}">＋ Record movement</button>
-          <button class="text-button house-note-open" type="button" data-house-id="${escapeHtml(house.id)}">${house.notes ? "Edit note" : "Add note"}</button>
+          <button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${escapeHtml(house.id)}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>
           <span class="stage-switch" role="group" aria-label="Stage">${[1, 2].map((n) => `<button class="stage-btn${(Number(house.stage) || 1) === n ? " on" : ""}" type="button" data-house-id="${escapeHtml(house.id)}" data-stage="${n}" aria-pressed="${(Number(house.stage) || 1) === n}"${house.is_finished ? " disabled" : ""}>Stage ${n}</button>`).join("")}</span>
           <button class="text-button house-snags-open" type="button" data-house-id="${escapeHtml(house.id)}">Snags</button>
           ${canManageHouses ? `
@@ -1524,7 +2334,10 @@ function renderHouses() {
   });
   const teams = [
     ...new Set(
-      data.locations.filter((location) => location.startsWith("team:")),
+      data.locations.filter(
+        (location) =>
+          location.startsWith("team:") || location.startsWith("employee:"),
+      ),
     ),
   ];
   const teamQuery = $("#team-search").value.trim().toLocaleLowerCase();
@@ -1599,10 +2412,7 @@ function renderHouses() {
     ]),
   );
   housesList.innerHTML = houseCards.join("");
-  housesList.classList.toggle(
-    "house-grid-scrollable",
-    matchingHouses.length > 6,
-  );
+  housesList.classList.remove("house-grid-scrollable");
   housesList.querySelectorAll(".house-body[data-house-id]").forEach((body) => {
     const scrollTop = houseBodyScroll.get(body.dataset.houseId);
     if (scrollTop !== undefined) body.scrollTop = scrollTop;
@@ -1610,24 +2420,20 @@ function renderHouses() {
   // Keep the view exactly where it was when a card is re-rendered in place.
   housesList.scrollTo({ top: listScroll, behavior: "instant" });
   if (window.scrollY !== pageScroll) window.scrollTo({ top: pageScroll, behavior: "instant" });
-  $("#houses-list-heading").textContent = teamFilter
-    ? teamFilter.status === "closed"
+  $("#houses-list-heading").textContent = visibleStatus === "closed"
       ? "Closed houses"
-      : "Open houses"
-    : statusFilter === "closed"
-      ? "Closed houses"
-      : statusFilter === "active"
+      : visibleStatus === "active"
         ? "Active houses"
         : "Houses";
-  $("#house-team-filter").classList.toggle("hidden", !teamFilter && !statusFilter);
-  if (statusFilter && !teamFilter) {
-    $("#house-team-filter-label").textContent =
-      `Showing ${statusFilter} houses`;
-  }
+  $("#house-team-filter").classList.toggle("hidden", !teamFilter && !visibleStatus);
+  const filterLabel = $("#house-team-filter-label");
+  filterLabel.className = `house-team-filter-label filter-status-${visibleStatus}`;
   if (teamFilter) {
     const teamName = formatLocation(teamFilter.location);
-    $("#house-team-filter-label").textContent =
+    filterLabel.textContent =
       `Showing ${teamFilter.status === "closed" ? "closed" : "active"} houses for ${teamName}`;
+  } else {
+    filterLabel.textContent = `Showing ${visibleStatus} houses`;
   }
   $("#houses-empty").classList.toggle(
     "hidden",
@@ -1760,9 +2566,9 @@ function renderHouseDetail(result) {
       { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
     ],
     [
-      "ESB cable unclipped",
+      "ESB work",
       house.esb_unclipped,
-      { yes: "Yes", no: "No", not_esb: "Not ESB" },
+      { yes: "Done", no: "Not done", not_esb: "Not necessary" },
     ],
     [
       "Plumber work",
@@ -1790,6 +2596,13 @@ function renderHouseDetail(result) {
         })
         .join("")
     : `<p class="muted">No pre-start checklist has been recorded.</p>`;
+  const preStart = house.status === "ready" || house.status === "not_started";
+  $("#house-detail-snag-section").classList.toggle("hidden", preStart);
+  $("#house-detail-records-title").textContent = preStart
+    ? "Notes"
+    : "Notes & snag history";
+  $('[data-house-detail-target="house-detail-records-card"]').textContent =
+    preStart ? "Notes" : "Notes & snags";
 
   const noteRows = [
     ["House note", house.notes],
@@ -1880,7 +2693,7 @@ function renderHouseDetail(result) {
     .map(
       (item) => `
         <tr>
-          <td>${escapeHtml(item.date)}</td>
+          <td>${escapeHtml(item.date)}<small class="movement-recorded-at">Recorded ${escapeHtml(formatAuditDateTime(item.recorded_at))}</small></td>
           <td><span class="status-pill ${movementStatusClass(item)}">${escapeHtml(movementDisplayLabel(item))}</span></td>
           <td>${escapeHtml(item.material)}</td>
           <td class="qty-cell">${escapeHtml(formatQuantity(item.qty))}</td>
@@ -1942,6 +2755,7 @@ function showHousesOverview() {
   state.houseMapMode = false;
   state.viewingHouseId = "";
   state.houseDetailRequest += 1;
+  $("#surveyor-room").classList.add("hidden");
   $("#house-map-view").classList.add("hidden");
   $("#house-detail").classList.add("hidden");
   $("#houses-overview").classList.remove("hidden");
@@ -1973,7 +2787,7 @@ function renderMovementTable() {
     .map(
       (item) => `
     <tr>
-      <td>${escapeHtml(item.date)}</td>
+      <td>${escapeHtml(item.date)}<small class="movement-recorded-at">Recorded ${escapeHtml(formatAuditDateTime(item.recorded_at))}</small></td>
       <td><span class="status-pill ${movementStatusClass(item)}">${escapeHtml(movementDisplayLabel(item))}</span></td>
       <td>${escapeHtml(item.material)}</td>
       <td class="qty-cell">${escapeHtml(formatQuantity(item.qty))}</td>
@@ -2069,12 +2883,14 @@ function openStocktake(materialId = null) {
   $("#stocktake-dialog").showModal();
 }
 
-function openHouseDialog() {
+function openHouseDialog(house = null) {
   $("#house-form").reset();
   $("#seai-results").classList.add("hidden");
   $("#seai-info").classList.add("hidden");
+  $(".seai-search").classList.toggle("hidden", Boolean(house));
+  if (house) fillSeaiHouse(house);
   $("#house-dialog").showModal();
-  $("#seai-search").focus();
+  if (!house) $("#seai-search").focus();
 }
 
 let seaiTimer = 0;
@@ -2362,6 +3178,11 @@ async function submitHouse(event) {
 const pendingHouseStatus = new Set();
 
 async function toggleHouseFinished(event) {
+  const mapButton = event.target.closest(".house-map-open");
+  if (mapButton) {
+    openHouseMap(mapButton.dataset.houseId);
+    return;
+  }
   const moreButton = event.target.closest(".stock-more-btn");
   if (moreButton) {
     const id = moreButton.dataset.houseId;
@@ -2382,8 +3203,7 @@ async function toggleHouseFinished(event) {
     }
     const h = findPlanHouse(activateButton.dataset.houseId);
     if (h) {
-      openHouseDialog();
-      fillSeaiHouse(h);
+      openHouseDialog(h);
     }
     return;
   }
@@ -2459,7 +3279,6 @@ async function toggleHouseFinished(event) {
     button.dataset.action === "closeout" || button.dataset.finished !== "true";
   if (pendingHouseStatus.has(houseId)) return;
   pendingHouseStatus.add(houseId);
-  stickyHouses.add(houseId);
   const house = state.dashboard.house_list.find((item) => item.id === houseId);
   const previous = house ? house.is_finished : null;
   const previousSummary = state.dashboard.house_summary
@@ -2804,7 +3623,6 @@ function bindEvents() {
     tile.addEventListener("click", () => {
       state.houseTeamFilter = null;
       state.houseStatusFilter = tile.dataset.houseView || null;
-      stickyHouses.clear();
       state.housesTeamsTab = "houses";
       $("#house-search").value = "";
       if (tile.dataset.houseView === "") {
@@ -2832,7 +3650,7 @@ function bindEvents() {
   $("#open-material").addEventListener("click", () =>
     $("#material-dialog").showModal(),
   );
-  $("#open-house").addEventListener("click", openHouseDialog);
+  $("#open-house").addEventListener("click", () => openHouseDialog());
   $("#back-to-houses").addEventListener("click", showHousesOverview);
   $$(".house-detail-nav [data-house-detail-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2959,6 +3777,170 @@ function bindEvents() {
     $("#house-locations-file-name").textContent =
       event.currentTarget.files[0]?.name || "No file selected";
   });
+  $("#back-from-surveyor-room").addEventListener("click", closeSurveyorRoom);
+  $("#house-document-form").addEventListener("submit", submitHouseDocument);
+  $("#surveyor-house-notes-form").addEventListener("submit", submitSurveyorHouseNotes);
+  $("#house-documents-list").addEventListener("click", (event) => {
+    const annotateButton = event.target.closest(".house-document-annotate");
+    if (annotateButton) {
+      openHouseDocumentAnnotator(annotateButton);
+      return;
+    }
+    const shareButton = event.target.closest(".house-document-share");
+    if (shareButton) prepareHouseDocumentShare(shareButton);
+  });
+  $("#house-document-share-send").addEventListener("click", sendPreparedHouseShare);
+  $("#house-document-share-email").addEventListener("click", emailPreparedHouseShare);
+  $("#house-document-share-whatsapp").addEventListener("click", whatsappPreparedHouseShare);
+  $("#house-document-share-download").addEventListener("click", () => {
+    downloadPreparedHouseShare();
+    $("#house-document-share-dialog").close();
+    showToast("Combined PDF downloaded.");
+  });
+  $("#pdf-annotator-close").addEventListener("click", closeHouseDocumentAnnotator);
+  $("#pdf-annotator-dialog").addEventListener("cancel", () => {
+    const annotator = state.pdfAnnotator;
+    if (annotator?.previewUrl) URL.revokeObjectURL(annotator.previewUrl);
+    state.pdfAnnotator = null;
+  });
+  $$(".pdf-tool-button").forEach((button) =>
+    button.addEventListener("click", () => {
+      const annotator = state.pdfAnnotator;
+      if (!annotator) return;
+      annotator.tool = button.dataset.pdfTool;
+      $$(".pdf-tool-button").forEach((toolButton) => {
+        const active = toolButton === button;
+        toolButton.classList.toggle("active", active);
+        toolButton.setAttribute("aria-pressed", String(active));
+      });
+      const textTool = annotator.tool === "text";
+      $("#pdf-annotator-text-panel").classList.toggle("hidden", !textTool);
+      $("#pdf-annotator-help").textContent = textTool
+        ? "Type a short note above, then tap the page to place it."
+        : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.";
+      if (textTool) $("#pdf-annotator-text").focus();
+    }),
+  );
+  $("#pdf-annotator-undo").addEventListener("click", () => {
+    if (!state.pdfAnnotator?.annotations.length) return;
+    state.pdfAnnotator.annotations.pop();
+    drawPdfAnnotations();
+  });
+  $("#pdf-annotator-previous").addEventListener("click", () => {
+    if (state.pdfAnnotator?.page > 1) loadHouseDocumentPage(state.pdfAnnotator.page - 1);
+  });
+  $("#pdf-annotator-next").addEventListener("click", () => {
+    if (state.pdfAnnotator && state.pdfAnnotator.page < state.pdfAnnotator.pageCount) {
+      loadHouseDocumentPage(state.pdfAnnotator.page + 1);
+    }
+  });
+  $("#pdf-annotator-save").addEventListener("click", saveHouseDocumentAnnotations);
+  $("#pdf-annotator-color").addEventListener("change", drawPdfAnnotations);
+  $("#pdf-annotator-size").addEventListener("change", (event) => {
+    if (state.pdfAnnotator) {
+      state.pdfAnnotator.penSize = Number(event.currentTarget.value);
+    }
+  });
+  $("#pdf-annotator-zoom-in").addEventListener("click", () => {
+    const annotator = state.pdfAnnotator;
+    if (!annotator) return;
+    annotator.zoom = Math.min(3, Math.round((annotator.zoom + 0.25) * 100) / 100);
+    updatePdfPageZoom();
+  });
+  $("#pdf-annotator-zoom-out").addEventListener("click", () => {
+    const annotator = state.pdfAnnotator;
+    if (!annotator) return;
+    annotator.zoom = Math.max(0.5, Math.round((annotator.zoom - 0.25) * 100) / 100);
+    updatePdfPageZoom();
+  });
+  $("#pdf-annotator-zoom-fit").addEventListener("click", () => {
+    if (!state.pdfAnnotator) return;
+    state.pdfAnnotator.zoom = 1;
+    updatePdfPageZoom(false);
+    const viewport = $("#pdf-annotator-viewport");
+    viewport.scrollTo({ left: 0, top: 0, behavior: "instant" });
+  });
+  const pdfCanvas = $("#pdf-annotator-canvas");
+  const pdfCanvasPoint = (event) => {
+    const rect = pdfCanvas.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    ];
+  };
+  pdfCanvas.addEventListener("pointerdown", (event) => {
+    const annotator = state.pdfAnnotator;
+    if (!annotator || annotator.loading || !pdfCanvas.clientWidth) return;
+    event.preventDefault();
+    const point = pdfCanvasPoint(event);
+    const color = $("#pdf-annotator-color").value;
+    if (annotator.tool === "text") {
+      const text = $("#pdf-annotator-text").value.trim();
+      if (!text) {
+        $("#pdf-annotator-text").focus();
+        showToast("Type a note before tapping the PDF.", true);
+        return;
+      }
+      annotator.annotations.push({
+        page: annotator.page,
+        tool: "text",
+        color,
+        point,
+        text,
+        font_size: 16 / annotator.fitWidth,
+      });
+      drawPdfAnnotations();
+      return;
+    }
+    const width = (annotator.tool === "highlighter"
+      ? Math.max(8, annotator.penSize * 3)
+      : annotator.penSize) / annotator.fitWidth;
+    const annotation = {
+      page: annotator.page,
+      tool: annotator.tool,
+      color,
+      width,
+      points: [point],
+    };
+    annotator.annotations.push(annotation);
+    annotator.drawing = { pointerId: event.pointerId, annotation, lastPoint: point };
+    pdfCanvas.setPointerCapture(event.pointerId);
+    drawPdfAnnotations();
+  });
+  pdfCanvas.addEventListener("pointermove", (event) => {
+    const annotator = state.pdfAnnotator;
+    const drawing = annotator?.drawing;
+    if (!drawing || drawing.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const points = drawing.annotation.points;
+    const coalesced = typeof event.getCoalescedEvents === "function"
+      ? event.getCoalescedEvents()
+      : [event];
+    for (const pointerEvent of coalesced) {
+      const point = pdfCanvasPoint(pointerEvent);
+      const dx = (point[0] - drawing.lastPoint[0]) * pdfCanvas.clientWidth;
+      const dy = (point[1] - drawing.lastPoint[1]) * pdfCanvas.clientHeight;
+      if (Math.hypot(dx, dy) < 0.75) continue;
+      if (points.length >= 1000) break;
+      points.push(point);
+      drawPdfStrokeSegment(drawing.annotation, drawing.lastPoint, point);
+      drawing.lastPoint = point;
+    }
+  });
+  const finishPdfStroke = (event) => {
+    const annotator = state.pdfAnnotator;
+    if (annotator?.drawing?.pointerId === event.pointerId) {
+      annotator.drawing = null;
+      drawPdfAnnotations();
+    }
+  };
+  pdfCanvas.addEventListener("pointerup", finishPdfStroke);
+  pdfCanvas.addEventListener("pointercancel", finishPdfStroke);
+  new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-viewport"));
+  $("#house-document-file").addEventListener("change", (event) => {
+    $("#house-document-file-name").textContent =
+      event.currentTarget.files[0]?.name || "No file selected";
+  });
   const mapCanvas = $("#house-map-canvas");
   let mapDrag = null;
   mapCanvas.addEventListener("pointerdown", (event) => {
@@ -3012,10 +3994,40 @@ function bindEvents() {
     const button = event.target.closest(".house-checklist-open");
     if (button) openHouseChecklist(button.dataset.houseId);
   });
+  $("#houses-list").addEventListener("change", updateHouseChecklistStatus);
   $("#house-checklist-form").addEventListener("submit", submitHouseChecklist);
   $("#house-note-form").addEventListener("submit", submitHouseNote);
   $("#house-survey-form").addEventListener("submit", submitHouseSurvey);
-  $("#house-survey-dialog").addEventListener("click", (event) => {
+  $("#surveyor-work-plan-form").addEventListener("submit", submitHouseWorkPlan);
+  $("#surveyor-work-plan-form").addEventListener("change", (event) => {
+    if (
+      event.target.matches(
+        "select[name$='_required'], textarea[name$='_notes']",
+      )
+    ) {
+      saveHouseWorkPlan(event.currentTarget);
+    }
+  });
+  $("#surveyor-survey-notes-form").addEventListener("submit", submitSurveyorSurveyNotes);
+  $("#surveyor-room").addEventListener("click", (event) => {
+    const editNotes = event.target.closest("[data-edit-house-notes]");
+    if (editNotes) {
+      const notes = $("#survey-room-summary-house-notes").textContent;
+      const form = $("#surveyor-house-notes-form");
+      form.elements.notes.value = notes === "No house notes" ? "" : notes;
+      form.elements.notes.scrollIntoView({ behavior: "smooth", block: "center" });
+      form.elements.notes.focus();
+      return;
+    }
+    const editSurveyNotes = event.target.closest("[data-edit-survey-notes]");
+    if (editSurveyNotes) {
+      const notes = $("#survey-room-summary-survey-notes").textContent;
+      const form = $("#surveyor-survey-notes-form");
+      form.elements.notes.value = notes === "No survey note" ? "" : notes;
+      form.elements.notes.scrollIntoView({ behavior: "smooth", block: "center" });
+      form.elements.notes.focus();
+      return;
+    }
     const add = event.target.closest(".survey-add-row");
     if (add) surveyRow(add.dataset.surveyList);
     const remove = event.target.closest(".survey-remove");
@@ -3417,11 +4429,18 @@ function updateHouseSelection() {
     (item) => item.id.toLocaleLowerCase() === value.toLocaleLowerCase(),
   );
   if (house) {
+    const isNewSelection =
+      state.selectedHouseId.toLocaleLowerCase() !== house.id.toLocaleLowerCase();
     $("#movement-house-id").value = house.id;
     state.selectedHouseId = house.id;
     $("#movement-postcode").value = house.postcode || "";
     $("#movement-owner").value = house.owner_name || "";
     $("#movement-employee").value = house.employee_name || "";
+    if (isNewSelection) {
+      $$("#movement-form [name='team']").forEach((input) => {
+        input.value = house.employee_name || "";
+      });
+    }
   } else if (state.selectedHouseId !== value) {
     state.selectedHouseId = "";
     $("#movement-postcode").value = "";

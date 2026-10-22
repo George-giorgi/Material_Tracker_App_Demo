@@ -8,11 +8,16 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from io import BytesIO
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 import seed_houses
 import server
+import pymupdf as fitz
+from pypdf import PdfReader
+from reportlab.pdfgen import canvas
 
 ROOT = Path(__file__).resolve().parent.parent
 CALC_HTML = (ROOT / "Auto_calc.html").read_text(encoding="utf-8")
@@ -89,6 +94,14 @@ class HttpBase(FlowBase):
     def activate(self, payload):
         with server.connect_db() as db:
             db.execute("UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?", (payload["id"],))
+            db.execute(
+                """
+                INSERT OR IGNORE INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                SELECT id, ?, '', 'Test Surveyor', '2026-10-21T10:00:00'
+                FROM provided_houses WHERE id = ?
+                """,
+                (json.dumps({"windows": [], "doors": [], "house_corners": [], "notes": ""}), payload["id"]),
+            )
         return self.call("POST", "/api/houses", payload)
 
     def call(self, method, path, payload=None, cookie=None):
@@ -107,6 +120,556 @@ class HttpBase(FlowBase):
         status = response.status
         connection.close()
         return status, result, set_cookie
+
+    def call_multipart(self, path, house_id, filename, content, cookie=None):
+        boundary = "----MaterialTrackerTestBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="house_id"\r\n\r\n'
+            f"{house_id}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode("ascii")
+        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        use_cookie = self.cookie if cookie is None else cookie
+        if use_cookie:
+            headers["Cookie"] = use_cookie
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request("POST", path, body=body, headers=headers)
+        response = connection.getresponse()
+        result = json.loads(response.read() or b"{}")
+        status = response.status
+        connection.close()
+        return status, result
+
+    def call_raw(self, method, path, cookie=None):
+        headers = {}
+        use_cookie = self.cookie if cookie is None else cookie
+        if use_cookie:
+            headers["Cookie"] = use_cookie
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request(method, path, headers=headers)
+        response = connection.getresponse()
+        status = response.status
+        content_type = response.getheader("Content-Type")
+        disposition = response.getheader("Content-Disposition")
+        body = response.read()
+        connection.close()
+        return status, content_type, disposition, body
+
+    def call_raw_with_headers(self, method, path, cookie=None):
+        headers = {}
+        use_cookie = self.cookie if cookie is None else cookie
+        if use_cookie:
+            headers["Cookie"] = use_cookie
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request(method, path, headers=headers)
+        response = connection.getresponse()
+        result = (
+            response.status,
+            dict(response.getheaders()),
+            response.read(),
+        )
+        connection.close()
+        return result
+
+
+class HouseDocumentHttpTests(HttpBase):
+    def make_ready_house(self, house_id="DOC-TEST"):
+        self.provide(house_id, postcode="D01 TEST")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?",
+                (house_id,),
+            )
+
+    def make_test_pdf(self, text):
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer)
+        pdf.drawString(72, 720, text)
+        pdf.save()
+        return buffer.getvalue()
+
+    def make_two_page_pdf(self):
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer)
+        pdf.drawString(72, 720, "First page content")
+        pdf.showPage()
+        pdf.drawString(72, 720, "Second page content")
+        pdf.save()
+        return buffer.getvalue()
+
+    def test_pdf_preview_renders_pages_and_rejects_missing_page(self):
+        self.make_ready_house()
+        status, uploaded = self.call_multipart(
+            "/api/house-documents",
+            "DOC-TEST",
+            "survey-plan.pdf",
+            self.make_two_page_pdf(),
+        )
+        self.assertEqual(status, 201, uploaded)
+
+        status, headers, preview = self.call_raw_with_headers(
+            "GET", f"/api/house-documents/{uploaded['id']}/preview?page=2"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["X-PDF-Page-Count"], "2")
+        self.assertTrue(preview.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        status, headers, body = self.call_raw_with_headers(
+            "GET", f"/api/house-documents/{uploaded['id']}/preview?page=3"
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("application/json", headers["Content-Type"])
+        self.assertIn("page does not exist", json.loads(body)["error"])
+
+    def test_surveyor_saves_annotated_copy_without_changing_original(self):
+        self.make_ready_house()
+        original_pdf = self.make_test_pdf("Original plan content")
+        status, uploaded = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "survey-plan.pdf", original_pdf
+        )
+        self.assertEqual(status, 201, uploaded)
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "survey-annotator",
+                "display_name": "Survey Annotator",
+                "pin": "234567",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "survey-annotator", "pin": "234567"},
+        )
+        self.assertEqual(status, 200)
+
+        annotations = [
+            {
+                "page": 1,
+                "tool": "pen",
+                "color": "#d93025",
+                "width": 0.004,
+                "points": [[0.2, 0.3], [0.5, 0.4]],
+            },
+            {
+                "page": 1,
+                "tool": "text",
+                "color": "#245fbd",
+                "font_size": 0.02,
+                "point": [0.2, 0.5],
+                "text": "Survey check",
+            },
+        ]
+        status, saved, _ = self.call(
+            "POST",
+            f"/api/house-documents/{uploaded['id']}/annotations",
+            {"annotations": annotations},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 201, saved)
+        self.assertEqual(saved["filename"], "survey-plan-annotated.pdf")
+
+        with server.connect_db() as db:
+            rows = db.execute(
+                """
+                SELECT filename, content FROM house_documents
+                WHERE house_id = 'DOC-TEST' ORDER BY id
+                """
+            ).fetchall()
+        self.assertEqual([row["filename"] for row in rows], [
+            "survey-plan.pdf",
+            "survey-plan-annotated.pdf",
+        ])
+        self.assertEqual(rows[0]["content"], original_pdf)
+        annotated = rows[1]["content"]
+        self.assertNotEqual(annotated, original_pdf)
+        self.assertIn("Survey check", PdfReader(BytesIO(annotated)).pages[0].extract_text())
+        with fitz.open(stream=annotated, filetype="pdf") as document:
+            self.assertTrue(document[0].get_drawings())
+
+    def test_pdf_annotation_validation_rejects_invalid_input(self):
+        self.make_ready_house()
+        status, uploaded = self.call_multipart(
+            "/api/house-documents",
+            "DOC-TEST",
+            "survey-plan.pdf",
+            self.make_test_pdf("Original plan content"),
+        )
+        self.assertEqual(status, 201, uploaded)
+        status, result, _ = self.call(
+            "POST",
+            f"/api/house-documents/{uploaded['id']}/annotations",
+            {"annotations": [{"page": 1, "tool": "pen", "color": "red"}]},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("invalid", result["error"].lower())
+        with server.connect_db() as db:
+            count = db.execute("SELECT COUNT(*) FROM house_documents").fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_share_pdf_appends_only_the_survey_note_on_a_separate_page(self):
+        self.make_ready_house()
+        original_pdf = self.make_test_pdf("Original plan content")
+        status, uploaded = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "survey-plan.pdf", original_pdf
+        )
+        self.assertEqual(status, 201, uploaded)
+        survey = {
+            "windows": [],
+            "doors": [],
+            "house_corners": [],
+            "notes": "Survey note to share on a separate page.\nSecond observation for the house.",
+        }
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET notes = 'Do not include this house note' "
+                "WHERE id = 'DOC-TEST'"
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('DOC-TEST', ?, ?, 'Admin One', '2026-10-21T10:00:00')
+                """,
+                (json.dumps(survey), survey["notes"]),
+            )
+
+        status, content_type, disposition, shared_pdf = self.call_raw(
+            "GET", f"/api/house-documents/{uploaded['id']}/share"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        shared_reader = PdfReader(BytesIO(shared_pdf))
+        self.assertEqual(len(shared_reader.pages), 2)
+        self.assertIn("Original plan content", shared_reader.pages[0].extract_text())
+        note_page = shared_reader.pages[1].extract_text()
+        self.assertIn("House survey note", note_page)
+        self.assertIn("BRUSNA  |  MATERIAL TRACKER", note_page)
+        self.assertIn("SURVEY OBSERVATIONS", note_page)
+        self.assertIn("DOC-TEST", note_page)
+        self.assertIn("survey-plan.pdf", note_page)
+        self.assertIn("PAGE 1", note_page)
+        self.assertIn("Survey note to share on a separate page.", note_page)
+        self.assertIn("Second observation for the house.", note_page)
+        self.assertGreaterEqual(note_page.count("•"), 2)
+        self.assertNotIn("Do not include this house note", note_page)
+
+    def test_share_pdf_requires_a_saved_survey_note(self):
+        self.make_ready_house()
+        status, uploaded = self.call_multipart(
+            "/api/house-documents",
+            "DOC-TEST",
+            "survey-plan.pdf",
+            self.make_test_pdf("Original plan content"),
+        )
+        self.assertEqual(status, 201)
+        status, _, _, response = self.call_raw(
+            "GET", f"/api/house-documents/{uploaded['id']}/share"
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Save a survey note", response.decode("utf-8"))
+
+    def test_share_pdf_returns_clear_error_for_unreadable_uploaded_pdf(self):
+        self.make_ready_house()
+        status, uploaded = self.call_multipart(
+            "/api/house-documents",
+            "DOC-TEST",
+            "broken-plan.pdf",
+            b"%PDF-1.4\nThis is not a complete PDF.\n%%EOF",
+        )
+        self.assertEqual(status, 201)
+        survey = {"windows": [], "doors": [], "house_corners": [], "notes": "Survey note"}
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('DOC-TEST', ?, 'Survey note', 'Admin One', '2026-10-21T10:00:00')
+                """,
+                (json.dumps(survey),),
+            )
+        status, content_type, _, response = self.call_raw(
+            "GET", f"/api/house-documents/{uploaded['id']}/share"
+        )
+        self.assertEqual(status, 422)
+        self.assertIn("application/json", content_type)
+        self.assertIn("could not be read as a PDF", response.decode("utf-8"))
+
+    def test_admin_and_surveyor_can_upload_list_and_view_ready_house_pdfs(self):
+        self.make_ready_house()
+        pdf_data = b"%PDF-1.4\nDemo survey plan\n%%EOF"
+
+        status, uploaded = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "survey-plan.pdf", pdf_data
+        )
+        self.assertEqual(status, 201, uploaded)
+        document_id = uploaded["id"]
+
+        status, result, _ = self.call("GET", "/api/house-documents?house_id=DOC-TEST")
+        self.assertEqual(status, 200)
+        self.assertEqual(result["documents"][0]["filename"], "survey-plan.pdf")
+        self.assertEqual(result["documents"][0]["size_bytes"], len(pdf_data))
+
+        status, content_type, disposition, body = self.call_raw(
+            "GET", f"/api/house-documents/{document_id}"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("inline", disposition)
+        self.assertEqual(body, pdf_data)
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "survey-doc-user",
+                "display_name": "Survey Document User",
+                "pin": "234567",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "survey-doc-user", "pin": "234567"},
+        )
+        self.assertEqual(status, 200)
+
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-documents?house_id=DOC-TEST",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["documents"][0]["id"], document_id)
+        status, _, _, body = self.call_raw(
+            "GET",
+            f"/api/house-documents/{document_id}",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, pdf_data)
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "employee-doc-user",
+                "display_name": "Employee Document User",
+                "pin": "345678",
+                "role": "employee",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, employee_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "employee-doc-user", "pin": "345678"},
+        )
+        self.assertEqual(status, 200)
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-documents?house_id=DOC-TEST",
+            cookie=employee_cookie,
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("Surveyor access", result["error"])
+
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-documents?house_id=DOC-TEST",
+            cookie="",
+        )
+        self.assertEqual(status, 401)
+
+    def test_uploaded_documents_are_not_available_after_house_leaves_ready_status(self):
+        self.make_ready_house()
+        status, uploaded = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "survey-plan.pdf", b"%PDF-1.4\n"
+        )
+        self.assertEqual(status, 201)
+        with server.connect_db() as db:
+            db.execute("UPDATE provided_houses SET ready_for_start = 0 WHERE id = 'DOC-TEST'")
+        status, _, _ = self.call("GET", "/api/house-documents?house_id=DOC-TEST")
+        self.assertEqual(status, 404)
+        status, _, _, _ = self.call_raw(
+            "GET", f"/api/house-documents/{uploaded['id']}"
+        )
+        self.assertEqual(status, 404)
+
+    def test_document_upload_rejects_non_pdf_and_non_ready_house(self):
+        self.make_ready_house()
+        status, result = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "plan.txt", b"%PDF-1.4\n"
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("PDF", result["error"])
+
+        status, result = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "invalid.pdf", b"not a pdf"
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("valid PDF", result["error"])
+
+        self.provide("NOT-READY")
+        status, result = self.call_multipart(
+            "/api/house-documents", "NOT-READY", "plan.pdf", b"%PDF-1.4\n"
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("Ready house", result["error"])
+
+    def test_document_upload_enforces_per_house_file_limit(self):
+        self.make_ready_house()
+        with server.connect_db() as db:
+            db.executemany(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES ('DOC-TEST', ?, ?, 9, 'Admin One', '2026-01-01T00:00:00')
+                """,
+                [(f"existing-{index}.pdf", b"%PDF-1.4") for index in range(25)],
+            )
+        status, result = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "extra.pdf", b"%PDF-1.4\n"
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("maximum of 25", result["error"])
+
+    def test_document_upload_enforces_size_limit(self):
+        self.make_ready_house()
+        with patch.object(server, "HOUSE_DOCUMENT_MAX_BYTES", 8):
+            status, result = self.call_multipart(
+                "/api/house-documents", "DOC-TEST", "large.pdf", b"%PDF-1.4\n"
+            )
+        self.assertEqual(status, 400)
+        self.assertIn("8 MB", result["error"])
+
+
+class SurveyorHouseNotesTests(HttpBase):
+    def setUp(self):
+        super().setUp()
+        self.provide("NOTES-READY", postcode="D01 TEST")
+        self.provide("NOTES-PENDING", postcode="D02 TEST")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'NOTES-READY'"
+            )
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "house-notes-surveyor",
+                "display_name": "House Notes Surveyor",
+                "pin": "456789",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, self.surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "house-notes-surveyor", "pin": "456789"},
+        )
+        self.assertEqual(status, 200)
+
+    def test_surveyor_can_save_notes_only_for_ready_houses(self):
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-notes",
+            {"house_id": "NOTES-READY", "notes": "Call before entering"},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["notes"], "Call before entering")
+        with server.connect_db() as db:
+            saved_notes = db.execute(
+                "SELECT notes FROM provided_houses WHERE id = 'NOTES-READY'"
+            ).fetchone()["notes"]
+        self.assertEqual(saved_notes, "Call before entering")
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-notes",
+            {"house_id": "NOTES-PENDING", "notes": "Not permitted yet"},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("ready for start", result["error"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-notes",
+            {"house_id": "NOTES-READY", "notes": "x" * 2001},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("2,000 characters", result["error"])
+
+    def test_surveyor_can_save_a_separate_survey_note_without_losing_measurements(self):
+        existing_survey = {
+            "windows": [{"w": 1.2, "h": 1.4, "qty": 2}],
+            "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
+            "house_corners": [5.5],
+            "notes": "",
+        }
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('NOTES-READY', ?, '', 'Previous Surveyor', '2026-10-20T10:00:00')
+                """,
+                (json.dumps(existing_survey),),
+            )
+        status, result, _ = self.call(
+            "POST",
+            "/api/survey-notes",
+            {"house_id": "NOTES-READY", "notes": "Survey access requires ladder."},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["survey"]["notes"], "Survey access requires ladder.")
+        self.assertEqual(result["updated_by"], "House Notes Surveyor")
+        self.assertEqual(result["survey"]["windows"], existing_survey["windows"])
+        with server.connect_db() as db:
+            row = db.execute(
+                "SELECT data, notes, updated_by FROM house_surveys WHERE house_id = 'NOTES-READY'"
+            ).fetchone()
+        saved_survey = json.loads(row["data"])
+        self.assertEqual(row["notes"], "Survey access requires ladder.")
+        self.assertEqual(row["updated_by"], "House Notes Surveyor")
+        self.assertEqual(saved_survey["doors"], existing_survey["doors"])
+        self.assertEqual(saved_survey["house_corners"], existing_survey["house_corners"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/survey-notes",
+            {"house_id": "NOTES-READY", "notes": "x" * 2001},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("2,000 characters", result["error"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/survey-notes",
+            {"house_id": "NOTES-PENDING", "notes": "Not ready"},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("ready for start", result["error"])
 
 
 class ProvidedHouseSummaryTests(FlowBase):
@@ -436,6 +999,17 @@ class EndToEndFlowTests(HttpBase):
         details = {"id": house["id"], "postcode": house["postcode"], "owner_name": house["owner_name"]}
         self.assertEqual(self.call("POST", "/api/houses", details)[0], 409)
         self.assertEqual(self.call("POST", "/api/houses/plan", {"id": house["id"], "ready": True})[0], 200)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-survey",
+                {
+                    "house_id": house["id"],
+                    "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+                },
+            )[0],
+            200,
+        )
         status, _, _ = self.call("POST", "/api/houses", details)
         self.assertEqual(status, 201)
         _, found, _ = self.call("GET", "/api/calculator/houses?q=WH2140")
@@ -1283,6 +1857,17 @@ class ReadyForStartAndNotesTests(HttpBase):
                 "WHERE id = 'WH-ACTIVE'"
             )
         self.plan({"id": "WH-ACTIVE", "ready": True})
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-survey",
+                {
+                    "house_id": "WH-ACTIVE",
+                    "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+                },
+            )[0],
+            200,
+        )
 
         status, _, _ = self.call(
             "POST",
@@ -1319,7 +1904,7 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(self.plan({"id": "WH2", "notes": "x" * 2001})[0], 400)
         self.assertEqual(self.plan({"id": "NOPE", "notes": "a"})[0], 404)
 
-    def test_only_ready_houses_can_be_activated(self):
+    def test_provided_house_needs_ready_status_and_survey_before_activation(self):
         status, result, _ = self.call("POST", "/api/houses", {"id": "WH1"})
         self.assertEqual(status, 409)
         self.assertIn("ready for start", result["error"])
@@ -1331,6 +1916,19 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 409)
         self.assertEqual(self.summary()["active"], 0)
         self.plan({"id": "WH1", "ready": True})
+        status, result, _ = self.call("POST", "/api/houses", {"id": "WH1"})
+        self.assertEqual(status, 409)
+        self.assertIn("Surveyor review is required", result["error"])
+        self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 409)
+        status, survey_result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            {
+                "house_id": "WH1",
+                "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+            },
+        )
+        self.assertEqual(status, 200, survey_result)
         self.assertEqual(self.call("POST", "/api/houses", {"id": "WH1"})[0], 201)
         self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 201)
 
@@ -1488,7 +2086,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('class="team-house-counts"', app_js)
     def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
         self.assertIn('${!isReady ? `<button class="text-button plan-ready-toggle"', APP_JS)
-        self.assertIn('${h.survey ? "Review survey" : "Enter survey measurements"}', APP_JS)
+        self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
 
     def test_plan_lists_refresh_without_flashing_loading_state(self):
         body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]
@@ -1501,6 +2099,13 @@ class UiWiringTests(unittest.TestCase):
     def test_snags_are_clickable_and_styled_red_and_green(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn("snag-row", APP_JS)
+        ready_cards = APP_JS[
+            APP_JS.index("async function renderNotStartedHouses"):
+            APP_JS.index("function openHouseNote")
+        ]
+        self.assertNotIn("snagsHtml(h)", ready_cards)
+        self.assertIn('house.status === "ready" || house.status === "not_started"', APP_JS)
+        self.assertIn('id="house-detail-snag-section"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
         self.assertIn(".snag-row.done .snag-text", css)
         self.assertIn("line-through", css)
         self.assertIn('class="house-body" data-house-id="${escapeHtml(house.id)}"', APP_JS)
@@ -1534,6 +2139,20 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('get("house")', CALC_HTML)
         self.assertIn("Assigned to house</button>", CALC_HTML)
         self.assertNotIn(">Save to house<", CALC_HTML)
+        action_bar = CALC_HTML[
+            CALC_HTML.index('<section class="card action-bar">'):
+            CALC_HTML.index("</section>", CALC_HTML.index('<section class="card action-bar">'))
+        ]
+        self.assertIn("Print / Save PDF", action_bar)
+        self.assertIn(
+            ".calculator-main .action-bar .actions{display:flex;width:100%;flex:0 0 100%;justify-content:flex-start",
+            CALC_HTML,
+        )
+        self.assertIn(".calculator-main .action-bar #saveToHouse{background:#218653}", CALC_HTML)
+        self.assertEqual(action_bar.count("<button"), 2)
+        self.assertNotIn("Calculate", action_bar)
+        self.assertNotIn("Create email request", action_bar)
+        self.assertIn('field.addEventListener(field.tagName==="SELECT"?"change":"input",calc)', CALC_HTML)
 
     def test_survey_window_quantity_uses_a_dropdown(self):
         survey_row = APP_JS[APP_JS.index("function surveyRow"):APP_JS.index("function openHouseSurvey")]
@@ -1573,15 +2192,21 @@ class UiWiringTests(unittest.TestCase):
     def test_saved_survey_is_marked_and_has_a_review_action(self):
         self.assertIn("function surveyStatusBadge(survey)", APP_JS)
         self.assertIn('class="status-pill survey-complete">Survey recorded', APP_JS)
-        self.assertIn('${h.survey ? "Review survey" : "Enter survey measurements"}', APP_JS)
+        self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
         self.assertIn('${h.survey ? "survey-reviewed" : "survey-needed"}', APP_JS)
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(".house-card .house-card-actions .house-survey-open.survey-reviewed::before", css)
         self.assertIn(".status-pill.survey-complete", css)
 
     def test_ready_house_actions_have_distinct_accessible_colors(self):
-        for action in ("seai-activate", "house-survey-open", "house-note-open"):
+        for action in ("seai-activate", "house-survey-open"):
             self.assertIn(f'class="text-button {action}', APP_JS)
+        ready_renderer = APP_JS[
+            APP_JS.index("async function renderNotStartedHouses"):
+            APP_JS.index("function openHouseNote")
+        ]
+        self.assertNotIn("house-note-open", ready_renderer)
+        self.assertNotIn("house-checklist-open", ready_renderer)
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         for color in ("seai-activate", "house-survey-open.survey-needed", "house-survey-open.survey-reviewed", "house-note-open", "house-snags-open", "house-record-movement", "house-finish-toggle", "house-open"):
             self.assertIn(f".house-card .house-card-actions .{color}", css)
@@ -1594,35 +2219,10 @@ class UiWiringTests(unittest.TestCase):
             APP_JS.index("function openHouseNote")
         ]
         self.assertIn('const isMapTestHouse = h.source === "map_test"', ready_renderer)
-        self.assertIn("const cardNote = houseCardNote(h)", ready_renderer)
-        card_note_helper = APP_JS[
-            APP_JS.index("function houseCardNote"):
-            APP_JS.index("function findPlanHouse")
-        ]
-        self.assertIn('if (house.source !== "map_test") return notes', card_note_helper)
-        self.assertIn("synthetic coordinates do not identify the Eircode locatio", card_note_helper)
-        self.assertIn("return notes", card_note_helper)
-        result = subprocess.run(
-            [
-                "node",
-                "-e",
-                card_note_helper
-                + '\nconsole.log(JSON.stringify(['
-                + 'houseCardNote({source:"map_test",notes:"TEST ONLY: synthetic coordinates do not identify the Eircode location."}),'
-                + 'houseCardNote({source:"map_test",notes:"TEST ONLY: synthetic coordinates do not identify the Eircode location.Site access note"}),'
-                + 'houseCardNote({source:"map_test",notes:"Site access note"}),'
-                + 'houseCardNote({source:"government",notes:"Normal house note"})'
-                + "]));",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            json.loads(result.stdout),
-            ["", "Site access note", "Site access note", "Normal house note"],
-        )
+        self.assertNotIn("noteHtml(cardNote)", ready_renderer)
+        self.assertNotIn("Pre-start checklist", ready_renderer)
+        self.assertNotIn("house-note-open", ready_renderer)
+        self.assertNotIn("Edit checklist", ready_renderer)
         self.assertIn("isMapTestHouse ? \"\" : h.owner_name", ready_renderer)
         self.assertIn("isMapTestHouse ? \"\" : h.address", ready_renderer)
         self.assertIn(
@@ -1634,68 +2234,54 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-body { flex: 1 1 auto;", css)
         self.assertIn("max-height: 280px; overflow-x: hidden; overflow-y: auto;", css)
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions { height: auto;", css)
-        self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions .seai-activate { grid-column: 1 / -1;", css)
+        self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions .seai-activate { grid-column: auto;", css)
+        self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions .text-button { height: 39px; min-height: 39px;", css)
         self.assertIn(".house-grid.house-grid-ready > .house-plan-ready .house-card-actions { flex: 0 0 auto; height: auto; min-height: 0; max-height: none; overflow: visible; }", css)
 
-    def test_not_started_queue_cards_match_design_and_scroll_overflow_content(self):
+    def test_not_started_queue_cards_fit_their_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(
             'class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}"',
             APP_JS,
         )
         self.assertIn(
-            '<div class="house-body"${!isReady ? \' tabindex="0" role="region" aria-label="House details and pre-start checklist"\' : ""}>',
+            '<div class="house-body" data-house-id="${id}"${!isReady ? \' tabindex="0" role="region" aria-label="House status"\' : ""}>',
             APP_JS,
         )
-        self.assertIn('${isReady ? `<div class="house-checklist-card">', APP_JS)
-        self.assertIn(".house-grid.house-grid-compact .house-plan-pending { height: 340px;", css)
-        self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-body { flex: 1 1 0;", css)
-        self.assertIn("overflow-y: auto; padding: 0 7px 10px 0;", css)
-        self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-card-actions { height: auto;", css)
+        self.assertIn('id="surveyor-work-plan-form"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        self.assertIn("function updateHouseChecklistStatus(event)", APP_JS)
+        self.assertIn("class=\"house-checklist-status\"", APP_JS)
         self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-card-actions .plan-ready-toggle[data-ready=\"true\"] { grid-column: 1 / -1;", css)
-        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: auto; align-items: start; }", css)
-        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending { height: auto; min-height: 0;", css)
-        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-body { flex: 0 1 auto; max-height: 180px;", css)
-        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-card-actions { flex: 0 0 auto;", css)
-        self.assertIn(".house-card .house-top,\n.house-card .house-body,\n.house-card .house-card-actions { scrollbar-color:", css)
-        self.assertIn(".house-card .house-body::-webkit-scrollbar-thumb:hover", css)
+        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: auto; }", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending { height: auto; min-height: 0; padding: 10px; }", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-body { flex: 0 1 auto; max-height: none; overflow: visible; padding: 0; }", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-card-actions { flex: 0 0 auto; height: auto;", css)
 
-    def test_house_cards_keep_one_shape_across_status_tabs(self):
+    def test_house_cards_size_to_content_across_status_tabs(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(
-            ".house-grid.house-grid-ready,\n.house-grid.house-grid-compact { grid-auto-rows: 460px;",
-            css,
-        )
-        self.assertIn(
-            ".house-grid > .house-card { height: 460px; min-height: 460px;",
-            css,
-        )
-        self.assertIn(
-            ".house-grid.house-grid-ready > .house-plan-ready,\n.house-grid.house-grid-compact > .house-plan-pending { height: 460px; min-height: 460px; }",
-            css,
-        )
-        self.assertIn(
-            ".house-grid > .house-card .house-body { flex: 1 1 0; min-height: 0; max-height: none; overflow-x: hidden; overflow-y: auto;",
-            css,
-        )
-        self.assertIn(
-            ".house-grid > .house-card .house-card-actions { display: grid; flex: 0 0 174px; height: 174px;",
+            ".house-grid.house-grid-ready { grid-auto-rows: auto; }\n.house-grid.house-grid-ready > .house-plan-ready { height: auto; min-height: 0; }\n.house-grid.house-grid-compact { grid-auto-rows: auto; }",
             css,
         )
 
     def test_active_house_card_shows_content_without_nested_scroll_area(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
-        self.assertIn(".house-card:has(.house-body) { min-height: 290px; height: auto;", css)
-        self.assertIn(".house-body { flex: 0 1 auto; min-height: 0; overflow: visible;", css)
-        self.assertIn(".house-grid { grid-auto-rows: 500px; align-items: stretch; }", css)
-        self.assertIn(".house-card:has(.house-body) { height: 500px; min-height: 500px; }", css)
-        self.assertIn(".house-card .house-body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto;", css)
-        self.assertIn(".house-card .house-card-actions { display: grid; height: 198px; min-height: 198px; max-height: 198px;", css)
-        self.assertIn("list.classList.toggle(\"house-grid-compact\", !isReady)", APP_JS)
-        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: 340px; }", css)
-        self.assertIn(".house-grid.house-grid-compact .house-pending { height: 380px; min-height: 380px; }", css)
-        self.assertIn(".house-grid.house-grid-compact .house-pending .house-card-actions { height: auto; min-height: 0; max-height: none; grid-template-rows: auto; }", css)
-        self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", css)
+        active_card_layout = css[css.index("#houses-list:not(.house-grid-ready):not(.house-grid-compact) {"):]
+        active_card_layout = active_card_layout[:active_card_layout.index("\n}")]
+        active_actions = css[
+            css.index("#houses-list:not(.house-grid-ready):not(.house-grid-compact) > .house-active .house-card-actions {"):
+        ]
+        active_actions = active_actions[:active_actions.index("\n}")]
+        self.assertIn("grid-auto-rows: auto;", active_card_layout)
+        self.assertIn("height: auto;", css[css.index("#houses-list:not(.house-grid-ready):not(.house-grid-compact) > .house-active {"):])
+        self.assertIn("max-height: 280px;", css)
+        self.assertIn("height: auto;", active_actions)
+        self.assertIn("max-height: none;", active_actions)
+        self.assertIn("overflow: visible;", active_actions)
+        self.assertIn(
+            "#houses-list:not(.house-grid-ready):not(.house-grid-compact) > .house-active .house-map-open {\n  grid-column: 1 / -1;",
+            css,
+        )
         self.assertIn('class="house-card-actions"', APP_JS)
         self.assertIn('class="stage-switch" role="group" aria-label="Stage"', APP_JS)
         self.assertIn('.house-card .house-card-actions .stage-btn[data-stage="1"].on', css)
@@ -1734,7 +2320,8 @@ class UiWiringTests(unittest.TestCase):
             APP_JS.index("async function renderNotStartedHouses"):
             APP_JS.index("function openHouseNote")
         ]
-        self.assertIn('${isReady ? noteHtml(h.notes) : ""}', not_started_html)
+        self.assertNotIn("noteHtml(h.notes)", not_started_html)
+        self.assertNotIn("Pre-start checklist", not_started_html)
         not_started_actions = not_started_html[
             not_started_html.index('<div class="house-card-actions">'):
         ]

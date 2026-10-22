@@ -130,6 +130,73 @@
               <div class="empty-state card hidden" id="teams-no-results"><strong>No matching teams</strong><p>Try another team name.</p></div>
             </section>
           </div>
+          <section id="surveyor-room" class="hidden" aria-labelledby="house-survey-title">
+            <button class="text-button back-button" id="back-from-surveyor-room" type="button">← Back to houses</button>
+            <div class="page-heading house-detail-heading">
+              <div class="house-detail-title-group">
+                <div class="eyebrow">PRE-START HOUSE SURVEY</div>
+                <div class="house-detail-title-line"><h1 id="house-survey-title">Surveyor room</h1><span id="survey-room-status" class="status-pill survey-not-surveyed">Not surveyed</span></div>
+                <p class="page-subtitle" id="survey-room-subtitle"></p>
+              </div>
+            </div>
+            <nav class="survey-room-nav" aria-label="Survey room sections">
+              <a href="#survey-room-work-plan">1 · Work plan</a>
+              <a href="#survey-room-measurements">2 · Measurements</a>
+              <a href="#survey-room-documents">3 · PDFs</a>
+              <a href="#surveyor-house-notes-form">4 · Notes</a>
+            </nav>
+            <article class="card survey-room-summary-card">
+              <div class="card-heading"><div><h2>House survey record</h2><p>House details, survey status, and saved survey notes.</p></div></div>
+              <div id="survey-room-summary" class="survey-room-summary"></div>
+              <form id="surveyor-house-notes-form" class="surveyor-house-notes-form">
+                <label class="field full">House notes<textarea name="notes" rows="3" maxlength="2000" placeholder="Add access details or other notes for this house"></textarea></label>
+                <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Visible in the house record.</small><button class="button button-secondary" type="submit">Save house notes</button></div>
+              </form>
+              <form id="surveyor-survey-notes-form" class="surveyor-house-notes-form survey-notes-form">
+                <label class="field full">Survey note<textarea name="notes" rows="3" maxlength="2000" placeholder="Record survey observations to include with shared PDFs"></textarea><small class="survey-note-share-hint">This note is separate from House notes and is appended to shared PDFs.</small></label>
+                <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Save the note before sharing a PDF.</small><button class="button button-secondary" type="submit">Save survey note</button></div>
+              </form>
+            </article>
+            <article class="card survey-room-work-plan-card" id="survey-room-work-plan">
+              <div class="card-heading"><div><h2>Pre-start work plan</h2><p>For each trade, choose whether work is required and add any helpful details. The Active house checklist will start required work as not done.</p></div></div>
+              <form id="surveyor-work-plan-form" class="surveyor-work-plan-form">
+                <div class="work-plan-row">
+                  <label class="field">Scaffolding<select name="scaffolding_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                  <label class="field">Work details<textarea name="scaffolding_notes" rows="2" maxlength="1000" placeholder="Optional details, such as access or setup"></textarea></label>
+                </div>
+                <div class="work-plan-row">
+                  <label class="field">ESB work<select name="esb_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                  <label class="field">Work details<textarea name="esb_notes" rows="2" maxlength="1000" placeholder="Optional details about the ESB work"></textarea></label>
+                </div>
+                <div class="work-plan-row">
+                  <label class="field">Plumber work<select name="plumber_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                  <label class="field">Work details<textarea name="plumber_notes" rows="2" maxlength="1000" placeholder="Optional details about the plumber work"></textarea></label>
+                </div>
+                <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Requirement choices and work details save automatically. You can also save manually.</small><button class="button button-secondary" type="submit">Save work plan</button></div>
+              </form>
+            </article>
+            <article class="card survey-room-documents-card" id="survey-room-documents">
+              <div class="card-heading"><div><h2>Survey documents</h2><p>PDF plans and documents shared with the surveyor. Share adds the saved survey note on a separate final page.</p></div></div>
+              <form id="house-document-form" class="survey-document-upload">
+                <label class="file-picker"><input id="house-document-file" type="file" accept=".pdf,application/pdf" required><span>Choose PDF</span></label>
+                <span id="house-document-file-name" class="file-name">No file selected</span>
+                <button class="button button-secondary" type="submit">Upload PDF</button>
+                <small>PDF only · Maximum 8 MB · Up to 25 files per house</small>
+              </form>
+              <div id="house-documents-list" class="house-documents-list" aria-live="polite"></div>
+            </article>
+            <article class="card survey-room-measurements-card" id="survey-room-measurements">
+              <div class="card-heading"><div><h2>Survey measurements</h2><p>Measurements are available to the materials calculator.</p></div></div>
+              <form id="house-survey-form" class="survey-form survey-room-form">
+                <p class="helper-text">Enter measurements once. Window corner lengths are calculated from each window's width and two sides (2 × height).</p>
+                <h3>Windows <button class="text-button survey-add-row" type="button" data-survey-list="windows">+ Add window size</button></h3><div id="survey-windows" class="survey-rows"></div>
+                <h3>Doors <button class="text-button survey-add-row" type="button" data-survey-list="doors">+ Add door size</button></h3><div id="survey-doors" class="survey-rows"></div>
+                <div class="form-grid survey-corners"><div><h3>House corner lengths <button class="text-button survey-add-row" type="button" data-survey-list="house_corners">+ Add length</button></h3><div id="survey-house_corners" class="survey-rows"></div></div></div>
+                <div id="survey-meta" class="helper-text"></div>
+                <div class="dialog-actions"><button class="button button-primary" type="submit">Save survey</button></div>
+              </form>
+            </article>
+          </section>
           <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
             <div class="page-heading houses-list-toolbar">
               <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Explore houses with approved locations. Select a marker or list entry to review its status and actions.</p><div id="house-map-summary" class="house-map-summary" aria-live="polite"></div></div>
@@ -200,15 +267,15 @@
               <div id="house-detail-stock" class="house-detail-stock"></div>
             </article>
             <article class="card house-detail-records-card" id="house-detail-records-card">
-              <div class="card-heading"><div><h2>Notes &amp; snag history</h2><p>House notes, survey notes, and both open and completed snags.</p></div></div>
+              <div class="card-heading"><div><h2 id="house-detail-records-title">Notes &amp; snag history</h2><p>House notes, survey notes, and both open and completed snags.</p></div></div>
               <div class="house-detail-records-grid">
                 <section><h3>Notes</h3><div id="house-detail-notes"></div></section>
-                <section><h3>Snag history</h3><div id="house-detail-snags"></div></section>
+                <section id="house-detail-snag-section"><h3>Snag history</h3><div id="house-detail-snags"></div></section>
               </div>
             </article>
             <article class="card house-history-card" id="house-history-card">
               <div class="card-heading"><div><h2>Complete movement history</h2><p>Includes records where this house was either the source or destination.</p></div></div>
-              <div class="table-wrap"><table><thead><tr><th>Date</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>Responsible</th><th>Notes</th></tr></thead><tbody id="house-movement-history"></tbody></table></div>
+              <div class="table-wrap"><table><thead><tr><th>Movement date / recorded time</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>Responsible</th><th>Notes</th></tr></thead><tbody id="house-movement-history"></tbody></table></div>
               <div id="house-history-empty" class="empty-state hidden"><div class="empty-symbol">↔</div><strong>No movements recorded yet</strong><p>This house's delivery, return, use, and transfer history will appear here.</p></div>
             </article>
           </section>
@@ -218,12 +285,68 @@
           <div class="page-heading"><div><div class="eyebrow">ACCOUNTABILITY &amp; HISTORY</div><h1>Movements</h1><p class="page-subtitle">Search all recorded movements by material, house, owner, employee, date or team.</p></div><button class="button button-primary" id="new-movement">＋ Record movement</button></div>
           <article class="card">
             <div class="card-heading"><div><h2>Movement history</h2><p>Search returns every matching record</p></div><label class="search-box"><span>⌕</span><input id="movement-search" type="search" placeholder="Search history" aria-label="Search movement history"></label></div>
-            <div class="table-wrap"><table><thead><tr><th>Date</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>House / owner</th><th>Responsible</th></tr></thead><tbody id="movement-table"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Movement date / recorded time</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>House / owner</th><th>Responsible</th></tr></thead><tbody id="movement-table"></tbody></table></div>
             <div class="empty-state hidden" id="movements-empty"><div class="empty-symbol">↔</div><strong>No movements recorded yet</strong><p>Start a ledger entry to keep each material movement accountable.</p><button class="button button-primary" data-goto="movements" id="empty-record-movement">Record first movement</button></div>
           </article>
         </section>
       </main>
     </div>
+
+    <dialog id="house-document-share-dialog" class="dialog house-document-share-dialog">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">SHARE SURVEY PDF</div><h2 id="house-document-share-title">Prepared PDF</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close">×</button>
+        </div>
+        <p id="house-document-share-description" class="page-subtitle">The original PDF is followed by a separate page with the saved survey note. If this browser cannot attach files to the app you choose, the combined PDF will download for you to attach manually.</p>
+        <div class="dialog-actions">
+          <button id="house-document-share-send" class="button button-primary" type="button">Share PDF…</button>
+          <button id="house-document-share-email" class="button button-secondary" type="button">Email PDF</button>
+          <button id="house-document-share-whatsapp" class="button button-secondary" type="button">WhatsApp PDF</button>
+          <button id="house-document-share-download" class="button button-secondary" type="button">Download only</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="pdf-annotator-dialog" class="pdf-annotator-dialog">
+      <div class="pdf-annotator-shell">
+        <header class="pdf-annotator-header">
+          <div class="pdf-annotator-title"><span class="eyebrow">SURVEY PDF</span><h2 id="pdf-annotator-title">Annotate PDF</h2></div>
+          <button class="icon-button" id="pdf-annotator-close" type="button" aria-label="Close PDF annotator">×</button>
+        </header>
+        <div class="pdf-annotator-toolbar" role="toolbar" aria-label="PDF annotation tools">
+          <div class="pdf-annotator-tool-group" aria-label="Drawing tools">
+            <button class="pdf-tool-button active" type="button" data-pdf-tool="pen" aria-pressed="true">Pen</button>
+            <button class="pdf-tool-button" type="button" data-pdf-tool="highlighter" aria-pressed="false">Highlight</button>
+            <button class="pdf-tool-button" type="button" data-pdf-tool="text" aria-pressed="false">Text note</button>
+          </div>
+          <label class="pdf-annotator-color">Colour <select id="pdf-annotator-color" aria-label="Ink colour"><option value="#d93025">Red</option><option value="#245fbd">Blue</option><option value="#18804b">Green</option><option value="#e1aa00">Yellow</option><option value="#202a33">Black</option></select></label>
+          <label class="pdf-annotator-size">Size <select id="pdf-annotator-size" aria-label="Pen size"><option value="1.5">Fine</option><option value="2.5" selected>Medium</option><option value="4">Thick</option><option value="6">Extra thick</option></select></label>
+          <button class="button button-secondary pdf-annotator-undo" id="pdf-annotator-undo" type="button" disabled>Undo</button>
+          <div class="pdf-annotator-zoom" role="group" aria-label="PDF zoom">
+            <button class="button button-secondary" id="pdf-annotator-zoom-out" type="button" aria-label="Zoom out">−</button>
+            <span id="pdf-annotator-zoom-level" aria-live="polite">100%</span>
+            <button class="button button-secondary" id="pdf-annotator-zoom-in" type="button" aria-label="Zoom in">+</button>
+            <button class="button button-secondary pdf-annotator-zoom-fit" id="pdf-annotator-zoom-fit" type="button">Fit</button>
+          </div>
+          <div class="pdf-annotator-pages"><button class="button button-secondary" id="pdf-annotator-previous" type="button" aria-label="Previous page">‹</button><span id="pdf-annotator-page-count">Page 1 of 1</span><button class="button button-secondary" id="pdf-annotator-next" type="button" aria-label="Next page">›</button></div>
+          <button class="button button-primary pdf-annotator-save" id="pdf-annotator-save" type="button" disabled>Save annotated copy</button>
+        </div>
+        <div class="pdf-annotator-text-panel hidden" id="pdf-annotator-text-panel">
+          <label for="pdf-annotator-text">Text to place on the page</label>
+          <input id="pdf-annotator-text" type="text" maxlength="240" placeholder="Type a short note, then tap the page">
+          <span>Tap the page to place your note.</span>
+        </div>
+        <p class="pdf-annotator-help" id="pdf-annotator-help">Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.</p>
+        <div class="pdf-annotator-error hidden" id="pdf-annotator-error" role="alert"></div>
+        <main class="pdf-annotator-viewport" id="pdf-annotator-viewport" aria-label="PDF page annotation area">
+          <div class="pdf-page-surface" id="pdf-page-surface">
+            <img id="pdf-annotator-image" alt="Current survey PDF page">
+            <canvas id="pdf-annotator-canvas" aria-label="Draw or place notes on this PDF page"></canvas>
+          </div>
+        </main>
+      </div>
+    </dialog>
 
     <dialog id="house-snag-dialog" class="dialog snag-dialog">
       <div class="dialog-content">
@@ -253,19 +376,6 @@
       </form>
     </dialog>
 
-    <dialog id="house-survey-dialog" class="dialog">
-      <form id="house-survey-form" class="survey-form">
-        <div class="dialog-heading"><div><div class="eyebrow">PRE-START HOUSE SURVEY</div><h2 id="house-survey-title">Survey measurements</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">&times;</button></div>
-        <p class="helper-text">Enter measurements once. The calculator will use these values automatically when this house is selected. Window corner lengths are calculated from each window's width and two sides (2 x height).</p>
-        <h3>Windows <button class="text-button survey-add-row" type="button" data-survey-list="windows">+ Add window size</button></h3><div id="survey-windows" class="survey-rows"></div>
-        <h3>Doors <button class="text-button survey-add-row" type="button" data-survey-list="doors">+ Add door size</button></h3><div id="survey-doors" class="survey-rows"></div>
-        <div class="form-grid survey-corners"><div><h3>House corner lengths <button class="text-button survey-add-row" type="button" data-survey-list="house_corners">+ Add length</button></h3><div id="survey-house_corners" class="survey-rows"></div></div></div>
-        <label class="field full">Survey note<textarea name="notes" rows="3" maxlength="2000" placeholder="Access, measurement assumptions or other survey notes"></textarea></label>
-        <div id="survey-meta" class="helper-text"></div>
-        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save survey</button></div>
-      </form>
-    </dialog>
-
     <dialog id="house-checklist-dialog" class="dialog house-checklist-dialog">
       <form id="house-checklist-form">
         <div class="dialog-heading">
@@ -279,10 +389,10 @@
           <label class="checklist-option"><input type="radio" name="scaffolding_status" value="not_necessary" required><span>Not necessary</span></label>
         </fieldset>
         <fieldset class="checklist-group">
-          <legend>ESB cable unclipped?</legend>
-          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="yes" required><span>Yes</span></label>
-          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="no" required><span>No</span></label>
-          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="not_esb" required><span>Not ESB</span></label>
+          <legend>ESB work</legend>
+          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="yes" required><span>Done</span></label>
+          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="no" required><span>Not done</span></label>
+          <label class="checklist-option"><input type="radio" name="esb_unclipped" value="not_esb" required><span>Not necessary</span></label>
         </fieldset>
         <fieldset class="checklist-group">
           <legend>Plumber work</legend>
@@ -307,7 +417,7 @@
           <label class="field full" id="primary-house-search">House search<input name="house_id" id="movement-house-id" type="search" autocomplete="off" maxlength="120" placeholder="Search by house ID, owner or employee"><div class="suggestions hidden" id="house-suggestions" role="listbox" aria-label="Matching houses"></div><small id="house-hint">Required for pickup and return. Search matches house, owner and assigned employee.</small></label>
           <label class="field" id="primary-postcode-field">Postcode / Eircode<input name="postcode" id="movement-postcode" maxlength="80" placeholder="Optional"></label>
           <label class="field" id="primary-owner-field">House owner<input name="owner_name" id="movement-owner" maxlength="160" placeholder="Optional"></label>
-          <label class="field" id="primary-employee-field">Assigned employee<input name="employee_name" id="movement-employee" maxlength="160" placeholder="Employee responsible for this house"></label>
+          <label class="field" id="primary-employee-field">Assigned employee<input name="employee_name" id="movement-employee" list="assigned-crew-options" maxlength="160" placeholder="Choose or enter employee name"><small>Choose a crew name or enter another employee.</small></label>
           <div class="house-live-stock full" id="house-live-stock"><strong>Select a house to see its current on-site materials.</strong><div id="house-live-stock-list"></div></div>
           <div class="house-request full hidden" id="house-request"></div>
           <div class="field full">
@@ -322,24 +432,37 @@
           </div>
           <div class="movement-fields full hidden" data-for="pickup">
             <label class="field extra-delivery-toggle"><span>Delivery tracking</span><span class="checkbox-field"><input id="extra-delivery" name="is_extra_delivery" type="checkbox"><span>Mark as an extra delivery (#2 and onwards)</span></span></label>
-            <label class="field">Picked up by<input name="person" maxlength="120" placeholder="Employee name"></label>
-            <label class="field">Responsible team<input name="team" maxlength="120" placeholder="Team name"></label>
+            <label class="field">Picked up by<input name="person" list="delivery-person-options" maxlength="120" placeholder="Choose or enter name"><small>Delivery team: Gary Lowther or Karol.</small></label>
+            <label class="field">Responsible team<input name="team" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter team"><small>Choose a crew member or enter another team.</small></label>
           </div>
           <div class="movement-fields full hidden" data-for="return">
-            <label class="field">Returned to warehouse by<input name="person" maxlength="120" placeholder="Name"></label>
-            <label class="field">Responsible team<input name="team" maxlength="120" placeholder="Team name"></label>
+            <label class="field">Returned to warehouse by<input name="person" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter name"></label>
+            <label class="field">Responsible team<input name="team" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter team"></label>
           </div>
           <div class="movement-fields full hidden" data-for="transfer">
-            <div class="transfer-block"><strong>From which site?</strong><label class="field">Location type<select name="source_kind" class="location-kind"><option value="house">House / site</option><option value="team">Team</option></select></label><label class="field transfer-team-reference hidden"><span class="location-reference-label">Team name</span><input name="source_reference" maxlength="120" placeholder="Team name"></label><label class="field transfer-house-reference"><span class="house-reference-label">Select source site</span><select name="source_site" class="site-reference"><option value="">Choose a site</option></select></label><label class="field hidden transfer-department">Department<input name="source_department" maxlength="120"></label></div>
-            <div class="transfer-block"><strong>Move to which site?</strong><label class="field">Location type<select name="destination_kind" class="location-kind"><option value="house">House / site</option><option value="team">Team</option></select></label><label class="field transfer-team-reference hidden"><span class="location-reference-label">Team name</span><input name="destination_reference" maxlength="120" placeholder="Team name"></label><label class="field transfer-house-reference"><span class="house-reference-label">Select destination site</span><select name="destination_site" class="site-reference"><option value="">Choose a site</option></select></label><label class="field hidden transfer-department">Department<input name="destination_department" maxlength="120"></label></div>
-            <label class="field">Transferred by<input name="person" maxlength="120" placeholder="Name"></label>
-            <label class="field">Responsible team<input name="team" maxlength="120" placeholder="Team name"></label>
+            <div class="transfer-block"><strong>From which site?</strong><label class="field">Location type<select name="source_kind" class="location-kind"><option value="house">House / site</option><option value="team">Team</option></select></label><label class="field transfer-team-reference hidden"><span class="location-reference-label">Team name</span><input name="source_reference" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter team"></label><label class="field transfer-house-reference"><span class="house-reference-label">Select source site</span><select name="source_site" class="site-reference"><option value="">Choose a site</option></select></label><label class="field hidden transfer-department">Department<input name="source_department" maxlength="120"></label></div>
+            <div class="transfer-block"><strong>Move to which site?</strong><label class="field">Location type<select name="destination_kind" class="location-kind"><option value="house">House / site</option><option value="team">Team</option></select></label><label class="field transfer-team-reference hidden"><span class="location-reference-label">Team name</span><input name="destination_reference" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter team"></label><label class="field transfer-house-reference"><span class="house-reference-label">Select destination site</span><select name="destination_site" class="site-reference"><option value="">Choose a site</option></select></label><label class="field hidden transfer-department">Department<input name="destination_department" maxlength="120"></label></div>
+            <label class="field">Transferred by<input name="person" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter name"></label>
+            <label class="field">Responsible team<input name="team" list="assigned-crew-options" maxlength="120" placeholder="Choose or enter team"></label>
           </div>
           <label class="field full">Notes<textarea name="notes" rows="3" maxlength="2000" placeholder="Optional details about this movement"></textarea></label>
         </div>
         <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save movement</button></div>
       </form>
     </dialog>
+
+    <datalist id="assigned-crew-options">
+      <option value="Davit"></option>
+      <option value="Tedo"></option>
+      <option value="Jack"></option>
+      <option value="Slavek D"></option>
+      <option value="Slawomir"></option>
+      <option value="Kamil"></option>
+    </datalist>
+    <datalist id="delivery-person-options">
+      <option value="Gary Lowther"></option>
+      <option value="Karol"></option>
+    </datalist>
 
     <dialog id="material-dialog" class="dialog">
       <form id="material-form" method="dialog">
@@ -363,7 +486,7 @@
           <div class="seai-info full hidden" id="seai-info"></div>
           <label class="field">Postcode / Eircode<input name="postcode" maxlength="80" placeholder="Optional"></label>
           <label class="field">House owner<input name="owner_name" maxlength="160" placeholder="Optional"></label>
-          <label class="field full">Assigned employee<input name="employee_name" maxlength="160" placeholder="Employee responsible for this house"></label>
+          <label class="field full">Assigned employee<input name="employee_name" list="assigned-crew-options" maxlength="160" placeholder="Choose or enter employee name"><small>Choose a crew member or enter another employee.</small></label>
         </div>
         <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save &amp; open calculator</button></div>
       </form>

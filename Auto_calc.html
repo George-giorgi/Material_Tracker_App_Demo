@@ -789,6 +789,12 @@ body>main.calculator-main{min-height:0;padding:16px 28px 28px}
   .calculator-sidebar{display:none!important}
   body>header.brand-header,body>main.calculator-main{display:none!important}
 }
+.calculator-main .action-bar .actions{display:flex;width:100%;flex:0 0 100%;justify-content:flex-start;align-items:center;align-self:flex-start;flex-direction:row;flex-wrap:wrap;gap:10px;margin:0}
+.calculator-main .action-bar .actions button{width:auto;flex:0 0 auto;border:0;color:#fff}
+.calculator-main .action-bar .actions button:first-child{background:#276ba9}
+.calculator-main .action-bar .actions button:first-child:hover{background:#1d588d}
+.calculator-main .action-bar #saveToHouse{background:#218653}
+.calculator-main .action-bar #saveToHouse:hover{background:#176b43}
 </style>
 </head><body>
 <aside class="calculator-sidebar">
@@ -934,7 +940,7 @@ body>main.calculator-main{min-height:0;padding:16px 28px 28px}
 </div></section>
 <section class="card"><h2>3. Automatic calculation</h2><div id="out"></div></section>
 <section class="card manual-card"><details id="manualDetails"><summary><h2>4. Manual materials <span id="manualCount" class="manual-count">click to expand</span></h2></summary><p class="muted">All other STOCK materials are entered by hand. Use + to add another type of the same material with its own quantity.</p><div id="manual"></div></details></section>
-<section class="card action-bar"><div class="notes-field"><label for="notes">Delivery notes</label><input id="notes" placeholder="Optional notes for the request"></div><div class="actions no-print"><button onclick="calc()">Calculate</button><button class="secondary" onclick="printDelivery()">Print / Save PDF</button><button onclick="emailReq()">Create email request</button><button id="saveToHouse" class="secondary" onclick="saveToHouse()">Assigned to house</button></div><p id="saveStatus" class="muted no-print"></p></section>
+<section class="card action-bar"><div class="notes-field"><label for="notes">Delivery notes</label><input id="notes" placeholder="Optional notes for the request"></div><div class="actions no-print"><button class="secondary" onclick="printDelivery()">Print / Save PDF</button><button id="saveToHouse" class="secondary" onclick="saveToHouse()">Assigned to house</button></div><p id="saveStatus" class="muted no-print"></p></section>
 </main>
 <script>
 const C=["White","Black","Brown"];
@@ -1253,12 +1259,16 @@ async function saveToHouse(){
   }catch(e){st.textContent=e.message}
   btn.disabled=false
 }
-function emailReq(){calc();location.href="mailto:?subject="+encodeURIComponent("Material Request - "+(job.value||"House"))+"&body="+encodeURIComponent("Job: "+job.value+"\nAddress: "+address.value+"\n\n"+out.innerText+"\n\nNotes: "+notes.value)}
 const full=["Rockwool","Spacers","Gun foam","Caping 100mm","Caping joiner","Corner","End cap","Silicone","Downpipe","45° connector","Downpipe bracket long","Downpipe bracket short","Downpipe shoe","Screw"];
 const units=["pcs","bags","packs","rolls","buckets","m"];
 manual.innerHTML=stock.map(([name,opts])=>`<div class="manual" data-fam="${name}"><label>${name}<small class="mstock"></small></label>${opts?`<select class="mv" aria-label="${name} type">${opts.map(o=>`<option value="${full.includes(name)?name+" "+o:o}">${o}</option>`).join("")}</select>`:"<span></span>"}<input class="mq" type="number" min="0" step="any" placeholder="Qty" aria-label="${name} quantity"><select class="mu" aria-label="${name} unit">${units.map(u=>`<option>${u}</option>`).join("")}</select><input class="mn" placeholder="Notes" aria-label="${name} notes">${opts?`<button type="button" class="secondary row-add" aria-label="Add another ${name} type" title="Add another type of ${name} with a different quantity">+</button>`:"<span></span>"}</div>`).join("");
 calc();
+["wall","per","plinth","b60","colour","texture","notes"].forEach(id=>{
+  const field=document.getElementById(id);
+  field.addEventListener(field.tagName==="SELECT"?"change":"input",calc);
+});
 manual.addEventListener("input",refreshManualStock);
+manual.addEventListener("input",calc);
 refreshManualStock();
 manual.addEventListener("click",e=>{
   const b=e.target.closest(".row-add,.row-remove");if(!b)return;

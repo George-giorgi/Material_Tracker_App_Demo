@@ -127,7 +127,6 @@ const searchFields = new Map([
 ]);
 const $ = selector => selector === "#go-overview" ? overviewShortcut : searchFields.get(selector);
 const $$ = selector => selector === ".nav-item" ? tabs : selector === ".page" ? pages : [];
-const stickyHouses = { clear() {} };
 let movementRenders = 0;
 let houseRenders = 0;
 let overviewRenders = 0;

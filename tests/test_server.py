@@ -533,7 +533,7 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
-    def test_house_checklist_is_readable_to_all_roles_but_editable_by_admins(self):
+    def test_house_checklist_is_readable_to_all_roles_and_editable_by_staff(self):
         with server.connect_db() as db:
             with db:
                 server._upsert_house(db, "H-CHECKLIST")
@@ -604,14 +604,22 @@ class TrackerTests(unittest.TestCase):
                 "/api/house-checklist",
                 {
                     "house_id": "H-CHECKLIST",
-                    "scaffolding_status": "not_necessary",
-                    "esb_unclipped": "not_esb",
-                    "plumber_status": "not_necessary",
+                    "scaffolding_status": "done",
                 },
                 employee_cookie,
             )
-            self.assertEqual(status, 403)
-            self.assertIn("administrator", result["error"].lower())
+            self.assertEqual(status, 200)
+            self.assertTrue(result["saved"])
+            status, checklist, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/house-checklist/H-CHECKLIST",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(checklist["scaffolding_status"], "done")
+            self.assertIsNone(checklist["esb_unclipped"])
+            self.assertIsNone(checklist["plumber_status"])
 
             status, result, _ = self.http_request(
                 httpd,
@@ -683,6 +691,94 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_surveyors_can_save_ready_house_work_plans(self):
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, owner_name, source) "
+                "VALUES ('H-WORKPLAN', 'T1', 'Owner', 'fictional_sample')"
+            )
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'H-WORKPLAN'"
+            )
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "admin1",
+                    "display_name": "Tracker Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "surveyor1",
+                    "display_name": "Tracker Surveyor",
+                    "pin": "345678",
+                    "pin_confirm": "345678",
+                    "role": "surveyor",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, surveyor_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "surveyor1", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "scaffolding_required": True,
+                    "scaffolding_notes": "Rear access only",
+                    "esb_required": False,
+                    "esb_notes": "",
+                    "plumber_required": True,
+                    "plumber_notes": "Coordinate with owner",
+                },
+                surveyor_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(result["saved"])
+            status, response, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/calculator/houses?status=ready",
+                cookie=surveyor_cookie,
+            )
+            self.assertEqual(status, 200)
+            house = next(item for item in response["houses"] if item["id"] == "H-WORKPLAN")
+            self.assertEqual(house["plan_scaffolding_required"], 1)
+            self.assertEqual(house["plan_scaffolding_notes"], "Rear access only")
+            self.assertEqual(house["plan_esb_required"], 0)
+            self.assertEqual(house["plan_plumber_notes"], "Coordinate with owner")
+            with server.connect_db() as db:
+                with db:
+                    server._upsert_house(db, "H-WORKPLAN")
+                checklist = db.execute(
+                    "SELECT scaffolding_status, esb_unclipped, plumber_status "
+                    "FROM house_checklists WHERE house_id = 'H-WORKPLAN'"
+                ).fetchone()
+            self.assertEqual(
+                tuple(checklist),
+                ("not_done", "not_esb", "not_done"),
+            )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def test_dashboard_counts_each_team_house_once_by_house_status(self):
         material_id = self.add_material(opening=100)
         with server.connect_db() as db:
@@ -747,6 +843,29 @@ class TrackerTests(unittest.TestCase):
                 "closed_house_ids": [],
             },
         )
+
+    def test_dashboard_counts_open_and_closed_houses_by_assigned_employee(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "EMPLOYEE-OPEN", employee_name="Assigned Worker")
+                server._upsert_house(db, "EMPLOYEE-CLOSED", employee_name="Assigned Worker")
+                db.execute(
+                    "UPDATE houses SET is_finished = 1 WHERE id = 'EMPLOYEE-CLOSED'"
+                )
+            dashboard = server._dashboard(db)
+            locations = server.known_locations(db)
+
+        location = server.employee_location("Assigned Worker")
+        self.assertEqual(
+            dashboard["team_house_counts"][location],
+            {
+                "open": 1,
+                "closed": 1,
+                "open_house_ids": ["EMPLOYEE-OPEN"],
+                "closed_house_ids": ["EMPLOYEE-CLOSED"],
+            },
+        )
+        self.assertIn(location, locations)
 
     def test_finishing_house_records_remaining_stock_as_used(self):
         material_id = self.add_material(name="Board", opening=20)
@@ -1325,6 +1444,90 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(house["postcode"], "A1 B2C3")
         self.assertEqual(house["owner_name"], "Owner A")
         self.assertEqual(house["employee_name"], "Employee A")
+
+    def test_dashboard_includes_house_status_survey_and_movement_audit(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(
+                    db,
+                    "H-AUDIT",
+                    employee_name="Assigned Worker",
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                    VALUES ('H-AUDIT', '{}', '', 'Surveyor Name', '2026-05-02T10:30:00')
+                    """
+                )
+                server._record_house_status(db, "H-AUDIT", "ready", "Admin Name")
+                server._record_house_status(db, "H-AUDIT", "active", "Employee Name")
+        material_id = self.add_material()
+        self.add_movement(
+            material_id,
+            "pickup",
+            2,
+            person="Movement Person",
+            team="Crew A",
+            house_id="H-AUDIT",
+        )
+        with server.connect_db() as db:
+            house = next(
+                item for item in server._dashboard(db)["house_list"]
+                if item["id"] == "H-AUDIT"
+            )
+
+        self.assertEqual(house["employee_name"], "Assigned Worker")
+        self.assertEqual(
+            [event["status"] for event in house["status_history"]],
+            ["ready", "active"],
+        )
+        self.assertEqual(house["status_history"][0]["changed_by"], "Admin Name")
+        self.assertEqual(house["survey_updated_by"], "Surveyor Name")
+        self.assertEqual(house["last_movement"]["person"], "Movement Person")
+        self.assertTrue(house["last_movement"]["recorded_at"])
+
+    def test_house_status_history_migration_preserves_events_without_active_house_fk(self):
+        with server.connect_db() as db:
+            with db:
+                db.execute("DROP INDEX house_status_history_house_idx")
+                db.execute("DROP TABLE house_status_history")
+                db.execute(
+                    """
+                    CREATE TABLE house_status_history (
+                        id INTEGER PRIMARY KEY,
+                        house_id TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+                        status TEXT NOT NULL,
+                        changed_by TEXT NOT NULL DEFAULT '',
+                        changed_at TEXT NOT NULL
+                    )
+                    """
+                )
+                db.execute("INSERT INTO houses(id) VALUES ('H-OLD-AUDIT')")
+                db.execute(
+                    """
+                    INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+                    VALUES ('H-OLD-AUDIT', 'active', 'Old Actor', '2026-05-02T10:30:00')
+                    """
+                )
+
+        server.initialize_db()
+
+        with server.connect_db() as db:
+            foreign_keys = db.execute(
+                "PRAGMA foreign_key_list(house_status_history)"
+            ).fetchall()
+            event = db.execute(
+                "SELECT house_id, status, changed_by FROM house_status_history"
+            ).fetchone()
+        self.assertEqual(foreign_keys, [])
+        self.assertEqual(
+            dict(event),
+            {
+                "house_id": "H-OLD-AUDIT",
+                "status": "active",
+                "changed_by": "Old Actor",
+            },
+        )
 
     def test_dashboard_reports_demo_mode_setting(self):
         with server.connect_db() as db:

@@ -33,9 +33,14 @@ Employees can view tracker records and record material movements against
 existing houses. They cannot add materials, count or adjust stock, import
 workbooks, create houses, or finish/reopen houses. These restrictions are
 enforced by the server, not only by hiding buttons in the interface.
-Admins and employees can open a house's checklist and save its scaffolding,
-ESB cable, and plumber-work statuses. House detail and movement history remain
-available to administrators only.
+Admins and employees can update scaffolding, ESB-work, and plumber-work
+completion directly on Active house cards: tick an item to mark it done (green),
+or untick it to return it to not done. Work marked not required by the surveyor
+is shown as not necessary. Ready-for-start cards keep notes and checklist
+editing out of the card; use the Surveyor room for the pre-start work plan.
+House detail and movement history remain available to administrators only.
+The Teams tab also lists employees assigned to houses at activation and shows
+their open and closed house counts; selecting a count opens those houses.
 
 ## Share with employees
 
@@ -118,6 +123,8 @@ the relevant views and forms; review and save each form during the presentation.
 
 The demo starts with 50 provided houses marked Not started. House details keep
 notes, survey notes, snags, and material movement history together for review.
+Snag lists and completion toggles are shown once a house is Active; Ready for
+start cards and their detail view omit snag controls.
 
 See [DEMO-PRESENTATION.md](./DEMO-PRESENTATION.md) for the matching spoken
 video script and scene order.
@@ -155,9 +162,13 @@ latitude/longitude coordinates to place these houses accurately on the map.
 
 ## House surveys and calculator measurements
 
-Administrators can add employee or surveyor accounts in **Account ? Manage employees**. A surveyor sees only houses marked **Ready for start** and can add a survey note, window and door sizes with quantities, and house-corner lengths. Window corner lengths are calculated automatically from each window's width and two sides. Survey entries are saved per provided house. Employees cannot edit surveys.
+Administrators can add employee or surveyor accounts in **Account ? Manage employees**. A surveyor sees only houses marked **Ready for start** and can add survey notes, window and door sizes with quantities, house-corner lengths, and a pre-start work plan. The work plan records whether scaffolding, ESB work, or plumber work is required, with optional details for each. House notes and survey notes are edited and saved separately; survey notes appear on the appended page when sharing a PDF. Window corner lengths are calculated automatically from each window's width and two sides. Survey entries are saved per provided house. Employees cannot edit surveys.
 
 When the house is selected in the automatic calculator, saved dimensions and corner lengths are loaded and shown read-only instead of requesting the same measurements again. The calculator continues to accept manual measurements when no surveyed house is selected. Existing user accounts and active sessions are preserved when the database is upgraded for the surveyor role.
+
+Use **Surveyor room** on a Ready for start house to open its full survey record, pre-start work plan, and measurement form. A house must have a survey saved before it can be activated; until then, the Activate house button is disabled and explains that surveyor review is required. Ready cards omit notes and checklist editing; surveyors enter the planned work and optional trade details in the Surveyor room. On activation, required work starts as **Not done** and work marked **Not required** starts as **Not necessary**. Admins and surveyors can save House notes and Survey notes separately; either note field clears after save and has an **Edit note** action to load the saved text back into the field. Admins and surveyors can also attach and view PDFs for Ready for start houses. **Share PDF** prepares a copy with the original document followed by a classic, professional Survey note page that presents each note as a separate bulleted item, alongside the house and source-document details; it does not include House notes. Use the native share sheet where supported, or choose **Email PDF** or **WhatsApp PDF** to download the combined file and open the chosen app. Browsers cannot attach a local file automatically to email or WhatsApp, so attach the downloaded PDF before sending. Uploads are private to signed-in admins and surveyors, limited to 8 MB per PDF and 25 PDFs per house, and are stored in the tracker database. A document is available only while its house remains Ready for start.
+
+Use **Annotate** beside an uploaded PDF to mark it up with a pen, highlighter, or text notes on a phone or tablet. Choose a pen thickness and use the zoom controls to work on details; drawing renders stroke segments as you move for a more responsive experience. **Save annotated copy** stores a separate PDF alongside the original, which remains unchanged; the new copy can then be shared or downloaded like any other survey PDF. PyMuPDF is required for local page previews and saving annotations.
 
 Mortar / glue is estimated as the existing one bag per four insulation boards (100 mm and 60 mm combined) **plus** an area allowance of 18 bags per 100 m² of net wall area. Net wall area subtracts measured window and door areas from the wall area, and both parts are rounded up to whole bags before being added. With no openings or plinth deduction, the current examples are: 100 m² = 18 area-based + 35 existing board-based = **53 bags**; 200 m² = 36 + 70 = **106 bags**; 80 m² = 15 + 28 = **43 bags**. The calculator shows both parts and the combined total.
 

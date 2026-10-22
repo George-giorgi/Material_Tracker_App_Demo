@@ -13,11 +13,25 @@ import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime
 from http.cookies import CookieError, SimpleCookie
-from io import StringIO
+from io import BytesIO, StringIO
 from xml.etree.ElementTree import ParseError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
+from xml.sax.saxutils import escape
+
+import pymupdf as fitz
+from pypdf.errors import PdfReadError
+from pypdf import PdfReader, PdfWriter
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+import reportlab
 
 
 ROOT = Path(__file__).resolve().parent
@@ -30,6 +44,11 @@ TLS_KEY = os.environ.get("EWI_TLS_KEY", "")
 COOKIE_SECURE = bool(TLS_CERT and TLS_KEY)
 SESSION_MAX_AGE = 12 * 60 * 60
 CREDENTIAL_ITERATIONS = 310_000
+HOUSE_DOCUMENT_MAX_BYTES = 8_000_000
+HOUSE_DOCUMENT_MAX_COUNT = 25
+HOUSE_DOCUMENT_MAX_PAGES = 300
+HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
+HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
 
@@ -38,6 +57,306 @@ class ApiError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
+
+
+def _open_house_pdf(content):
+    try:
+        document = fitz.open(stream=content, filetype="pdf")
+    except (fitz.FileDataError, ValueError, RuntimeError) as exc:
+        raise ApiError(422, "This uploaded file could not be read as a PDF.") from exc
+    if document.needs_pass:
+        document.close()
+        raise ApiError(422, "Password-protected PDFs cannot be annotated.")
+    if not document.page_count:
+        document.close()
+        raise ApiError(422, "This PDF does not contain any pages.")
+    if document.page_count > HOUSE_DOCUMENT_MAX_PAGES:
+        document.close()
+        raise ApiError(
+            422,
+            f"PDFs with more than {HOUSE_DOCUMENT_MAX_PAGES} pages cannot be annotated.",
+        )
+    return document
+
+
+def _render_house_document_page(content, page_number):
+    document = _open_house_pdf(content)
+    try:
+        if page_number < 1 or page_number > document.page_count:
+            raise ApiError(404, "That PDF page does not exist.")
+        page = document.load_page(page_number - 1)
+        rect = page.rect
+        scale = min(1.6, 1800 / max(rect.width, rect.height))
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        return pixmap.tobytes("png"), document.page_count
+    except ApiError:
+        raise
+    except (fitz.FileDataError, ValueError, RuntimeError) as exc:
+        raise ApiError(422, "This PDF page could not be rendered.") from exc
+    finally:
+        document.close()
+
+
+def _annotate_house_document_pdf(content, annotations):
+    if not isinstance(annotations, list) or not annotations:
+        raise ApiError(400, "Add at least one pen stroke or text note before saving.")
+    if len(annotations) > HOUSE_DOCUMENT_MAX_ANNOTATIONS:
+        raise ApiError(400, "This PDF has too many annotations to save at once.")
+    document = _open_house_pdf(content)
+    try:
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                raise ApiError(400, "PDF annotations are invalid.")
+            page_number = annotation.get("page")
+            tool = annotation.get("tool")
+            color_value = annotation.get("color")
+            if (
+                isinstance(page_number, bool)
+                or not isinstance(page_number, int)
+                or not 1 <= page_number <= document.page_count
+                or tool not in {"pen", "highlighter", "text"}
+                or not isinstance(color_value, str)
+                or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_value)
+            ):
+                raise ApiError(400, "PDF annotations contain an invalid page, tool, or color.")
+            page = document.load_page(page_number - 1)
+            rect = page.rect
+            color = tuple(
+                int(color_value[index:index + 2], 16) / 255
+                for index in (1, 3, 5)
+            )
+            if tool == "text":
+                text = annotation.get("text")
+                point = annotation.get("point")
+                font_ratio = annotation.get("font_size")
+                if (
+                    not isinstance(text, str)
+                    or not text.strip()
+                    or len(text) > 240
+                    or not isinstance(point, list)
+                    or len(point) != 2
+                    or not isinstance(font_ratio, (int, float))
+                    or not 0.005 <= font_ratio <= 0.1
+                    or not all(
+                        isinstance(value, (int, float)) and 0 <= value <= 1
+                        for value in point
+                    )
+                ):
+                    raise ApiError(400, "A text annotation is invalid.")
+                font_size = rect.width * font_ratio
+                page.insert_text(
+                    (
+                        point[0] * rect.width,
+                        min(rect.height, point[1] * rect.height + font_size),
+                    ),
+                    text,
+                    fontsize=font_size,
+                    fontname="helv",
+                    color=color,
+                    overlay=True,
+                )
+                continue
+            points = annotation.get("points")
+            width_ratio = annotation.get("width")
+            if (
+                not isinstance(points, list)
+                or not points
+                or len(points) > HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS
+                or not isinstance(width_ratio, (int, float))
+                or not 0.0005 <= width_ratio <= 0.05
+            ):
+                raise ApiError(400, "A pen annotation is invalid.")
+            normalized_points = []
+            for point in points:
+                if (
+                    not isinstance(point, list)
+                    or len(point) != 2
+                    or not all(
+                        isinstance(value, (int, float)) and 0 <= value <= 1
+                        for value in point
+                    )
+                ):
+                    raise ApiError(400, "A pen annotation is outside the PDF page.")
+                normalized_points.append(
+                    fitz.Point(point[0] * rect.width, point[1] * rect.height)
+                )
+            width = max(0.5, rect.width * width_ratio)
+            if len(normalized_points) == 1:
+                point = normalized_points[0]
+                page.draw_circle(
+                    point,
+                    width / 2,
+                    color=color,
+                    fill=color,
+                    width=0,
+                    overlay=True,
+                )
+            else:
+                page.draw_polyline(
+                    normalized_points,
+                    color=color,
+                    width=width,
+                    lineCap=1,
+                    lineJoin=1,
+                    stroke_opacity=0.38 if tool == "highlighter" else 1,
+                    overlay=True,
+                )
+        return document.tobytes(garbage=4, deflate=True)
+    except ApiError:
+        raise
+    except (fitz.FileDataError, ValueError, RuntimeError) as exc:
+        raise ApiError(422, "The annotations could not be added to this PDF.") from exc
+    finally:
+        document.close()
+
+
+def _create_house_document_share_pdf(content, filename, house_id, survey_note):
+    try:
+        original = PdfReader(BytesIO(content), strict=False)
+    except (PdfReadError, ValueError, OSError) as exc:
+        raise ApiError(422, "This uploaded file could not be read as a PDF.") from exc
+    if original.is_encrypted:
+        raise ApiError(422, "Password-protected PDFs cannot be prepared for sharing.")
+    if not original.pages:
+        raise ApiError(422, "This PDF does not contain any pages.")
+    if len(original.pages) > HOUSE_DOCUMENT_MAX_PAGES:
+        raise ApiError(
+            422,
+            f"PDFs with more than {HOUSE_DOCUMENT_MAX_PAGES} pages cannot be prepared for sharing.",
+        )
+
+    font_path = Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"
+    font_name = "TrackerSurveyNotes"
+    if font_name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "SurveyNoteTitle",
+        parent=styles["Title"],
+        fontName="Times-Bold",
+        fontSize=20,
+        leading=24,
+        textColor=colors.HexColor("#233247"),
+        alignment=TA_LEFT,
+        spaceAfter=6 * mm,
+    )
+    details_style = ParagraphStyle(
+        "SurveyNoteDetails",
+        parent=styles["BodyText"],
+        fontName=font_name,
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#303942"),
+    )
+    details_label_style = ParagraphStyle(
+        "SurveyNoteDetailsLabel",
+        parent=details_style,
+        fontSize=7,
+        leading=10,
+        textColor=colors.HexColor("#68727c"),
+        tracking=0.6,
+    )
+    note_style = ParagraphStyle(
+        "SurveyNoteBody",
+        parent=styles["BodyText"],
+        fontName=font_name,
+        fontSize=10.5,
+        leading=16,
+        textColor=colors.HexColor("#303942"),
+        leftIndent=13,
+        bulletIndent=0,
+        bulletFontName=font_name,
+        bulletFontSize=10,
+        bulletColor=colors.HexColor("#34465a"),
+    )
+    note_lines = [line.strip() for line in survey_note.splitlines() if line.strip()]
+    if not note_lines:
+        note_lines = [survey_note.strip()]
+    note_pdf = BytesIO()
+    note_document = SimpleDocTemplate(
+        note_pdf,
+        pagesize=A4,
+        rightMargin=22 * mm,
+        leftMargin=22 * mm,
+        topMargin=30 * mm,
+        bottomMargin=24 * mm,
+        title=f"Survey note - {house_id}",
+    )
+
+    def draw_page_chrome(pdf_canvas, document):
+        page_width, page_height = A4
+        pdf_canvas.saveState()
+        pdf_canvas.setFillColor(colors.HexColor("#34465a"))
+        pdf_canvas.setFont(font_name, 8)
+        pdf_canvas.drawString(22 * mm, page_height - 17 * mm, "BRUSNA  |  MATERIAL TRACKER")
+        pdf_canvas.setStrokeColor(colors.HexColor("#9aa5b1"))
+        pdf_canvas.setLineWidth(0.7)
+        pdf_canvas.line(22 * mm, page_height - 22 * mm, page_width - 22 * mm, page_height - 22 * mm)
+        pdf_canvas.line(22 * mm, 17 * mm, page_width - 22 * mm, 17 * mm)
+        pdf_canvas.setFillColor(colors.HexColor("#5f6973"))
+        pdf_canvas.setFont(font_name, 7)
+        pdf_canvas.drawString(22 * mm, 12 * mm, f"SURVEY NOTE  |  {house_id}")
+        pdf_canvas.drawRightString(page_width - 22 * mm, 12 * mm, f"PAGE {document.page}")
+        pdf_canvas.restoreState()
+
+    metadata_table = Table(
+        [
+            [
+                Paragraph("HOUSE", details_label_style),
+                Paragraph(escape(house_id), details_style),
+            ],
+            [
+                Paragraph("SOURCE PDF", details_label_style),
+                Paragraph(escape(filename), details_style),
+            ],
+        ],
+        colWidths=[34 * mm, 128 * mm],
+        hAlign="LEFT",
+    )
+    metadata_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor("#d5dbe1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    note_document.build(
+        [
+            Paragraph("House survey note", title_style),
+            metadata_table,
+            Spacer(1, 9 * mm),
+            Paragraph("SURVEY OBSERVATIONS", details_label_style),
+            Spacer(1, 3 * mm),
+            *[
+                Paragraph(escape(line), note_style, bulletText="•")
+                for line in note_lines
+            ],
+        ],
+        onFirstPage=draw_page_chrome,
+        onLaterPages=draw_page_chrome,
+    )
+
+    writer = PdfWriter()
+    for page in original.pages:
+        writer.add_page(page)
+    note_reader = PdfReader(note_pdf)
+    for page in note_reader.pages:
+        writer.add_page(page)
+    writer.add_metadata(
+        {
+            "/Title": f"{house_id} - {Path(filename).stem} with survey note",
+            "/Subject": "Original survey PDF with the survey note appended on a separate page",
+        }
+    )
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 @contextmanager
@@ -75,6 +394,15 @@ def initialize_db():
                 is_finished INTEGER NOT NULL DEFAULT 0,
                 status_changed_at REAL NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS house_status_history (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                changed_by TEXT NOT NULL DEFAULT '',
+                changed_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS house_status_history_house_idx
+                ON house_status_history(house_id, id);
             CREATE TABLE IF NOT EXISTS house_checklists (
                 house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
                 scaffolding_status TEXT,
@@ -95,6 +423,7 @@ def initialize_db():
                 team TEXT NOT NULL DEFAULT '',
                 department TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
+                recorded_at TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (material_id) REFERENCES materials(id)
             );
             CREATE INDEX IF NOT EXISTS movements_material_idx ON movements(material_id, id);
@@ -140,6 +469,39 @@ def initialize_db():
             );
             """
         )
+        status_history_foreign_keys = {
+            row["table"]
+            for row in db.execute("PRAGMA foreign_key_list(house_status_history)")
+        }
+        if "houses" in status_history_foreign_keys:
+            db.execute(
+                "ALTER TABLE house_status_history RENAME TO house_status_history_old"
+            )
+            db.execute(
+                """
+                CREATE TABLE house_status_history (
+                    id INTEGER PRIMARY KEY,
+                    house_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    changed_by TEXT NOT NULL DEFAULT '',
+                    changed_at TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_status_history(id, house_id, status, changed_by, changed_at)
+                SELECT id, house_id, status, changed_by, changed_at
+                FROM house_status_history_old
+                """
+            )
+            db.execute("DROP TABLE house_status_history_old")
+            db.execute(
+                """
+                CREATE INDEX house_status_history_house_idx
+                ON house_status_history(house_id, id)
+                """
+            )
         house_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(houses)")
         }
@@ -239,6 +601,19 @@ def initialize_db():
             )
             """
         )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_documents (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                uploaded_at TEXT NOT NULL
+            )
+            """
+        )
         provided_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(provided_houses)")
         }
@@ -248,6 +623,12 @@ def initialize_db():
             ("plan_scaffolding", "TEXT"),
             ("plan_esb", "TEXT"),
             ("plan_plumber", "TEXT"),
+            ("plan_scaffolding_required", "INTEGER"),
+            ("plan_scaffolding_notes", "TEXT NOT NULL DEFAULT ''"),
+            ("plan_esb_required", "INTEGER"),
+            ("plan_esb_notes", "TEXT NOT NULL DEFAULT ''"),
+            ("plan_plumber_required", "INTEGER"),
+            ("plan_plumber_notes", "TEXT NOT NULL DEFAULT ''"),
             ("latitude", "REAL"),
             ("longitude", "REAL"),
         ):
@@ -320,6 +701,10 @@ def initialize_db():
         if "department" not in movement_columns:
             db.execute(
                 "ALTER TABLE movements ADD COLUMN department TEXT NOT NULL DEFAULT ''"
+            )
+        if "recorded_at" not in movement_columns:
+            db.execute(
+                "ALTER TABLE movements ADD COLUMN recorded_at TEXT NOT NULL DEFAULT ''"
             )
         # Open houses must hold what was delivered: drop close-outs left behind by earlier reopen actions.
         db.execute(
@@ -544,6 +929,10 @@ def team_location(name, department=""):
     return f"team:{name}"
 
 
+def employee_location(name):
+    return f"employee:{quote(str(name or '').strip(), safe='')}"
+
+
 def canonical_department(db, name):
     name = str(name or "").strip()
     if not name:
@@ -603,6 +992,10 @@ def known_locations(db):
         "SELECT DISTINCT team, department FROM movements WHERE team != ''"
     ):
         locations.add(team_location(row["team"], row["department"]))
+    for row in db.execute(
+        "SELECT DISTINCT employee_name FROM houses WHERE TRIM(employee_name) != ''"
+    ):
+        locations.add(employee_location(row["employee_name"]))
     for row in db.execute("SELECT source, destination FROM movements"):
         locations.add(row["source"])
         locations.add(row["destination"])
@@ -671,6 +1064,68 @@ def _valid_reference(db, location):
 CLOSEOUT_NOTE = "Automatically recorded from remaining house stock when the house was marked finished."
 
 
+def _record_house_status(db, house_id, status, changed_by):
+    db.execute(
+        """
+        INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            house_id,
+            status,
+            str(changed_by or "").strip(),
+            datetime.now().isoformat(timespec="seconds"),
+        ),
+    )
+
+
+def _house_audit_by_id(db):
+    audit = {}
+    for row in db.execute(
+        """
+        SELECT house_id, status, changed_by, changed_at
+        FROM house_status_history
+        ORDER BY id
+        """
+    ):
+        audit.setdefault(row["house_id"], {"status_history": [], "last_movement": None})
+        audit[row["house_id"]]["status_history"].append(
+            {
+                "status": row["status"],
+                "changed_by": row["changed_by"],
+                "changed_at": row["changed_at"],
+            }
+        )
+
+    movement_rows = db.execute(
+        """
+        SELECT id, house_id, person, happened_on, recorded_at
+        FROM movements
+        WHERE house_id IS NOT NULL
+        UNION ALL
+        SELECT id, substr(source, 7), person, happened_on, recorded_at
+        FROM movements
+        WHERE source LIKE 'house:%'
+        UNION ALL
+        SELECT id, substr(destination, 7), person, happened_on, recorded_at
+        FROM movements
+        WHERE destination LIKE 'house:%'
+        """
+    )
+    latest_movements = {}
+    for row in movement_rows:
+        current = latest_movements.get(row["house_id"])
+        if current is None or (row["recorded_at"], row["id"]) > (
+            current["recorded_at"],
+            current["id"],
+        ):
+            latest_movements[row["house_id"]] = dict(row)
+    for house_id, movement in latest_movements.items():
+        audit.setdefault(house_id, {"status_history": [], "last_movement": None})
+        audit[house_id]["last_movement"] = movement
+    return audit
+
+
 def _undo_auto_closeouts(db, house_id):
     """Reopening a house puts back the stock that closing it wrote off automatically."""
     cursor = db.execute(
@@ -681,19 +1136,27 @@ def _undo_auto_closeouts(db, house_id):
 
 
 def _require_ready_to_activate(db, house_id):
-    """A listed SEAI house can only become active once it is marked ready for start."""
+    """A listed SEAI house needs readiness and a recorded survey before activation."""
     row = db.execute(
-        "SELECT p.ready_for_start, h.id AS active_id "
+        "SELECT p.ready_for_start, h.id AS active_id, hs.house_id AS surveyed_id "
         "FROM provided_houses p "
-        "LEFT JOIN houses h ON h.id = p.id WHERE p.id = ?",
+        "LEFT JOIN houses h ON h.id = p.id "
+        "LEFT JOIN house_surveys hs ON hs.house_id = p.id WHERE p.id = ?",
         (str(house_id).strip(),),
     ).fetchone()
-    if row and row["active_id"] is None and not row["ready_for_start"]:
-        raise ApiError(
-            409,
-            f"House {str(house_id).strip()} is not marked ready for start. "
-            "Mark it ready in Houses & teams before activating it.",
-        )
+    if row and row["active_id"] is None:
+        if not row["ready_for_start"]:
+            raise ApiError(
+                409,
+                f"House {str(house_id).strip()} is not marked ready for start. "
+                "Mark it ready in Houses & teams before activating it.",
+            )
+        if not row["surveyed_id"]:
+            raise ApiError(
+                409,
+                "Surveyor review is required before activation. "
+                "Record the house survey in the Surveyor room first.",
+            )
 
 
 def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
@@ -729,9 +1192,31 @@ def _upsert_house(db, house_id, postcode="", owner_name="", employee_name=""):
         """
         INSERT OR IGNORE INTO house_checklists
             (house_id, scaffolding_status, esb_unclipped, plumber_status)
-        SELECT id, plan_scaffolding, plan_esb, plan_plumber FROM provided_houses
-        WHERE id = ? AND plan_scaffolding IS NOT NULL
-          AND plan_esb IS NOT NULL AND plan_plumber IS NOT NULL
+        SELECT id,
+               CASE plan_scaffolding_required
+                   WHEN 1 THEN 'not_done'
+                   WHEN 0 THEN 'not_necessary'
+                   ELSE plan_scaffolding
+               END,
+               CASE plan_esb_required
+                   WHEN 1 THEN 'no'
+                   WHEN 0 THEN 'not_esb'
+                   ELSE plan_esb
+               END,
+               CASE plan_plumber_required
+                   WHEN 1 THEN 'not_done'
+                   WHEN 0 THEN 'not_necessary'
+                   ELSE plan_plumber
+               END
+        FROM provided_houses
+        WHERE id = ? AND (
+            (plan_scaffolding_required IS NOT NULL
+             AND plan_esb_required IS NOT NULL
+             AND plan_plumber_required IS NOT NULL)
+            OR (plan_scaffolding IS NOT NULL
+                AND plan_esb IS NOT NULL
+                AND plan_plumber IS NOT NULL)
+        )
         """,
         (house_id,),
     )
@@ -912,8 +1397,9 @@ def _record_movement(
     cursor = db.execute(
         """
         INSERT INTO movements
-            (happened_on, kind, material_id, qty, source, destination, house_id, delivery_number, person, team, department, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (happened_on, kind, material_id, qty, source, destination, house_id,
+             delivery_number, person, team, department, notes, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             happened_on, kind, material_id, qty, source, destination, house_id or None,
@@ -923,6 +1409,7 @@ def _record_movement(
                 else None
             ),
             person, team, department, notes,
+            datetime.now().isoformat(timespec="seconds"),
         ),
     )
     return cursor.lastrowid
@@ -974,6 +1461,7 @@ def _movement_json(row):
     return {
         "id": row["id"],
         "date": row["happened_on"],
+        "recorded_at": row["recorded_at"],
         "kind": row["kind"],
         "material_id": row["material_id"],
         "material": row["material"],
@@ -1127,6 +1615,7 @@ def _validate_survey_payload(payload):
 
 def _dashboard(db):
     snags = _snags_by_house(db)
+    house_audit = _house_audit_by_id(db)
     materials = []
     for row in db.execute("SELECT * FROM materials ORDER BY name COLLATE NOCASE"):
         balances = balances_for(db, row["id"])
@@ -1189,6 +1678,23 @@ def _dashboard(db):
             else counts["open_house_ids"]
         )
         house_ids.append(row["id"])
+    for row in db.execute(
+        """
+        SELECT id, employee_name, is_finished
+        FROM houses
+        WHERE TRIM(employee_name) != ''
+        """
+    ):
+        counts = team_house_counts.setdefault(
+            employee_location(row["employee_name"]),
+            {"open_house_ids": [], "closed_house_ids": []},
+        )
+        house_ids = (
+            counts["closed_house_ids"]
+            if row["is_finished"]
+            else counts["open_house_ids"]
+        )
+        house_ids.append(row["id"])
     for counts in team_house_counts.values():
         counts["open_house_ids"].sort(key=str.casefold)
         counts["closed_house_ids"].sort(key=str.casefold)
@@ -1225,6 +1731,9 @@ def _dashboard(db):
                 **dict(row),
                 "esb_unclipped": _esb_unclipped_status(row["esb_unclipped"]),
                 "snags": snags.get(row["id"], []),
+                **house_audit.get(
+                    row["id"], {"status_history": [], "last_movement": None}
+                ),
             }
             for row in db.execute(
                 """
@@ -1233,10 +1742,19 @@ def _dashboard(db):
                        h.employee_name, p.address, p.area_m2, p.perimeter_m,
                        p.latitude, p.longitude, h.is_finished,
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
+                       COALESCE(hs.updated_by, '') AS survey_updated_by,
+                       COALESCE(hs.updated_at, '') AS survey_updated_at,
+                       p.plan_scaffolding_required,
+                       COALESCE(p.plan_scaffolding_notes, '') AS plan_scaffolding_notes,
+                       p.plan_esb_required,
+                       COALESCE(p.plan_esb_notes, '') AS plan_esb_notes,
+                       p.plan_plumber_required,
+                       COALESCE(p.plan_plumber_notes, '') AS plan_plumber_notes,
                        c.scaffolding_status, c.esb_unclipped, c.plumber_status
                 FROM houses h
                 LEFT JOIN house_checklists c ON c.house_id = h.id
                 LEFT JOIN provided_houses p ON p.id = h.id
+                LEFT JOIN house_surveys hs ON hs.house_id = h.id
                 ORDER BY h.status_changed_at DESC, h.id COLLATE NOCASE
                 """
             )
@@ -1562,6 +2080,30 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_pdf(self, filename, body, attachment=False):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header(
+            "Content-Disposition",
+            f"{'attachment' if attachment else 'inline'}; filename*=UTF-8''{quote(filename, safe='')}",
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_png(self, body, headers=()):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in headers:
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
+
     def _body(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1613,7 +2155,36 @@ class RequestHandler(BaseHTTPRequestHandler):
             return None
         if user["role"] == "surveyor":
             allowed = self.command == "GET" and self.path.split("?", 1)[0] == "/api/calculator/houses"
-            allowed = allowed or (self.command == "POST" and urlparse(self.path).path in {"/api/house-survey", "/api/auth/pin"})
+            allowed = allowed or (
+                self.command == "GET"
+                and (
+                    urlparse(self.path).path == "/api/house-documents"
+                    or urlparse(self.path).path.startswith("/api/house-documents/")
+                )
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and urlparse(self.path).path
+                in {
+                    "/api/house-survey",
+                    "/api/house-notes",
+                    "/api/survey-notes",
+                    "/api/house-work-plan",
+                    "/api/auth/pin",
+                }
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and urlparse(self.path).path == "/api/house-documents"
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/house-documents/\d+/annotations",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
             if not allowed:
                 self._send_json(403, {"error": "Surveyor access is limited to ready-house surveys."})
                 return None
@@ -1676,6 +2247,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                            p.area_m2, p.perimeter_m, p.latitude, p.longitude,
                            COALESCE(h.stage, 1) AS stage, p.notes, p.source,
                            p.plan_scaffolding, p.plan_esb, p.plan_plumber,
+                           p.plan_scaffolding_required, p.plan_scaffolding_notes,
+                           p.plan_esb_required, p.plan_esb_notes,
+                           p.plan_plumber_required, p.plan_plumber_notes,
                            hs.data AS survey_data, hs.notes AS survey_notes,
                            hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
@@ -1700,14 +2274,124 @@ class RequestHandler(BaseHTTPRequestHandler):
                     ),
                 ).fetchall()
                 snags = _snags_by_house(db)
+                house_audit = _house_audit_by_id(db)
             houses = []
             for row in rows:
                 house = dict(row)
                 raw_survey = house.pop("survey_data", None)
                 house["survey"] = json.loads(raw_survey) if raw_survey else None
                 house["snags"] = snags.get(row["id"], [])
+                house.update(
+                    house_audit.get(
+                        row["id"], {"status_history": [], "last_movement": None}
+                    )
+                )
                 houses.append(house)
             self._send_json(200, {"houses": houses})
+        elif path == "/api/house-documents":
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(403, {"error": "Surveyor access is required to view house documents."})
+                return
+            house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
+            if not house_id:
+                self._send_json(400, {"error": "A house ID is required."})
+                return
+            with connect_db() as db:
+                ready = db.execute(
+                    """
+                    SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                    WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                    """,
+                    (house_id,),
+                ).fetchone()
+                if not ready:
+                    self._send_json(404, {"error": "Ready house was not found."})
+                    return
+                rows = db.execute(
+                    """
+                    SELECT id, filename, size_bytes, uploaded_by, uploaded_at
+                    FROM house_documents WHERE house_id = ? ORDER BY uploaded_at DESC, id DESC
+                    """,
+                    (house_id,),
+                ).fetchall()
+            self._send_json(200, {"house_id": house_id, "documents": [dict(row) for row in rows]})
+        elif path.startswith("/api/house-documents/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(403, {"error": "Surveyor access is required to view house documents."})
+                return
+            document_path = path[len("/api/house-documents/"):].split("/")
+            is_share_pdf = len(document_path) == 2 and document_path[1] == "share"
+            is_preview_page = len(document_path) == 2 and document_path[1] == "preview"
+            if len(document_path) not in {1, 2} or (
+                len(document_path) == 2 and not (is_share_pdf or is_preview_page)
+            ):
+                self._send_json(404, {"error": "Document was not found."})
+                return
+            raw_document_id = document_path[0]
+            if not raw_document_id.isdigit():
+                self._send_json(404, {"error": "Document was not found."})
+                return
+            with connect_db() as db:
+                row = db.execute(
+                    """
+                    SELECT d.filename, d.content, d.house_id, hs.data AS survey_data
+                    FROM house_documents d
+                    JOIN provided_houses p ON p.id = d.house_id
+                    LEFT JOIN houses h ON h.id = p.id
+                    LEFT JOIN house_surveys hs ON hs.house_id = p.id
+                    WHERE d.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                    """,
+                    (int(raw_document_id),),
+                ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "Document was not found."})
+                return
+            if is_preview_page:
+                try:
+                    page_number = int(parse_qs(urlparse(self.path).query).get("page", ["1"])[0])
+                except ValueError:
+                    self._send_json(400, {"error": "PDF page number must be a positive integer."})
+                    return
+                try:
+                    page_image, page_count = _render_house_document_page(
+                        row["content"], page_number
+                    )
+                except ApiError as exc:
+                    self._send_json(exc.status, {"error": str(exc)})
+                    return
+                self._send_png(page_image, (("X-PDF-Page-Count", str(page_count)),))
+                return
+            if not is_share_pdf:
+                self._send_pdf(row["filename"], row["content"])
+                return
+            survey = json.loads(row["survey_data"]) if row["survey_data"] else {}
+            survey_note = str(survey.get("notes") or "").strip()
+            if not survey_note:
+                self._send_json(
+                    409,
+                    {"error": "Save a survey note before sharing the PDF with notes."},
+                )
+                return
+            try:
+                combined_pdf = _create_house_document_share_pdf(
+                    row["content"],
+                    row["filename"],
+                    row["house_id"],
+                    survey_note,
+                )
+            except ApiError as exc:
+                self._send_json(exc.status, {"error": str(exc)})
+                return
+            share_filename = (
+                f"{row['house_id']}-{Path(row['filename']).stem}-with-survey-note.pdf"
+            )
+            self._send_pdf(share_filename, combined_pdf, attachment=True)
         elif path == "/api/calculator/requests":
             user = self._login_required()
             if user is None:
@@ -1876,6 +2560,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 house_data["snags"] = _snags_by_house(db, include_created_at=True).get(
                     house_id, []
                 )
+                house_data.update(
+                    _house_audit_by_id(db).get(
+                        house_id, {"status_history": [], "last_movement": None}
+                    )
+                )
                 self._send_json(
                     200,
                     {
@@ -2026,6 +2715,82 @@ class RequestHandler(BaseHTTPRequestHandler):
             user = self._login_required()
             if user is None:
                 return
+            annotation_match = re.fullmatch(
+                r"/api/house-documents/(\d+)/annotations", path
+            )
+            if annotation_match:
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(403, "Surveyor access is required to annotate house documents.")
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PDF annotations must be a JSON object.")
+                document_id = int(annotation_match.group(1))
+                with connect_db() as db:
+                    source = db.execute(
+                        """
+                        SELECT d.house_id, d.filename, d.content
+                        FROM house_documents d
+                        JOIN provided_houses p ON p.id = d.house_id
+                        LEFT JOIN houses h ON h.id = p.id
+                        WHERE d.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                if source is None:
+                    raise ApiError(404, "Document was not found.")
+                annotated_pdf = _annotate_house_document_pdf(
+                    source["content"], payload.get("annotations")
+                )
+                if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
+                    raise ApiError(413, "The annotated PDF exceeds the 8 MB document limit.")
+                annotated_filename = (
+                    f"{Path(source['filename']).stem}-annotated.pdf"
+                )
+                uploaded_at = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (source["house_id"],),
+                        ).fetchone()
+                        if not ready:
+                            raise ApiError(409, "PDFs can only be annotated for houses ready for start.")
+                        document_count = db.execute(
+                            "SELECT COUNT(*) FROM house_documents WHERE house_id = ?",
+                            (source["house_id"],),
+                        ).fetchone()[0]
+                        if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
+                            raise ApiError(409, "This house already has the maximum of 25 PDF documents.")
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_documents
+                                (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                source["house_id"],
+                                annotated_filename,
+                                annotated_pdf,
+                                len(annotated_pdf),
+                                f"Annotated by {user['display_name']}",
+                                uploaded_at,
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": source["house_id"],
+                        "filename": annotated_filename,
+                        "size_bytes": len(annotated_pdf),
+                        "uploaded_by": f"Annotated by {user['display_name']}",
+                        "uploaded_at": uploaded_at,
+                    },
+                )
+                return
             if path == "/api/house-survey":
                 if user["role"] not in {"admin", "surveyor"}:
                     raise ApiError(403, "Surveyor access is required to record measurements.")
@@ -2052,9 +2817,197 @@ class RequestHandler(BaseHTTPRequestHandler):
                                   user["display_name"], datetime.now().isoformat(timespec="seconds")))
                 self._send_json(200, {"house_id": house_id, "saved": True, "survey": survey})
                 return
+            if path == "/api/house-notes":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(403, "Surveyor access is required to edit house notes.")
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "House notes must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                notes = str(payload.get("notes") or "").strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if len(notes) > 2000:
+                    raise ApiError(400, "Notes must be 2,000 characters or fewer.")
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not ready:
+                            raise ApiError(409, "House notes can only be edited for houses ready for start.")
+                        db.execute(
+                            "UPDATE provided_houses SET notes = ? WHERE id = ?",
+                            (notes, house_id),
+                        )
+                self._send_json(200, {"house_id": house_id, "notes": notes, "saved": True})
+                return
+            if path == "/api/survey-notes":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(403, "Surveyor access is required to edit survey notes.")
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Survey note data must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                note = str(payload.get("notes") or "").strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if len(note) > 2000:
+                    raise ApiError(400, "Survey notes must be 2,000 characters or fewer.")
+                now = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not ready:
+                            raise ApiError(409, "Survey notes can only be edited for houses ready for start.")
+                        existing = db.execute(
+                            "SELECT data FROM house_surveys WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        survey = json.loads(existing["data"]) if existing else {
+                            "windows": [],
+                            "doors": [],
+                            "house_corners": [],
+                        }
+                        survey["notes"] = note
+                        db.execute(
+                            """
+                            INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(house_id) DO UPDATE SET
+                                data = excluded.data,
+                                notes = excluded.notes,
+                                updated_by = excluded.updated_by,
+                                updated_at = excluded.updated_at
+                            """,
+                            (
+                                house_id,
+                                json.dumps(survey, ensure_ascii=False),
+                                note,
+                                user["display_name"],
+                                now,
+                            ),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "notes": note,
+                        "survey": survey,
+                        "updated_by": user["display_name"],
+                        "updated_at": now,
+                        "saved": True,
+                    },
+                )
+                return
+            if path == "/api/house-documents":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(403, "Surveyor access is required to upload house documents.")
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload a PDF using the file picker.")
+                body = self._body()
+                match = re.search(r'boundary="?([^";]+)"?', content_type)
+                if not match:
+                    raise ApiError(400, "Invalid PDF upload.")
+                try:
+                    boundary = match.group(1).encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ApiError(400, "Invalid PDF upload boundary.") from exc
+                house_id = ""
+                filename = ""
+                file_data = None
+                for part in body.split(b"--" + boundary):
+                    if b"\r\n\r\n" not in part:
+                        continue
+                    headers, content = part.split(b"\r\n\r\n", 1)
+                    disposition = re.search(
+                        rb'Content-Disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="([^"]*)")?',
+                        headers,
+                        re.IGNORECASE,
+                    )
+                    if not disposition:
+                        continue
+                    raw_content = content.rsplit(b"\r\n", 1)[0]
+                    if disposition.group(1) == b"house_id":
+                        try:
+                            house_id = raw_content.decode("utf-8").strip()
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid house ID.") from exc
+                    elif disposition.group(1) == b"file":
+                        raw_filename = disposition.group(2) or b""
+                        try:
+                            filename = Path(raw_filename.decode("utf-8")).name.strip()
+                        except (UnicodeDecodeError, ValueError) as exc:
+                            raise ApiError(400, "Invalid PDF filename.") from exc
+                        file_data = raw_content
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if not filename or not filename.lower().endswith(".pdf"):
+                    raise ApiError(400, "House documents must be PDF files.")
+                if not file_data:
+                    raise ApiError(400, "Choose a PDF file to upload.")
+                if len(file_data) > HOUSE_DOCUMENT_MAX_BYTES:
+                    raise ApiError(400, "PDF files must be 8 MB or smaller.")
+                if not file_data.startswith(b"%PDF-"):
+                    raise ApiError(400, "The selected file is not a valid PDF.")
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not ready:
+                            raise ApiError(404, "Ready house was not found.")
+                        document_count = db.execute(
+                            "SELECT COUNT(*) FROM house_documents WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()[0]
+                        if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
+                            raise ApiError(409, "This house already has the maximum of 25 PDF documents.")
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_documents
+                                (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                house_id,
+                                filename,
+                                file_data,
+                                len(file_data),
+                                user["display_name"],
+                                datetime.now().isoformat(timespec="seconds"),
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": house_id,
+                        "filename": filename,
+                        "size_bytes": len(file_data),
+                    },
+                )
+                return
             if path not in {
                 "/api/movements",
                 "/api/movements/batch",
+                "/api/house-checklist",
+                "/api/house-work-plan",
             }:
                 if not self._admin_required(user):
                     return
@@ -2119,49 +3072,135 @@ class RequestHandler(BaseHTTPRequestHandler):
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House checklist must be a JSON object.")
+                if user["role"] not in {"admin", "employee"}:
+                    raise ApiError(403, "Administrator or employee access is required.")
                 house_id = str(payload.get("house_id") or "").strip()
-                scaffolding_status = payload.get("scaffolding_status")
-                esb_unclipped = payload.get("esb_unclipped")
-                plumber_status = payload.get("plumber_status")
                 if not house_id:
                     raise ApiError(400, "House ID is required.")
-                if scaffolding_status not in {"done", "not_done", "not_necessary"}:
-                    raise ApiError(400, "Choose a scaffolding status.")
-                if esb_unclipped not in {"yes", "no", "not_esb"}:
-                    raise ApiError(400, "Choose an ESB cable status.")
-                if plumber_status not in {"done", "not_done", "not_necessary"}:
-                    raise ApiError(400, "Choose a plumber work status.")
+                status_options = {
+                    "scaffolding_status": {"done", "not_done", "not_necessary"},
+                    "esb_unclipped": {"yes", "no", "not_esb"},
+                    "plumber_status": {"done", "not_done", "not_necessary"},
+                }
+                supplied_statuses = {
+                    name: payload[name] for name in status_options if name in payload
+                }
+                if not supplied_statuses:
+                    raise ApiError(400, "Choose at least one house checklist status.")
+                for name, value in supplied_statuses.items():
+                    if (
+                        not isinstance(value, str)
+                        or value not in status_options[name]
+                    ):
+                        raise ApiError(
+                            400, f"Choose a valid {name.replace('_', ' ')}."
+                        )
                 with connect_db() as db:
                     with db:
-                        if not db.execute(
+                        is_active = db.execute(
                             "SELECT 1 FROM houses WHERE id = ?", (house_id,)
-                        ).fetchone():
+                        ).fetchone()
+                        if not is_active:
+                            if user["role"] != "admin":
+                                raise ApiError(
+                                    403,
+                                    "Administrator access is required to edit a pre-start checklist.",
+                                )
+                            if set(supplied_statuses) != set(status_options):
+                                raise ApiError(
+                                    400, "Choose all pre-start checklist statuses."
+                                )
                             planned = db.execute(
                                 "UPDATE provided_houses SET plan_scaffolding = ?, "
                                 "plan_esb = ?, plan_plumber = ? WHERE id = ?",
-                                (scaffolding_status, esb_unclipped, plumber_status, house_id),
+                                (
+                                    supplied_statuses["scaffolding_status"],
+                                    supplied_statuses["esb_unclipped"],
+                                    supplied_statuses["plumber_status"],
+                                    house_id,
+                                ),
                             )
                             if planned.rowcount == 0:
                                 raise ApiError(404, "House was not found.")
                             self._send_json(200, {"house_id": house_id, "saved": True})
                             return
                         db.execute(
+                            "INSERT OR IGNORE INTO house_checklists (house_id) VALUES (?)",
+                            (house_id,),
+                        )
+                        for name, value in supplied_statuses.items():
+                            db.execute(
+                                f"UPDATE house_checklists SET {name} = ? WHERE house_id = ?",
+                                (value, house_id),
+                            )
+                self._send_json(200, {"house_id": house_id, "saved": True})
+            elif path == "/api/house-work-plan":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403, "Surveyor access is required to save a work plan."
+                    )
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "House work plan must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                if not house_id:
+                    raise ApiError(400, "House ID is required.")
+                required_values = {}
+                notes_values = {}
+                for trade in ("scaffolding", "esb", "plumber"):
+                    required = payload.get(f"{trade}_required")
+                    if required is not None and not isinstance(required, bool):
+                        raise ApiError(
+                            400, f"Choose whether {trade} work is required."
+                        )
+                    notes = payload.get(f"{trade}_notes", "")
+                    if not isinstance(notes, str) or len(notes) > 1000:
+                        raise ApiError(
+                            400,
+                            f"{trade.title()} work notes must be 1,000 characters or fewer.",
+                        )
+                    required_values[trade] = (
+                        None if required is None else int(required)
+                    )
+                    notes_values[trade] = notes.strip()
+                with connect_db() as db:
+                    with db:
+                        saved = db.execute(
                             """
-                            INSERT INTO house_checklists
-                                (house_id, scaffolding_status, esb_unclipped, plumber_status)
-                            VALUES (?, ?, ?, ?)
-                            ON CONFLICT(house_id) DO UPDATE SET
-                                scaffolding_status = excluded.scaffolding_status,
-                                esb_unclipped = excluded.esb_unclipped,
-                                plumber_status = excluded.plumber_status
+                            UPDATE provided_houses
+                            SET plan_scaffolding_required = ?,
+                                plan_scaffolding_notes = ?,
+                                plan_esb_required = ?,
+                                plan_esb_notes = ?,
+                                plan_plumber_required = ?,
+                                plan_plumber_notes = ?
+                            WHERE id = ? AND ready_for_start = 1
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM houses
+                                  WHERE houses.id = provided_houses.id
+                              )
                             """,
                             (
+                                required_values["scaffolding"],
+                                notes_values["scaffolding"],
+                                required_values["esb"],
+                                notes_values["esb"],
+                                required_values["plumber"],
+                                notes_values["plumber"],
                                 house_id,
-                                scaffolding_status,
-                                esb_unclipped,
-                                plumber_status,
                             ),
                         )
+                        if saved.rowcount == 0:
+                            exists = db.execute(
+                                "SELECT 1 FROM provided_houses WHERE id = ?",
+                                (house_id,),
+                            ).fetchone()
+                            if not exists:
+                                raise ApiError(404, "House was not found.")
+                            raise ApiError(
+                                409,
+                                "Work plans can only be edited for Ready for start houses.",
+                            )
                 self._send_json(200, {"house_id": house_id, "saved": True})
             elif path == "/api/houses/snags":
                 user = self._login_required()
@@ -2254,10 +3293,21 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 "SELECT 1 FROM houses WHERE id = ?", (house_id,)
                             ).fetchone():
                                 raise ApiError(409, f"House {house_id} is already activated.")
+                            current = db.execute(
+                                "SELECT ready_for_start FROM provided_houses WHERE id = ?",
+                                (house_id,),
+                            ).fetchone()
                             db.execute(
                                 "UPDATE provided_houses SET ready_for_start = ? WHERE id = ?",
                                 (int(payload["ready"]), house_id),
                             )
+                            if bool(current["ready_for_start"]) != payload["ready"]:
+                                _record_house_status(
+                                    db,
+                                    house_id,
+                                    "ready" if payload["ready"] else "not_started",
+                                    user["display_name"],
+                                )
                 self._send_json(200, {"id": house_id, "saved": True})
             elif path == "/api/stocktakes":
                 payload = self._json_body()
@@ -2372,6 +3422,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with connect_db() as db:
                     with db:
                         _require_ready_to_activate(db, house_id)
+                        was_active = db.execute(
+                            "SELECT 1 FROM houses WHERE id = ?", (house_id,)
+                        ).fetchone() is not None
                         provided_house = db.execute(
                             "SELECT postcode, owner_name FROM provided_houses WHERE id = ?",
                             (house_id,),
@@ -2386,6 +3439,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                             owner_name,
                             employee_name,
                         )
+                        if not was_active:
+                            _record_house_status(
+                                db, house_id, "active", user["display_name"]
+                            )
                 self._send_json(201, {"id": house_id})
             elif path == "/api/houses/status":
                 payload = self._json_body()
@@ -2399,7 +3456,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with connect_db() as db:
                     with db:
                         house = db.execute(
-                            "SELECT id, employee_name FROM houses WHERE id = ?",
+                            "SELECT id, employee_name, is_finished FROM houses WHERE id = ?",
                             (house_id,),
                         ).fetchone()
                         if house is None:
@@ -2456,6 +3513,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 house_id,
                             ),
                         )
+                        if bool(house["is_finished"]) != payload["finished"]:
+                            _record_house_status(
+                                db,
+                                house_id,
+                                "closed" if payload["finished"] else "active",
+                                user["display_name"],
+                            )
                 self._send_json(
                     200,
                     {
