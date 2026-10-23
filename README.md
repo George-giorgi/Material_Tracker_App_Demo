@@ -42,6 +42,18 @@ House detail and movement history remain available to administrators only.
 The Teams tab also lists employees assigned to houses at activation and shows
 their open and closed house counts; selecting a count opens those houses.
 
+## County weather
+
+The Overview shows the latest published county-level daily forecast for Mayo
+and Sligo, including expected conditions, high/low temperatures, rainfall, and
+wind. It uses Met Éireann's open county forecast feed; the number of available
+days follows the feed and is not extended into a made-up monthly forecast.
+Forecasts are county-wide, not precise house or town forecasts. The server
+needs outbound internet access to `www.met.ie`; no house coordinates are sent.
+Weather is cached in memory for 15 minutes, and the panel has a manual refresh
+control. If the service is unavailable, the app reports that instead of
+showing stale data. Met Éireann is credited in the panel.
+
 ## Share with employees
 
 The default server listens only on this computer. To let other devices connect,

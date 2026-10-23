@@ -9,12 +9,16 @@ import secrets
 import sqlite3
 import ssl
 import sys
+import time
+from threading import Lock
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime
 from http.cookies import CookieError, SimpleCookie
 from io import BytesIO, StringIO
-from xml.etree.ElementTree import ParseError
+from xml.etree.ElementTree import ParseError, fromstring
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -51,12 +55,121 @@ HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
+MET_EIREANN_COUNTY_FORECAST_URL = (
+    "https://www.met.ie/Open_Data/xml/county_forecast.xml"
+)
+MET_EIREANN_WEATHER_CACHE_SECONDS = 15 * 60
+_met_eireann_weather_cache = None
+_met_eireann_weather_cache_expiry = 0
+_met_eireann_weather_lock = Lock()
 
 
 class ApiError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
+
+
+def _parse_met_eireann_county_forecast(content):
+    try:
+        root = fromstring(content)
+    except ParseError as exc:
+        raise ApiError(502, "Met Éireann returned an unreadable forecast.") from exc
+    if root.tag != "forecast":
+        raise ApiError(502, "Met Éireann returned an unexpected forecast format.")
+
+    wanted_counties = {"MAYO": "Mayo", "SLIGO": "Sligo"}
+    areas = []
+    for county in root.findall("county"):
+        county_name = (county.findtext("name") or "").strip().upper()
+        if county_name not in wanted_counties:
+            continue
+        days = []
+        for forecast_day in county.findall("day"):
+            forecast_date = (forecast_day.findtext("date") or "").strip()
+            try:
+                datetime.fromisoformat(forecast_date)
+            except ValueError as exc:
+                raise ApiError(
+                    502, "Met Éireann returned an invalid forecast date."
+                ) from exc
+
+            def number(field):
+                raw_value = forecast_day.findtext(field)
+                if raw_value is None or not raw_value.strip():
+                    return None
+                try:
+                    value = float(raw_value)
+                except ValueError as exc:
+                    raise ApiError(
+                        502, "Met Éireann returned invalid forecast values."
+                    ) from exc
+                return value if math.isfinite(value) else None
+
+            rainfall_day = number("rainfall_6_18")
+            rainfall_night = number("rainfall_18_6")
+            days.append(
+                {
+                    "date": forecast_date[:10],
+                    "weather": (forecast_day.findtext("weather") or "").strip(),
+                    "min_temp": number("min_temp"),
+                    "max_temp": number("max_temp"),
+                    "wind_speed_kmh": number("wind_speed"),
+                    "wind_direction": (forecast_day.findtext("wind_dir") or "").strip(),
+                    "rainfall_mm": (
+                        rainfall_day + rainfall_night
+                        if rainfall_day is not None and rainfall_night is not None
+                        else None
+                    ),
+                }
+            )
+        if days:
+            areas.append(
+                {"county": wanted_counties[county_name], "days": days}
+            )
+
+    if {area["county"] for area in areas} != {"Mayo", "Sligo"}:
+        raise ApiError(
+            502, "The Mayo and Sligo county forecasts are temporarily unavailable."
+        )
+    return {
+        "issued": root.attrib.get("issued"),
+        "areas": areas,
+        "source": "Met Éireann Open Data",
+        "source_url": "https://www.met.ie/",
+    }
+
+
+def _met_eireann_county_forecast():
+    global _met_eireann_weather_cache, _met_eireann_weather_cache_expiry
+    with _met_eireann_weather_lock:
+        now = time.monotonic()
+        if (
+            _met_eireann_weather_cache is not None
+            and now < _met_eireann_weather_cache_expiry
+        ):
+            return _met_eireann_weather_cache
+
+        request = Request(
+            MET_EIREANN_COUNTY_FORECAST_URL,
+            headers={"User-Agent": "MaterialTracker/1.0"},
+        )
+        try:
+            with urlopen(request, timeout=8) as response:
+                content = response.read(256_001)
+        except (URLError, TimeoutError, OSError) as exc:
+            raise ApiError(
+                502, "Met Éireann weather is temporarily unavailable."
+            ) from exc
+        if len(content) > 256_000:
+            raise ApiError(502, "Met Éireann returned an oversized forecast.")
+
+        forecast = _parse_met_eireann_county_forecast(content)
+        _met_eireann_weather_cache = forecast
+        _met_eireann_weather_cache_expiry = (
+            time.monotonic() + MET_EIREANN_WEATHER_CACHE_SECONDS
+        )
+        return forecast
 
 
 def _open_house_pdf(content):
@@ -2520,6 +2633,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             with connect_db() as db:
                 self._send_json(200, _dashboard(db))
+        elif path == "/api/weather":
+            user = self._login_required()
+            if user is None:
+                return
+            try:
+                forecast = _met_eireann_county_forecast()
+            except ApiError as exc:
+                self._send_json(exc.status, {"error": str(exc)})
+                return
+            self._send_json(200, forecast)
         elif path == "/api/movements":
             user = self._login_required()
             if user is None:

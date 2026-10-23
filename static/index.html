@@ -73,6 +73,16 @@
             <span class="kpi-warn"><b id="stat-counts">—</b> balances to reconcile</span>
           </div>
 
+          <section class="weather-panel card" aria-labelledby="weather-title">
+            <div class="weather-panel-heading">
+              <div><span class="eyebrow">COUNTY FORECAST</span><h2 id="weather-title">Mayo &amp; Sligo weather</h2><p>Plan outdoor work with the latest local outlook.</p></div>
+              <button class="icon-button weather-refresh" id="weather-refresh" type="button" aria-label="Refresh weather forecast" title="Refresh forecast">↻</button>
+            </div>
+            <p class="weather-status" id="weather-status" role="status" aria-live="polite">Forecast loads when you sign in.</p>
+            <div class="weather-areas" id="weather-areas"></div>
+            <p class="weather-attribution">County-level daily forecast from <a href="https://www.met.ie/" target="_blank" rel="noreferrer">Met Éireann</a>. Forecast length depends on the latest published data; conditions can change.</p>
+          </section>
+
           <div class="overview-grid">
             <article class="card stock-card">
               <div class="card-heading"><div><h2>Warehouse stock</h2><p>Current balance by material</p></div><button class="text-button" data-goto="inventory">View inventory <span>→</span></button></div>

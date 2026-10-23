@@ -36,6 +36,50 @@ class NavigationBrowserTests(unittest.TestCase):
             "https://tile.openstreetmap.org/**",
             lambda route: route.abort(),
         )
+        self.page.route(
+            "**/api/weather",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "issued": "2026-10-22T21:00:00",
+                        "areas": [
+                            {
+                                "county": "Mayo",
+                                "days": [
+                                    {
+                                        "date": "2026-10-23",
+                                        "weather": "light_rain",
+                                        "min_temp": 5,
+                                        "max_temp": 11,
+                                        "wind_speed_kmh": 30,
+                                        "wind_direction": "WNW",
+                                        "rainfall_mm": 2,
+                                    }
+                                ],
+                            },
+                            {
+                                "county": "Sligo",
+                                "days": [
+                                    {
+                                        "date": "2026-10-23",
+                                        "weather": "scattered_clouds",
+                                        "min_temp": 4,
+                                        "max_temp": 10,
+                                        "wind_speed_kmh": 25,
+                                        "wind_direction": "W",
+                                        "rainfall_mm": 1,
+                                    }
+                                ],
+                            },
+                        ],
+                        "source": "Met Éireann Open Data",
+                        "source_url": "https://www.met.ie/",
+                    }
+                ),
+            ),
+        )
         self.browser_errors = []
         self.page.on("pageerror", lambda error: self.browser_errors.append(str(error)))
         self.base_url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
@@ -110,6 +154,21 @@ class NavigationBrowserTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM provided_houses").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM houses").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM movements").fetchone()[0], 0)
+        self.assertEqual(self.browser_errors, [])
+
+    def test_overview_shows_mayo_and_sligo_county_forecasts(self):
+        status = self.page.locator("#weather-status")
+        self.page.wait_for_function(
+            "() => document.querySelector('#weather-status')?.textContent.includes('1-day forecast')"
+        )
+        areas = self.page.locator("#weather-areas .weather-area")
+        self.assertEqual(areas.count(), 2)
+        self.assertEqual(areas.nth(0).locator("h3").inner_text(), "County Mayo")
+        self.assertEqual(areas.nth(1).locator("h3").inner_text(), "County Sligo")
+        self.assertIn("Light Rain", areas.nth(0).inner_text())
+        self.assertIn("High 11° · Low 5°", areas.nth(0).inner_text())
+        self.assertIn("30 km/h", areas.nth(0).inner_text())
+        self.assertIn("Met Éireann", self.page.locator(".weather-attribution").inner_text())
         self.assertEqual(self.browser_errors, [])
 
     def test_teams_tab_can_switch_back_to_houses_after_overview_navigation(self):

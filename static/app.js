@@ -21,6 +21,9 @@ const state = {
   surveyRoomHouseId: "",
   surveyRoomReturn: "list",
   surveyRoomRequest: 0,
+  weather: null,
+  weatherError: "",
+  weatherLoading: false,
   preparedHouseShare: null,
   pdfAnnotator: null,
   user: null,
@@ -193,6 +196,7 @@ const navigationTourSteps = [
 ];
 let toastTimer;
 let movementSearchRequest = 0;
+let weatherRequestId = 0;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(
@@ -923,9 +927,122 @@ function movementStatusClass(item) {
   return "";
 }
 
+function weatherConditionIcon(condition) {
+  const value = String(condition || "").toLowerCase();
+  if (value.includes("thunder")) return "⛈️";
+  if (value.includes("snow") || value.includes("sleet")) return "🌨️";
+  if (value.includes("rain") || value.includes("shower")) return "🌧️";
+  if (value.includes("fog") || value.includes("mist")) return "🌫️";
+  if (value.includes("cloud")) return value.includes("scattered") ? "⛅" : "☁️";
+  if (value.includes("sun") || value.includes("clear")) return "🌤️";
+  return "🌦️";
+}
+
+function renderWeather() {
+  const status = $("#weather-status");
+  const refreshButton = $("#weather-refresh");
+  const locations = $("#weather-areas");
+  refreshButton.disabled = state.weatherLoading;
+  refreshButton.setAttribute("aria-busy", String(state.weatherLoading));
+  if (state.weatherError) {
+    status.textContent = `Forecast unavailable: ${state.weatherError}`;
+    status.classList.add("error");
+  } else if (state.weatherLoading) {
+    status.textContent = state.weather ? "Refreshing forecast…" : "Loading county forecast…";
+    status.classList.remove("error");
+  } else if (!state.weather) {
+    status.textContent = "Forecast is not available yet.";
+    status.classList.remove("error");
+  } else {
+    const issued = state.weather.issued
+      ? new Date(state.weather.issued).toLocaleString(undefined, {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "recently";
+    const dayCount = state.weather.areas[0]?.days.length || 0;
+    status.textContent = `${dayCount}-day forecast · Issued ${issued}`;
+    status.classList.remove("error");
+  }
+
+  if (!state.weather) {
+    locations.replaceChildren();
+    return;
+  }
+  locations.innerHTML = state.weather.areas
+    .map(
+      (area) => `
+        <article class="weather-area">
+          <h3>County ${escapeHtml(area.county)}</h3>
+          <div class="weather-days" role="region" tabindex="0" aria-label="${escapeHtml(area.county)} county forecast">
+            ${area.days
+              .map((day) => {
+                const date = new Date(`${day.date}T12:00:00`);
+                const dateLabel = Number.isNaN(date.getTime())
+                  ? day.date
+                  : date.toLocaleDateString(undefined, {
+                      weekday: "short",
+                      day: "numeric",
+                      month: "short",
+                    });
+                const temperature = (value) =>
+                  value === null || value === undefined || !Number.isFinite(Number(value))
+                    ? "—"
+                    : `${Math.round(Number(value))}°`;
+                const rain =
+                  day.rainfall_mm === null || day.rainfall_mm === undefined
+                    ? "Rain —"
+                    : `Rain ${new Intl.NumberFormat(undefined, {
+                        maximumFractionDigits: 1,
+                      }).format(day.rainfall_mm)} mm`;
+                const wind =
+                  day.wind_speed_kmh === null || day.wind_speed_kmh === undefined
+                    ? "Wind —"
+                    : `Wind ${escapeHtml(day.wind_direction || "")} ${Math.round(Number(day.wind_speed_kmh))} km/h`;
+                const condition = String(day.weather || "Forecast")
+                  .replaceAll("_", " ")
+                  .replace(/\b\w/g, (letter) => letter.toUpperCase());
+                return `
+                  <div class="weather-day">
+                    <span class="weather-day-date">${escapeHtml(dateLabel)}</span>
+                    <span class="weather-day-condition">${weatherConditionIcon(day.weather)} ${escapeHtml(condition)}</span>
+                    <span class="weather-day-temps">High ${temperature(day.max_temp)} · Low ${temperature(day.min_temp)}</span>
+                    <span class="weather-day-details">${rain}</span>
+                    <span class="weather-day-details">${wind}</span>
+                  </div>`;
+              })
+              .join("")}
+          </div>
+        </article>`,
+    )
+    .join("");
+}
+
+async function loadCountyWeather() {
+  const requestId = ++weatherRequestId;
+  state.weatherLoading = true;
+  state.weatherError = "";
+  renderWeather();
+  try {
+    state.weather = await request("/api/weather");
+  } catch (error) {
+    if (requestId !== weatherRequestId) return;
+    state.weatherError = error.message;
+  } finally {
+    if (requestId === weatherRequestId) {
+      state.weatherLoading = false;
+      renderWeather();
+    }
+  }
+}
+
 function renderOverview() {
   const data = state.dashboard;
   const materials = data.materials;
+  renderWeather();
   $("#stat-materials").textContent = materials.length;
   const hs = data.house_summary || {
     provided: 0, active: data.houses, closed: 0, not_started: 0,
@@ -3144,6 +3261,7 @@ async function refresh(preserveMovementLines = false) {
   state.dashboard = dashboard;
   state.movements = ledger.movements;
   renderAll(preserveMovementLines);
+  loadCountyWeather();
   if (state.viewingHouseId) {
     await loadHouseDetail(state.viewingHouseId);
   }
@@ -3806,6 +3924,7 @@ function bindEvents() {
     button.addEventListener("click", () => setTab(button.dataset.tab)),
   );
   $("#go-overview").addEventListener("click", goToHomeView);
+  $("#weather-refresh").addEventListener("click", loadCountyWeather);
   $$("[data-house-view]").forEach((tile) =>
     tile.addEventListener("click", () => {
       state.houseTeamFilter = null;

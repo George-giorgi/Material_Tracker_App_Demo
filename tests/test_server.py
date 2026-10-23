@@ -6,6 +6,7 @@ import threading
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import Workbook
 
@@ -68,6 +69,69 @@ class TrackerTests(unittest.TestCase):
             self.assertTrue(photo)
         finally:
             connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_met_eireann_county_forecast_parses_mayo_and_sligo(self):
+        feed = b"""<forecast issued="2026-10-22T21:00:00">
+          <county><name>MAYO</name><day>
+            <date>2026-10-23T00:00:00</date><min_temp>5</min_temp>
+            <max_temp>11</max_temp><weather>light_rain</weather>
+            <wind_speed units="kmh">30</wind_speed><wind_dir>WNW</wind_dir>
+            <rainfall_6_18>1.3</rainfall_6_18><rainfall_18_6>0.7</rainfall_18_6>
+          </day></county>
+          <county><name>SLIGO</name><day>
+            <date>2026-10-23T00:00:00</date><min_temp>4</min_temp>
+            <max_temp>10</max_temp><weather>scattered_clouds</weather>
+            <wind_speed units="kmh">25</wind_speed><wind_dir>W</wind_dir>
+            <rainfall_6_18>0.2</rainfall_6_18><rainfall_18_6>0.1</rainfall_18_6>
+          </day></county>
+        </forecast>"""
+
+        result = server._parse_met_eireann_county_forecast(feed)
+
+        self.assertEqual(result["issued"], "2026-10-22T21:00:00")
+        self.assertEqual(
+            [area["county"] for area in result["areas"]], ["Mayo", "Sligo"]
+        )
+        self.assertEqual(result["areas"][0]["days"][0]["rainfall_mm"], 2.0)
+        self.assertEqual(result["areas"][1]["days"][0]["wind_direction"], "W")
+
+    def test_weather_endpoint_requires_login_and_returns_county_data(self):
+        httpd, thread = self.start_test_server()
+        forecast = {
+            "issued": "2026-10-22T21:00:00",
+            "areas": [
+                {"county": "Mayo", "days": []},
+                {"county": "Sligo", "days": []},
+            ],
+            "source": "Met Éireann Open Data",
+            "source_url": "https://www.met.ie/",
+        }
+        try:
+            status, _, _ = self.http_request(httpd, "GET", "/api/weather")
+            self.assertEqual(status, 401)
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "weather-admin",
+                    "display_name": "Weather Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            with patch.object(
+                server, "_met_eireann_county_forecast", return_value=forecast
+            ):
+                status, result, _ = self.http_request(
+                    httpd, "GET", "/api/weather", cookie=admin_cookie
+                )
+            self.assertEqual(status, 200)
+            self.assertEqual(result, forecast)
+        finally:
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=5)
