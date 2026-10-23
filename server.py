@@ -2632,7 +2632,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             if user is None:
                 return
             with connect_db() as db:
-                self._send_json(200, _dashboard(db))
+                db.execute("BEGIN")
+                dashboard = _dashboard(db)
+            self._send_json(200, dashboard)
         elif path == "/api/weather":
             user = self._login_required()
             if user is None:
@@ -3246,6 +3248,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if path.endswith("/batch"):
                     with connect_db() as db:
                         with db:
+                            db.execute("BEGIN IMMEDIATE")
                             movement_ids, delivery_number = _record_movement_batch(
                                 db, payload, allow_house_updates
                             )
@@ -3254,6 +3257,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         raise ApiError(400, "Movement data must be a JSON object.")
                     with connect_db() as db:
                         with db:
+                            db.execute("BEGIN IMMEDIATE")
                             movement_ids = [
                                 _record_movement(
                                     db,
@@ -3536,6 +3540,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     raise ApiError(400, "Notes must be 2,000 characters or fewer.")
                 with connect_db() as db:
                     with db:
+                        db.execute("BEGIN IMMEDIATE")
                         if not db.execute(
                             "SELECT 1 FROM materials WHERE id = ?", (material_id,)
                         ).fetchone():
@@ -3671,6 +3676,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 restored_count = 0
                 with connect_db() as db:
                     with db:
+                        db.execute("BEGIN IMMEDIATE")
                         house = db.execute(
                             "SELECT id, employee_name, is_finished FROM houses WHERE id = ?",
                             (house_id,),

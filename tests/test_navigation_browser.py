@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import server
@@ -341,6 +342,132 @@ class NavigationBrowserTests(unittest.TestCase):
             stage_two.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(184, 119, 50)",
         )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_house_stage_change_updates_card_dashboard_and_survives_reload(self):
+        with server.connect_db() as db:
+            server._upsert_house(db, "STAGE-UI-TEST")
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        card = self.page.locator("#houses-list .house-active").filter(
+            has=self.page.locator("h2", has_text="STAGE-UI-TEST")
+        )
+        stage_two = card.locator('.stage-btn[data-stage="2"]')
+        self.assertEqual(stage_two.get_attribute("aria-pressed"), "false")
+        with self.page.expect_response(
+            lambda response: response.url.endswith("/api/houses/stage")
+            and response.status == 200
+        ):
+            stage_two.click()
+        self.page.wait_for_function(
+            """() => {
+              const card = [...document.querySelectorAll('#houses-list .house-active')]
+                .find((item) => item.querySelector('h2')?.textContent === 'STAGE-UI-TEST');
+              return card?.querySelector('.stage-btn[data-stage="2"]')?.getAttribute('aria-pressed') === 'true';
+            }"""
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT stage FROM houses WHERE id = 'STAGE-UI-TEST'"
+                ).fetchone()[0],
+                2,
+            )
+        self.page.locator('[data-tab="overview"]').click()
+        self.assertEqual(self.page.locator("#stat-houses").inner_text(), "1")
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        card = self.page.locator("#houses-list .house-active").filter(
+            has=self.page.locator("h2", has_text="STAGE-UI-TEST")
+        )
+        self.assertEqual(
+            card.locator('.stage-btn[data-stage="2"]').get_attribute("aria-pressed"),
+            "true",
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_cancelled_movement_is_not_saved_and_submit_cannot_duplicate(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "MOVEMENT-UI-TEST")
+                material_id = db.execute(
+                    "INSERT INTO materials(code, name, unit, opening_qty) "
+                    "VALUES ('MOVEMENT-UI', 'Movement UI board', 'boards', 5)"
+                ).lastrowid
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        card = self.page.locator("#houses-list .house-active").filter(
+            has=self.page.locator("h2", has_text="MOVEMENT-UI-TEST")
+        )
+        card.locator(".house-record-movement").click()
+        self.page.locator("#movement-material-search").fill("Movement UI board")
+        self.page.locator("#add-material-line").click()
+        self.page.locator("#movement-lines input[type='number']").fill("1")
+        self.page.get_by_role("button", name="Cancel").click()
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM movements WHERE material_id = ?",
+                    (material_id,),
+                ).fetchone()[0],
+                0,
+            )
+
+        card.locator(".house-record-movement").click()
+        self.page.locator("#movement-material-search").fill("Movement UI board")
+        self.page.locator("#add-material-line").click()
+        self.page.locator("#movement-lines input[type='number']").fill("1")
+        self.page.locator(
+            '#movement-dialog .movement-fields[data-for="pickup"] [name="person"]'
+        ).fill("Delivery Worker")
+        self.page.locator(
+            '#movement-dialog .movement-fields[data-for="pickup"] [name="team"]'
+        ).fill("Movement Crew")
+        save_button = self.page.locator(
+            "#movement-dialog button[type='submit']"
+        )
+        entered_batch = threading.Event()
+        release_batch = threading.Event()
+        calls_lock = threading.Lock()
+        batch_calls = 0
+        record_batch = server._record_movement_batch
+
+        def pause_batch(db, payload, allow_house_updates=True):
+            nonlocal batch_calls
+            with calls_lock:
+                batch_calls += 1
+            entered_batch.set()
+            if not release_batch.wait(timeout=5):
+                raise TimeoutError("Timed out waiting to release the UI movement.")
+            return record_batch(db, payload, allow_house_updates)
+
+        with patch.object(server, "_record_movement_batch", pause_batch):
+            try:
+                save_button.click()
+                self.assertTrue(entered_batch.wait(timeout=5))
+                self.assertTrue(save_button.is_disabled())
+                with calls_lock:
+                    self.assertEqual(batch_calls, 1)
+            finally:
+                release_batch.set()
+            self.page.wait_for_function(
+                "() => !document.querySelector('#movement-dialog').open"
+            )
+
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM movements WHERE material_id = ?",
+                    (material_id,),
+                ).fetchone()[0],
+                1,
+            )
+            balances = server.balances_for(db, material_id)
+            self.assertEqual(balances["warehouse"], 4)
+            self.assertEqual(balances["house:MOVEMENT-UI-TEST"], 1)
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        self.assertIn("Movement UI board", card.inner_text())
         self.assertEqual(self.browser_errors, [])
 
     def test_active_house_cards_keep_equal_height_and_scroll_long_content(self):

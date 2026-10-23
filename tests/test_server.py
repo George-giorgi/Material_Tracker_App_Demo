@@ -4,8 +4,10 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
+from threading import Event, Lock
 from unittest.mock import patch
 
 from openpyxl import Workbook
@@ -1473,6 +1475,441 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(balances["warehouse"], 5)
         self.assertEqual(balances["team:Crew A"], 2)
         self.assertEqual(balances["house:H-1"], 2)
+
+    def test_movement_api_keeps_every_location_and_dashboard_in_sync(self):
+        material_id = self.add_material(name="Lifecycle board", opening=50)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "FLOW-HOUSE-1")
+                server._upsert_house(db, "FLOW-HOUSE-2")
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "flow-admin",
+                    "display_name": "Flow Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            common = {
+                "date": date.today().isoformat(),
+                "person": "Flow Worker",
+                "items": [{"material_id": material_id, "qty": 10}],
+            }
+
+            def post_movement(kind, **values):
+                payload = {**common, "kind": kind, **values}
+                return self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/movements/batch",
+                    payload,
+                    admin_cookie,
+                )
+
+            status, collection, _ = post_movement(
+                "collection", team="Flow Crew"
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(len(collection["ids"]), 1)
+            status, first_delivery, _ = post_movement(
+                "delivery",
+                items=[{"material_id": material_id, "qty": 4}],
+                house_id="FLOW-HOUSE-1",
+                team="Flow Crew",
+                source_kind="team",
+                source_team="Flow Crew",
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(first_delivery["delivery_number"], 1)
+            status, second_delivery, _ = post_movement(
+                "pickup",
+                items=[{"material_id": material_id, "qty": 5}],
+                house_id="FLOW-HOUSE-1",
+                team="Flow Crew",
+                is_extra_delivery=True,
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(second_delivery["delivery_number"], 2)
+            status, use_result, _ = post_movement(
+                "use",
+                items=[{"material_id": material_id, "qty": 2}],
+                house_id="FLOW-HOUSE-1",
+                team="Flow Crew",
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = post_movement(
+                "return",
+                items=[{"material_id": material_id, "qty": 1}],
+                house_id="FLOW-HOUSE-1",
+                team="Flow Crew",
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = post_movement(
+                "transfer",
+                items=[{"material_id": material_id, "qty": 3}],
+                source_kind="team",
+                source_reference="Flow Crew",
+                destination_kind="house",
+                destination_reference="FLOW-HOUSE-2",
+                team="Flow Crew",
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(len(use_result["ids"]), 1)
+
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            material = next(
+                row for row in dashboard["materials"] if row["id"] == material_id
+            )
+            self.assertEqual(material["balances"]["warehouse"], 36)
+            self.assertEqual(material["balances"]["team:Flow Crew"], 3)
+            self.assertEqual(material["balances"]["house:FLOW-HOUSE-1"], 6)
+            self.assertEqual(material["balances"]["house:FLOW-HOUSE-2"], 3)
+            self.assertEqual(material["balances"]["consumed"], 2)
+            self.assertEqual(material["warehouse_qty"], 36)
+            self.assertEqual(
+                dashboard["house_summary"]["active"],
+                2,
+            )
+            self.assertEqual(
+                next(
+                    house["stage"]
+                    for house in dashboard["house_list"]
+                    if house["id"] == "FLOW-HOUSE-1"
+                ),
+                1,
+            )
+
+            status, ledger, _ = self.http_request(
+                httpd, "GET", "/api/movements", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(len(ledger["movements"]), 5)
+            self.assertEqual(
+                sum(
+                    row["qty"]
+                    for row in ledger["movements"]
+                    if row["kind"] in {"pickup", "delivery"}
+                ),
+                9,
+            )
+            with server.connect_db() as db:
+                saved = server.balances_for(db, material_id)
+                self.assertEqual(saved, material["balances"])
+                self.assertEqual(
+                    db.execute(
+                        "SELECT COUNT(*) FROM movements WHERE material_id = ?",
+                        (material_id,),
+                    ).fetchone()[0],
+                    6,
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_concurrent_movements_serialize_stock_validation(self):
+        material_id = self.add_material(name="Concurrent board", opening=10)
+        httpd, thread = self.start_test_server()
+        first_balance_checked = Event()
+        second_balance_checked = Event()
+        release_first = Event()
+        calls_lock = Lock()
+        calls = 0
+        original_balances_for = server.balances_for
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "race-admin",
+                    "display_name": "Race Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+
+            def pause_first_balance_check(db, requested_material_id):
+                nonlocal calls
+                balances = original_balances_for(db, requested_material_id)
+                with calls_lock:
+                    calls += 1
+                    call_number = calls
+                if call_number == 1:
+                    first_balance_checked.set()
+                    if not release_first.wait(timeout=5):
+                        raise TimeoutError("Timed out waiting to release the first movement.")
+                else:
+                    second_balance_checked.set()
+                return balances
+
+            def post_collection(person):
+                return self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/movements/batch",
+                    {
+                        "kind": "collection",
+                        "date": date.today().isoformat(),
+                        "person": person,
+                        "team": "Concurrent Crew",
+                        "items": [{"material_id": material_id, "qty": 7}],
+                    },
+                    admin_cookie,
+                )
+
+            with patch.object(server, "balances_for", pause_first_balance_check):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    first = pool.submit(post_collection, "Worker One")
+                    self.assertTrue(first_balance_checked.wait(timeout=5))
+                    second = pool.submit(post_collection, "Worker Two")
+                    second_checked_while_first_holds_lock = second_balance_checked.wait(
+                        timeout=0.25
+                    )
+                    release_first.set()
+                    first_result = first.result(timeout=8)
+                    second_result = second.result(timeout=8)
+
+            self.assertFalse(second_checked_while_first_holds_lock)
+            self.assertEqual(
+                sorted((first_result[0], second_result[0])),
+                [201, 409],
+            )
+            with server.connect_db() as db:
+                self.assertEqual(
+                    server.balances_for(db, material_id)["warehouse"], 3
+                )
+                self.assertEqual(
+                    db.execute(
+                        "SELECT COUNT(*) FROM movements WHERE material_id = ?",
+                        (material_id,),
+                    ).fetchone()[0],
+                    1,
+                )
+        finally:
+            release_first.set()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_movement_validation_rollbacks_and_stocktake_updates_balances(self):
+        material_id = self.add_material(name="Validation board", opening=5)
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "CLOSED-MOVEMENT-TEST")
+                db.execute(
+                    "UPDATE houses SET is_finished = 1 WHERE id = ?",
+                    ("CLOSED-MOVEMENT-TEST",),
+                )
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "validation-admin",
+                    "display_name": "Validation Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            payload = {
+                "kind": "collection",
+                "date": date.today().isoformat(),
+                "person": "Validation Worker",
+                "team": "Validation Crew",
+                "items": [{"material_id": material_id, "qty": 1}],
+            }
+            invalid_payloads = [
+                ({**payload, "items": []}, 400),
+                (
+                    {**payload, "items": [{"material_id": material_id, "qty": 0}]},
+                    400,
+                ),
+                (
+                    {**payload, "items": [{"material_id": material_id, "qty": -1}]},
+                    400,
+                ),
+                (
+                    {**payload, "items": [{"material_id": material_id, "qty": "no"}]},
+                    400,
+                ),
+                ({**payload, "person": ""}, 400),
+                (
+                    {**payload, "items": [{"material_id": material_id, "qty": 6}]},
+                    409,
+                ),
+                (
+                    {
+                        **payload,
+                        "items": [
+                            {"material_id": material_id, "qty": 2},
+                            {"material_id": material_id, "qty": 6},
+                        ],
+                    },
+                    409,
+                ),
+            ]
+            for invalid, expected_status in invalid_payloads:
+                status, _, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/movements/batch",
+                    invalid,
+                    admin_cookie,
+                )
+                self.assertEqual(status, expected_status, invalid)
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/movements/batch",
+                {
+                    **payload,
+                    "kind": "pickup",
+                    "house_id": "CLOSED-MOVEMENT-TEST",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/stocktakes",
+                {
+                    "material_id": material_id,
+                    "location": "warehouse",
+                    "quantity": 8,
+                    "counted_by": "",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 400)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/stocktakes",
+                {
+                    "material_id": material_id,
+                    "location": "warehouse",
+                    "quantity": 8,
+                    "counted_by": "Counter",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/movements/batch",
+                {
+                    **payload,
+                    "items": [{"material_id": material_id, "qty": 6}],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            updated_material = next(
+                row for row in dashboard["materials"] if row["id"] == material_id
+            )
+            self.assertEqual(updated_material["warehouse_qty"], 2)
+            self.assertEqual(
+                updated_material["balances"]["team:Validation Crew"], 6
+            )
+            with server.connect_db() as db:
+                self.assertEqual(server.balances_for(db, material_id)["warehouse"], 2)
+                self.assertEqual(
+                    db.execute(
+                        "SELECT COUNT(*) FROM movements WHERE material_id = ?",
+                        (material_id,),
+                    ).fetchone()[0],
+                    1,
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_stage_api_validates_and_persists_updates_for_dashboard(self):
+        with server.connect_db() as db:
+            server._upsert_house(db, "STAGE-API-TEST")
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "stage-admin",
+                    "display_name": "Stage Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            for stage in (0, 3, True, "2"):
+                status, result, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/houses/stage",
+                    {"id": "STAGE-API-TEST", "stage": stage},
+                    admin_cookie,
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("Stage must be 1 or 2", result["error"])
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/houses/stage",
+                {"id": "MISSING-STAGE-HOUSE", "stage": 2},
+                admin_cookie,
+            )
+            self.assertEqual(status, 404)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/houses/stage",
+                {"id": "STAGE-API-TEST", "stage": 2},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["stage"], 2)
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                next(
+                    house["stage"]
+                    for house in dashboard["house_list"]
+                    if house["id"] == "STAGE-API-TEST"
+                ),
+                2,
+            )
+            with server.connect_db() as db:
+                self.assertEqual(
+                    db.execute(
+                        "SELECT stage FROM houses WHERE id = 'STAGE-API-TEST'"
+                    ).fetchone()[0],
+                    2,
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
 
     def test_collection_can_be_linked_to_a_house_and_owner(self):
         material_id = self.add_material()
