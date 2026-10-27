@@ -53,6 +53,7 @@ HOUSE_DOCUMENT_MAX_COUNT = 25
 HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
+SEAI_DOCUMENT_MAX_BYTES = 20_000_000
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
 MET_EIREANN_COUNTY_FORECAST_URL = (
@@ -172,7 +173,7 @@ def _met_eireann_county_forecast():
         return forecast
 
 
-def _open_house_pdf(content):
+def _open_pdf_document(content):
     try:
         document = fitz.open(stream=content, filetype="pdf")
     except (fitz.FileDataError, ValueError, RuntimeError) as exc:
@@ -192,8 +193,8 @@ def _open_house_pdf(content):
     return document
 
 
-def _render_house_document_page(content, page_number):
-    document = _open_house_pdf(content)
+def _render_pdf_page(content, page_number):
+    document = _open_pdf_document(content)
     try:
         if page_number < 1 or page_number > document.page_count:
             raise ApiError(404, "That PDF page does not exist.")
@@ -210,12 +211,12 @@ def _render_house_document_page(content, page_number):
         document.close()
 
 
-def _annotate_house_document_pdf(content, annotations):
+def _annotate_pdf_document(content, annotations):
     if not isinstance(annotations, list) or not annotations:
         raise ApiError(400, "Add at least one pen stroke or text note before saving.")
     if len(annotations) > HOUSE_DOCUMENT_MAX_ANNOTATIONS:
         raise ApiError(400, "This PDF has too many annotations to save at once.")
-    document = _open_house_pdf(content)
+    document = _open_pdf_document(content)
     try:
         for annotation in annotations:
             if not isinstance(annotation, dict):
@@ -472,6 +473,165 @@ def _create_house_document_share_pdf(content, filename, house_id, survey_note):
     return output.getvalue()
 
 
+def _create_seai_document_share_pdf(selections, documents, house_id, survey_note):
+    writer = PdfWriter()
+    filenames = set()
+    for selection in selections:
+        source = documents[selection["document_id"]]
+        try:
+            reader = PdfReader(BytesIO(source["content"]), strict=False)
+        except (PdfReadError, ValueError, OSError) as exc:
+            raise ApiError(422, "A selected SEAI PDF could not be read.") from exc
+        if reader.is_encrypted:
+            raise ApiError(422, "Password-protected SEAI PDFs cannot be shared.")
+        page_number = selection["page"]
+        if page_number < 1 or page_number > len(reader.pages):
+            raise ApiError(
+                400,
+                f"Page {page_number} does not exist in {source['filename']}.",
+            )
+        writer.add_page(reader.pages[page_number - 1])
+        filenames.add(source["filename"])
+    selected_pages = BytesIO()
+    writer.write(selected_pages)
+    source_label = (
+        f"Selected SEAI pages ({len(selections)} pages from {len(filenames)} PDFs)"
+    )
+    return _create_house_document_share_pdf(
+        selected_pages.getvalue(), source_label, house_id, survey_note
+    )
+
+
+def _seai_document_source_stem(filename):
+    stem = Path(filename).stem
+    return re.sub(
+        r"(?:-annotated(?:-\d+)?)+$",
+        "",
+        stem,
+        flags=re.IGNORECASE,
+    )
+
+
+def _is_annotated_pdf_filename(filename):
+    return bool(
+        re.search(r"(?:-annotated)+(?:-\d+)?\.pdf$", str(filename), re.IGNORECASE)
+    )
+
+
+def _is_not_started_house(db, house_id):
+    row = db.execute(
+        """
+        SELECT p.ready_for_start, h.id AS active_id
+        FROM provided_houses p
+        LEFT JOIN houses h ON h.id = p.id
+        WHERE p.id = ?
+        """,
+        (house_id,),
+    ).fetchone()
+    return bool(row and not row["ready_for_start"] and row["active_id"] is None)
+
+
+def _require_pdf_editable(db, house_id):
+    if _is_not_started_house(db, house_id):
+        raise ApiError(409, "PDFs are view-only while the house is Not started.")
+
+
+def _clear_house_survey_records(db, house_id):
+    db.execute("DELETE FROM house_surveys WHERE house_id = ?", (house_id,))
+    db.execute("DELETE FROM house_snags WHERE house_id = ?", (house_id,))
+    db.execute("DELETE FROM house_checklists WHERE house_id = ?", (house_id,))
+    db.execute(
+        """
+        UPDATE provided_houses
+        SET notes = '',
+            plan_scaffolding = NULL,
+            plan_esb = NULL,
+            plan_plumber = NULL,
+            plan_scaffolding_required = NULL,
+            plan_scaffolding_notes = '',
+            plan_esb_required = NULL,
+            plan_esb_notes = '',
+            plan_plumber_required = NULL,
+            plan_plumber_notes = ''
+        WHERE id = ?
+        """,
+        (house_id,),
+    )
+
+    house_document_ids = [
+        row["id"]
+        for row in db.execute(
+            "SELECT id, filename FROM house_documents WHERE house_id = ?",
+            (house_id,),
+        )
+        if _is_annotated_pdf_filename(row["filename"])
+    ]
+    if house_document_ids:
+        db.executemany(
+            "DELETE FROM house_documents WHERE id = ?",
+            ((document_id,) for document_id in house_document_ids),
+        )
+
+    seai_documents_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'seai_documents'"
+    ).fetchone()
+    if seai_documents_table:
+        annotated_ids = [
+            row["id"]
+            for row in db.execute(
+                """
+                SELECT id, filename FROM seai_documents
+                WHERE application_id = ?
+                """,
+                (house_id,),
+            )
+            if _is_annotated_pdf_filename(row["filename"])
+        ]
+        if annotated_ids:
+            db.executemany(
+                "DELETE FROM seai_documents WHERE id = ?",
+                ((document_id,) for document_id in annotated_ids),
+            )
+
+    applications_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'seai_applications'"
+    ).fetchone()
+    if applications_table:
+        columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(seai_applications)")
+        }
+        if not {"application_id", "detail_data_json"}.issubset(columns):
+            raise ApiError(500, "SEAI application details could not be reset.")
+        application = db.execute(
+            "SELECT detail_data_json FROM seai_applications WHERE application_id = ?",
+            (house_id,),
+        ).fetchone()
+        if application:
+            try:
+                details = json.loads(application["detail_data_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ApiError(500, "Stored SEAI application details are invalid.") from exc
+            if not isinstance(details, dict):
+                raise ApiError(500, "Stored SEAI application details are invalid.")
+            measures = details.get("Measures")
+            changed = False
+            if isinstance(measures, list):
+                for measure in measures:
+                    if (
+                        isinstance(measure, dict)
+                        and measure.get("Survey Qty including Variation") != ""
+                    ):
+                        measure["Survey Qty including Variation"] = ""
+                        changed = True
+            if changed:
+                db.execute(
+                    "UPDATE seai_applications SET detail_data_json = ? "
+                    "WHERE application_id = ?",
+                    (json.dumps(details, ensure_ascii=False), house_id),
+                )
+
+
 @contextmanager
 def connect_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -582,6 +742,15 @@ def initialize_db():
             );
             """
         )
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'seai_documents'"
+        ).fetchone():
+            seai_document_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+            }
+            if "content" not in seai_document_columns:
+                db.execute("ALTER TABLE seai_documents ADD COLUMN content BLOB")
         status_history_foreign_keys = {
             row["table"]
             for row in db.execute("PRAGMA foreign_key_list(house_status_history)")
@@ -2348,6 +2517,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 and (
                     urlparse(self.path).path == "/api/house-documents"
                     or urlparse(self.path).path.startswith("/api/house-documents/")
+                    or urlparse(self.path).path == "/api/seai-documents"
+                    or urlparse(self.path).path.startswith("/api/seai-documents/")
                 )
             )
             allowed = allowed or (
@@ -2358,6 +2529,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "/api/house-notes",
                     "/api/survey-notes",
                     "/api/house-work-plan",
+                    "/api/seai-measure-variation",
+                    "/api/seai-documents/share",
                     "/api/auth/pin",
                 }
             )
@@ -2369,6 +2542,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.command == "POST"
                 and re.fullmatch(
                     r"/api/house-documents/\d+/annotations",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/seai-documents/\d+/annotations",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/seai-documents/\d+/share",
                     urlparse(self.path).path,
                 )
                 is not None
@@ -2403,6 +2592,87 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+        elif path == "/oldest-house-test":
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Surveyor access is required to view house photos."},
+                )
+                return
+            self._send_file(
+                STATIC_DIR / "oldest-house-test.html", "text/html; charset=utf-8"
+            )
+        elif path.startswith("/oldest-house-test/photos/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Surveyor access is required to view house photos."},
+                )
+                return
+            photo_name = path.rsplit("/", 1)[-1]
+            photos = {
+                "front.jpg": STATIC_DIR / "oldest-house-test" / "front.jpg",
+                "rear.jpg": STATIC_DIR / "oldest-house-test" / "rear.jpg",
+                "gable.jpg": STATIC_DIR / "oldest-house-test" / "gable.jpg",
+            }
+            photo = photos.get(photo_name)
+            if photo is None:
+                self._send_json(404, {"error": "Photo not found."})
+                return
+            self._send_file(photo, "image/jpeg")
+        elif path.startswith("/oldest-house-test/pdfs/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Surveyor access is required to view house documents."},
+                )
+                return
+            pdf_name = path.rsplit("/", 1)[-1]
+            pdfs = {
+                "application-letter.pdf": (
+                    "Call Off Letter - WH570150.pdf",
+                    STATIC_DIR / "oldest-house-test" / "pdfs" / "application-letter.pdf",
+                ),
+                "survey-report.pdf": (
+                    "Surveyor - WH570150 Survey Report_11zon.pdf",
+                    STATIC_DIR / "oldest-house-test" / "pdfs" / "survey-report.pdf",
+                ),
+                "survey-sketch.pdf": (
+                    "Surveyor - WH570150 Survey Sketch.pdf",
+                    STATIC_DIR / "oldest-house-test" / "pdfs" / "survey-sketch.pdf",
+                ),
+                "floor-plan-1.pdf": (
+                    "Installer - Floor Plan_20260915_151443_308.pdf",
+                    STATIC_DIR / "oldest-house-test" / "pdfs" / "floor-plan-1.pdf",
+                ),
+                "floor-plan-2.pdf": (
+                    "Installer - Floor Plan_20260915_151556_411.pdf",
+                    STATIC_DIR / "oldest-house-test" / "pdfs" / "floor-plan-2.pdf",
+                ),
+                "floor-plan-3.pdf": (
+                    "Installer - Floor Plan_20260915_151616_123.pdf",
+                    STATIC_DIR / "oldest-house-test" / "pdfs" / "floor-plan-3.pdf",
+                ),
+            }
+            pdf = pdfs.get(pdf_name)
+            if pdf is None:
+                self._send_json(404, {"error": "PDF not found."})
+                return
+            try:
+                content = pdf[1].read_bytes()
+            except OSError:
+                self._send_json(404, {"error": "PDF not found."})
+                return
+            self._send_pdf(pdf[0], content)
         elif path == "/app.css":
             self._send_file(STATIC_DIR / "app.css", "text/css; charset=utf-8")
         elif path == "/app.js":
@@ -2424,7 +2694,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "pending": "h.id IS NULL",
                 "all": "1 = 1",
                 "map": "((h.id IS NOT NULL AND h.is_finished = 0) OR "
-                       "(h.id IS NULL AND p.ready_for_start = 1))",
+                       "(h.id IS NULL AND (p.ready_for_start = 1 OR "
+                       "(p.latitude IS NOT NULL AND p.longitude IS NOT NULL))))",
             }.get(status_filter)
             if status_filter == "ready":
                 ordering = """
@@ -2470,11 +2741,32 @@ class RequestHandler(BaseHTTPRequestHandler):
                         500 if status_filter in {"all", "map"} or wanted else 20,
                     ),
                 ).fetchall()
+                seai_details = {}
+                if user["role"] in {"admin", "surveyor"} and rows:
+                    has_seai_applications = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'seai_applications'"
+                    ).fetchone()
+                    if has_seai_applications:
+                        placeholders = ",".join("?" for _ in rows)
+                        seai_details = {
+                            detail["application_id"]: json.loads(
+                                detail["detail_data_json"]
+                            )
+                            for detail in db.execute(
+                                "SELECT application_id, detail_data_json "
+                                "FROM seai_applications "
+                                f"WHERE application_id IN ({placeholders})",
+                                [row["id"] for row in rows],
+                            )
+                        }
                 snags = _snags_by_house(db)
                 house_audit = _house_audit_by_id(db)
             houses = []
             for row in rows:
                 house = dict(row)
+                if user["role"] in {"admin", "surveyor"}:
+                    house["seai_details"] = seai_details.get(row["id"])
                 raw_survey = house.pop("survey_data", None)
                 house["survey"] = json.loads(raw_survey) if raw_survey else None
                 house["snags"] = snags.get(row["id"], [])
@@ -2497,15 +2789,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "A house ID is required."})
                 return
             with connect_db() as db:
-                ready = db.execute(
+                available = db.execute(
                     """
                     SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                    WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                    WHERE p.id = ? AND h.id IS NULL
                     """,
                     (house_id,),
                 ).fetchone()
-                if not ready:
-                    self._send_json(404, {"error": "Ready house was not found."})
+                if not available:
+                    self._send_json(404, {"error": "House was not found."})
                     return
                 rows = db.execute(
                     """
@@ -2514,7 +2806,140 @@ class RequestHandler(BaseHTTPRequestHandler):
                     """,
                     (house_id,),
                 ).fetchall()
+                not_started = _is_not_started_house(db, house_id)
+                if not_started:
+                    rows = [
+                        row for row in rows
+                        if not _is_annotated_pdf_filename(row["filename"])
+                    ]
             self._send_json(200, {"house_id": house_id, "documents": [dict(row) for row in rows]})
+        elif path == "/api/seai-documents":
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
+                )
+                return
+            house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
+            if not house_id:
+                self._send_json(400, {"error": "A house ID is required."})
+                return
+            with connect_db() as db:
+                document_table = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'seai_documents'"
+                ).fetchone()
+                if not document_table:
+                    self._send_json(200, {"house_id": house_id, "documents": []})
+                    return
+                columns = {
+                    row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+                }
+                if "content" not in columns:
+                    self._send_json(
+                        503,
+                        {"error": "SEAI PDF storage has not been initialized."},
+                    )
+                    return
+                not_started = _is_not_started_house(db, house_id)
+                rows = db.execute(
+                    """
+                    SELECT id, category, filename, length(content) AS size_bytes
+                    FROM seai_documents
+                    WHERE application_id = ? AND lower(filename) LIKE '%.pdf'
+                        AND content IS NOT NULL
+                    ORDER BY CASE category
+                        WHEN 'Application' THEN 0
+                        WHEN 'Survey' THEN 1
+                        WHEN 'Variation' THEN 2
+                        ELSE 3
+                    END, filename COLLATE NOCASE
+                    """,
+                    (house_id,),
+                ).fetchall()
+                if not_started:
+                    rows = [
+                        row for row in rows
+                        if not _is_annotated_pdf_filename(row["filename"])
+                    ]
+            self._send_json(
+                200,
+                {
+                    "house_id": house_id,
+                    "documents": [
+                        {
+                            **dict(row),
+                            "is_annotated": _is_annotated_pdf_filename(row["filename"]),
+                        }
+                        for row in rows
+                    ],
+                },
+            )
+        elif path.startswith("/api/seai-documents/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
+                )
+                return
+            document_path = path[len("/api/seai-documents/"):].split("/")
+            is_preview = len(document_path) == 2 and document_path[1] == "preview"
+            is_file = len(document_path) == 2 and document_path[1] == "file"
+            if (
+                len(document_path) != 2
+                or not (is_preview or is_file)
+                or not document_path[0].isdigit()
+            ):
+                self._send_json(404, {"error": "SEAI PDF was not found."})
+                return
+            with connect_db() as db:
+                columns = {
+                    row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+                }
+                if "content" not in columns:
+                    self._send_json(
+                        503,
+                        {"error": "SEAI PDF storage has not been initialized."},
+                    )
+                    return
+                row = db.execute(
+                    """
+                    SELECT application_id, filename, content FROM seai_documents
+                    WHERE id = ? AND lower(filename) LIKE '%.pdf'
+                        AND content IS NOT NULL
+                    """,
+                    (int(document_path[0]),),
+                ).fetchone()
+                if (
+                    row is not None
+                    and _is_not_started_house(db, row["application_id"])
+                    and _is_annotated_pdf_filename(row["filename"])
+                ):
+                    row = None
+            if row is None:
+                self._send_json(404, {"error": "SEAI PDF was not found."})
+                return
+            if is_preview:
+                page_values = parse_qs(urlparse(self.path).query).get("page", ["1"])
+                try:
+                    page_number = int(page_values[0])
+                except ValueError:
+                    self._send_json(400, {"error": "A valid PDF page number is required."})
+                    return
+                image, page_count = _render_pdf_page(
+                    row["content"], page_number
+                )
+                self._send_png(
+                    image, (("X-PDF-Page-Count", str(page_count)),)
+                )
+            else:
+                self._send_pdf(row["filename"], row["content"])
         elif path.startswith("/api/house-documents/"):
             user = self._login_required()
             if user is None:
@@ -2542,12 +2967,27 @@ class RequestHandler(BaseHTTPRequestHandler):
                     JOIN provided_houses p ON p.id = d.house_id
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
-                    WHERE d.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                    WHERE d.id = ? AND h.id IS NULL
                     """,
                     (int(raw_document_id),),
                 ).fetchone()
+                not_started = (
+                    row is not None and _is_not_started_house(db, row["house_id"])
+                )
+                if (
+                    not_started
+                    and row is not None
+                    and _is_annotated_pdf_filename(row["filename"])
+                ):
+                    row = None
             if row is None:
                 self._send_json(404, {"error": "Document was not found."})
+                return
+            if is_share_pdf and not_started:
+                self._send_json(
+                    409,
+                    {"error": "PDFs are view-only while the house is Not started."},
+                )
                 return
             if is_preview_page:
                 try:
@@ -2556,7 +2996,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": "PDF page number must be a positive integer."})
                     return
                 try:
-                    page_image, page_count = _render_house_document_page(
+                    page_image, page_count = _render_pdf_page(
                         row["content"], page_number
                     )
                 except ApiError as exc:
@@ -2926,6 +3366,277 @@ class RequestHandler(BaseHTTPRequestHandler):
             user = self._login_required()
             if user is None:
                 return
+            seai_share_match = re.fullmatch(r"/api/seai-documents/(\d+)/share", path)
+            if seai_share_match:
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to share SEAI PDFs.",
+                    )
+                document_id = int(seai_share_match.group(1))
+                with connect_db() as db:
+                    source = db.execute(
+                        """
+                        SELECT id, application_id, filename, content
+                        FROM seai_documents
+                        WHERE id = ? AND lower(filename) LIKE '%.pdf'
+                            AND content IS NOT NULL
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                    if source is None:
+                        raise ApiError(404, "SEAI PDF was not found.")
+                    _require_pdf_editable(db, source["application_id"])
+                    survey_row = db.execute(
+                        "SELECT data FROM house_surveys WHERE house_id = ?",
+                        (source["application_id"],),
+                    ).fetchone()
+                    if survey_row is None:
+                        raise ApiError(
+                            409, "Save a survey note before sharing an SEAI PDF."
+                        )
+                    try:
+                        survey_data = json.loads(survey_row["data"])
+                    except (json.JSONDecodeError, TypeError) as exc:
+                        raise ApiError(500, "The saved house survey could not be read.") from exc
+                    if not isinstance(survey_data, dict):
+                        raise ApiError(500, "The saved house survey could not be read.")
+                    survey_note = str(survey_data.get("notes") or "").strip()
+                    if not survey_note:
+                        raise ApiError(
+                            409, "Save a survey note before sharing an SEAI PDF."
+                        )
+                shared_pdf = _create_house_document_share_pdf(
+                    source["content"],
+                    source["filename"],
+                    source["application_id"],
+                    survey_note,
+                )
+                share_filename = (
+                    f"{source['application_id']}-"
+                    f"{Path(source['filename']).stem}-with-survey-note.pdf"
+                )
+                self._send_pdf(share_filename, shared_pdf, attachment=True)
+                return
+            if path == "/api/seai-documents/share":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to share SEAI PDFs.",
+                    )
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "SEAI PDF share details must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                selections = payload.get("pages")
+                if (
+                    not house_id
+                    or not isinstance(selections, list)
+                    or not selections
+                    or len(selections) > HOUSE_DOCUMENT_MAX_PAGES
+                ):
+                    raise ApiError(
+                        400,
+                        "Choose between 1 and 300 SEAI PDF pages to share.",
+                    )
+                normalized_selections = []
+                selected_keys = set()
+                document_ids = set()
+                for selection in selections:
+                    if not isinstance(selection, dict):
+                        raise ApiError(400, "Selected SEAI PDF pages are invalid.")
+                    document_id = selection.get("document_id")
+                    page_number = selection.get("page")
+                    if (
+                        isinstance(document_id, bool)
+                        or not isinstance(document_id, int)
+                        or document_id < 1
+                        or isinstance(page_number, bool)
+                        or not isinstance(page_number, int)
+                        or page_number < 1
+                    ):
+                        raise ApiError(
+                            400, "Selected SEAI PDF pages must have valid document and page numbers."
+                        )
+                    page_key = (document_id, page_number)
+                    if page_key in selected_keys:
+                        raise ApiError(400, "A SEAI PDF page was selected more than once.")
+                    selected_keys.add(page_key)
+                    document_ids.add(document_id)
+                    normalized_selections.append(
+                        {"document_id": document_id, "page": page_number}
+                    )
+                with connect_db() as db:
+                    _require_pdf_editable(db, house_id)
+                    survey_row = db.execute(
+                        "SELECT data FROM house_surveys WHERE house_id = ?",
+                        (house_id,),
+                    ).fetchone()
+                    if survey_row is None:
+                        raise ApiError(409, "Save a survey note before sharing selected PDF pages.")
+                    try:
+                        survey_data = json.loads(survey_row["data"])
+                    except (json.JSONDecodeError, TypeError) as exc:
+                        raise ApiError(500, "The saved house survey could not be read.") from exc
+                    if not isinstance(survey_data, dict):
+                        raise ApiError(500, "The saved house survey could not be read.")
+                    survey_note = str(survey_data.get("notes") or "").strip()
+                    if not survey_note:
+                        raise ApiError(
+                            409, "Save a survey note before sharing selected PDF pages."
+                        )
+                    placeholders = ",".join("?" for _ in document_ids)
+                    rows = db.execute(
+                        f"""
+                        SELECT id, category, filename, content FROM seai_documents
+                        WHERE application_id = ? AND id IN ({placeholders})
+                            AND lower(filename) LIKE '%.pdf' AND content IS NOT NULL
+                        """,
+                        (house_id, *sorted(document_ids)),
+                    ).fetchall()
+                    annotated_rows = db.execute(
+                        """
+                        SELECT id, category, filename, content FROM seai_documents
+                        WHERE application_id = ?
+                            AND lower(filename) LIKE '%.pdf'
+                            AND lower(filename) LIKE '%-annotated%.pdf'
+                            AND content IS NOT NULL
+                        ORDER BY id DESC
+                        """,
+                        (house_id,),
+                    ).fetchall()
+                selected_documents = {row["id"]: row for row in rows}
+                if len(selected_documents) != len(document_ids):
+                    raise ApiError(
+                        404, "One or more selected SEAI PDFs were not found for this house."
+                    )
+                latest_annotated_documents = {}
+                for row in annotated_rows:
+                    key = (
+                        row["category"],
+                        _seai_document_source_stem(row["filename"]).casefold(),
+                    )
+                    latest_annotated_documents.setdefault(key, row)
+                documents = dict(selected_documents)
+                resolved_selections = []
+                resolved_keys = set()
+                for selection in normalized_selections:
+                    selected_document = selected_documents[selection["document_id"]]
+                    source_stem = _seai_document_source_stem(
+                        selected_document["filename"]
+                    ).casefold()
+                    annotated_document = latest_annotated_documents.get(
+                        (selected_document["category"], source_stem)
+                    )
+                    document = annotated_document or selected_document
+                    page_key = (document["id"], selection["page"])
+                    if page_key in resolved_keys:
+                        raise ApiError(
+                            400,
+                            "A page was selected more than once after resolving annotated copies.",
+                        )
+                    resolved_keys.add(page_key)
+                    documents[document["id"]] = document
+                    resolved_selections.append(
+                        {"document_id": document["id"], "page": selection["page"]}
+                    )
+                shared_pdf = _create_seai_document_share_pdf(
+                    resolved_selections,
+                    documents,
+                    house_id,
+                    survey_note,
+                )
+                share_filename = f"{house_id}-selected-seai-pages-with-survey-note.pdf"
+                self._send_pdf(share_filename, shared_pdf, attachment=True)
+                return
+            seai_annotation_match = re.fullmatch(
+                r"/api/seai-documents/(\d+)/annotations", path
+            )
+            if seai_annotation_match:
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403, "Administrator or surveyor access is required to annotate SEAI PDFs."
+                    )
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PDF annotations must be a JSON object.")
+                document_id = int(seai_annotation_match.group(1))
+                with connect_db() as db:
+                    columns = {
+                        row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+                    }
+                    if "content" not in columns:
+                        raise ApiError(503, "SEAI PDF storage has not been initialized.")
+                    source = db.execute(
+                        """
+                        SELECT id, application_id, category, filename, content
+                        FROM seai_documents
+                        WHERE id = ? AND lower(filename) LIKE '%.pdf'
+                            AND content IS NOT NULL
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                if source is None:
+                    raise ApiError(404, "SEAI PDF was not found.")
+                with connect_db() as db:
+                    _require_pdf_editable(db, source["application_id"])
+                annotated_pdf = _annotate_pdf_document(
+                    source["content"], payload.get("annotations")
+                )
+                if len(annotated_pdf) > SEAI_DOCUMENT_MAX_BYTES:
+                    raise ApiError(413, "The annotated SEAI PDF exceeds the 20 MB document limit.")
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        current_source = db.execute(
+                            """
+                            SELECT 1 FROM seai_documents
+                            WHERE id = ? AND content = ?
+                            """,
+                            (document_id, source["content"]),
+                        ).fetchone()
+                        if current_source is None:
+                            raise ApiError(
+                                409,
+                                "This SEAI PDF changed while you were annotating it. Reopen it before saving.",
+                            )
+                        _require_pdf_editable(db, source["application_id"])
+                        source_stem = Path(source["filename"]).stem
+                        annotated_stem = f"{source_stem}-annotated"
+                        annotated_filename = f"{annotated_stem}.pdf"
+                        suffix = 2
+                        while db.execute(
+                            """
+                            SELECT 1 FROM seai_documents
+                            WHERE application_id = ? AND filename = ? COLLATE NOCASE
+                            """,
+                            (source["application_id"], annotated_filename),
+                        ).fetchone():
+                            annotated_filename = f"{annotated_stem}-{suffix}.pdf"
+                            suffix += 1
+                        cursor = db.execute(
+                            """
+                            INSERT INTO seai_documents
+                                (application_id, category, filename, extension, downloaded, content)
+                            VALUES (?, ?, ?, '.pdf', 1, ?)
+                            """,
+                            (
+                                source["application_id"],
+                                source["category"],
+                                annotated_filename,
+                                sqlite3.Binary(annotated_pdf),
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "source_id": document_id,
+                        "filename": annotated_filename,
+                        "size_bytes": len(annotated_pdf),
+                    },
+                )
+                return
             annotation_match = re.fullmatch(
                 r"/api/house-documents/(\d+)/annotations", path
             )
@@ -2949,7 +3660,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     ).fetchone()
                 if source is None:
                     raise ApiError(404, "Document was not found.")
-                annotated_pdf = _annotate_house_document_pdf(
+                annotated_pdf = _annotate_pdf_document(
                     source["content"], payload.get("annotations")
                 )
                 if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
@@ -3415,6 +4126,101 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 "Work plans can only be edited for Ready for start houses.",
                             )
                 self._send_json(200, {"house_id": house_id, "saved": True})
+            elif path == "/api/seai-measure-variation":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403, "Administrator or surveyor access is required to edit SEAI quantities."
+                    )
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "SEAI measure update must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                measure_index = payload.get("measure_index")
+                variation = payload.get("variation")
+                if not house_id:
+                    raise ApiError(400, "House ID is required.")
+                if (
+                    not isinstance(measure_index, int)
+                    or isinstance(measure_index, bool)
+                    or measure_index < 0
+                ):
+                    raise ApiError(400, "Choose a valid SEAI measure.")
+                if not isinstance(variation, str):
+                    raise ApiError(400, "Enter a valid variation quantity.")
+                variation = variation.strip()
+                if len(variation) > 80 or not re.fullmatch(
+                    r"(?:\d+(?:\.\d{1,4})?)?", variation
+                ):
+                    raise ApiError(
+                        400, "Variation quantity must be a non-negative number with up to 4 decimal places."
+                    )
+                if variation and float(variation) > 1_000_000_000:
+                    raise ApiError(400, "Variation quantity is too large.")
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        house = db.execute(
+                            """
+                            SELECT p.ready_for_start,
+                                   CASE WHEN h.id IS NULL THEN 0 ELSE 1 END AS is_active
+                            FROM provided_houses p
+                            LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ?
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if house is None:
+                            raise ApiError(404, "House was not found.")
+                        if not house["ready_for_start"]:
+                            raise ApiError(
+                                409,
+                                "Survey variations can only be edited for houses ready for start.",
+                            )
+                        if user["role"] == "surveyor" and (
+                            house["is_active"]
+                        ):
+                            raise ApiError(
+                                409,
+                                "Surveyors can only edit quantities for Ready for start houses.",
+                            )
+                        if not db.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                            "AND name = 'seai_applications'"
+                        ).fetchone():
+                            raise ApiError(404, "SEAI application details were not found.")
+                        application = db.execute(
+                            "SELECT detail_data_json FROM seai_applications "
+                            "WHERE application_id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        if application is None:
+                            raise ApiError(404, "SEAI application details were not found.")
+                        try:
+                            details = json.loads(application["detail_data_json"])
+                        except (TypeError, json.JSONDecodeError):
+                            raise ApiError(500, "Stored SEAI application details are invalid.")
+                        measures = details.get("Measures") if isinstance(details, dict) else None
+                        if (
+                            not isinstance(measures, list)
+                            or measure_index >= len(measures)
+                            or not isinstance(measures[measure_index], dict)
+                        ):
+                            raise ApiError(404, "SEAI measure was not found.")
+                        measures[measure_index]["Survey Qty including Variation"] = variation
+                        db.execute(
+                            "UPDATE seai_applications SET detail_data_json = ? "
+                            "WHERE application_id = ?",
+                            (json.dumps(details, ensure_ascii=False), house_id),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "measure_index": measure_index,
+                        "variation": variation,
+                        "seai_details": details,
+                    },
+                )
             elif path == "/api/houses/snags":
                 user = self._login_required()
                 if user is None:
@@ -3517,6 +4323,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 "SELECT ready_for_start FROM provided_houses WHERE id = ?",
                                 (house_id,),
                             ).fetchone()
+                            if not payload["ready"]:
+                                _clear_house_survey_records(db, house_id)
                             db.execute(
                                 "UPDATE provided_houses SET ready_for_start = ? WHERE id = ?",
                                 (int(payload["ready"]), house_id),

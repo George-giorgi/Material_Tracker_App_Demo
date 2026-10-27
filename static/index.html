@@ -49,6 +49,7 @@
           <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists"></a>
           <button class="button button-secondary overview-shortcut" id="go-overview" type="button" aria-label="Return to Overview">← Overview</button>
           <div class="topbar-spacer"></div>
+          <button class="button button-secondary" id="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><span aria-hidden="true">☾</span> Dark mode</button>
           <button class="button button-secondary" id="account-button">Account</button>
           <button class="button button-secondary" id="start-navigation-tour" type="button">Navigation test flow</button>
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
@@ -150,10 +151,12 @@
               </div>
             </div>
             <nav class="survey-room-nav" aria-label="Survey room sections">
-              <a href="#survey-room-work-plan">1 · Work plan</a>
-              <a href="#survey-room-measurements">2 · Measurements</a>
-              <a href="#survey-room-documents">3 · PDFs</a>
-              <a href="#surveyor-house-notes-form">4 · Notes</a>
+              <a href="#survey-room-work-plan">Work plan</a>
+              <a href="#survey-room-seai-details" data-ready-only>SEAI record</a>
+              <a href="#survey-room-seai-details" data-not-started-only>SEAI PDFs</a>
+              <a href="#survey-room-measurements">Measurements</a>
+              <a href="#survey-room-documents">House PDFs</a>
+              <a href="#surveyor-house-notes-form">Notes</a>
             </nav>
             <article class="card survey-room-summary-card">
               <div class="card-heading"><div><h2>House survey record</h2><p>House details, survey status, and saved survey notes.</p></div></div>
@@ -166,6 +169,11 @@
                 <label class="field full">Survey note<textarea name="notes" rows="3" maxlength="2000" placeholder="Record survey observations to include with shared PDFs"></textarea><small class="survey-note-share-hint">This note is separate from House notes and is appended to shared PDFs.</small></label>
                 <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Save the note before sharing a PDF.</small><button class="button button-secondary" type="submit">Save survey note</button></div>
               </form>
+            </article>
+            <article class="card survey-room-seai-card hidden" id="survey-room-seai-details">
+              <div class="card-heading"><div><h2>SEAI application record</h2><p>Captured application, property, contractor, measures, tests, variance, notes, and attachment metadata.</p></div></div>
+              <div id="survey-room-seai-content" class="survey-room-seai-content"></div>
+              <div id="survey-room-seai-documents" class="survey-room-seai-documents" aria-live="polite"></div>
             </article>
             <article class="card survey-room-work-plan-card" id="survey-room-work-plan">
               <div class="card-heading"><div><h2>Pre-start work plan</h2><p>For each trade, choose whether work is required and add any helpful details. The Active house checklist will start required work as not done.</p></div></div>
@@ -209,11 +217,11 @@
           </section>
           <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
             <div class="page-heading houses-list-toolbar">
-              <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Explore houses with approved locations. Select a marker or list entry to review its status and actions.</p><div id="house-map-summary" class="house-map-summary" aria-live="polite"></div></div>
+              <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Explore houses with saved coordinates, or select a house to open its Eircode location in Google Maps.</p><div id="house-map-summary" class="house-map-summary" aria-live="polite"></div></div>
               <button class="button button-secondary" id="house-map-list-view" type="button">Back to house list</button>
             </div>
             <article class="card house-map-import hidden" id="house-map-import-card">
-              <div><strong>Load approved SEAI locations</strong><p>Import an approved CSV with actual Eircodes and latitude/longitude. We will not invent a residential postcode or geocode a house without your approved location data. OpenStreetMap receives tile requests for the map area currently in view.</p></div>
+              <div><strong>Load approved SEAI coordinates</strong><p>Import a CSV with actual Eircodes and latitude/longitude to show exact pins on this tracker map. For houses without coordinates, select the house and open its Eircode pin in Google Maps. Google receives only the Eircode when you click that link. OpenStreetMap receives tile requests for the map area currently in view.</p></div>
               <form id="house-locations-import" class="import-form">
                 <label class="file-picker"><input type="file" id="house-locations-file" accept=".csv,text/csv" required><span>Choose locations CSV</span></label>
                 <span class="file-name" id="house-locations-file-name">No file selected</span>
@@ -237,6 +245,7 @@
               <aside class="card house-map-side">
                 <div class="house-map-sidebar-heading"><div><span class="eyebrow">MAP KEY</span><h3>House status</h3></div></div>
                 <div class="house-map-legend" aria-label="Map status legend">
+                  <span><i class="map-status-not_started"></i>Not started · mapped</span>
                   <span><i class="map-status-ready"></i>Ready for start</span>
                   <span><i class="map-status-active" data-stage="1"></i>Active · Stage 1</span>
                   <span><i class="map-status-active" data-stage="2"></i>Active · Stage 2</span>
@@ -343,8 +352,9 @@
             <button class="button button-secondary" id="pdf-annotator-zoom-in" type="button" aria-label="Zoom in">+</button>
             <button class="button button-secondary pdf-annotator-zoom-fit" id="pdf-annotator-zoom-fit" type="button">Fit</button>
           </div>
-          <div class="pdf-annotator-pages"><button class="button button-secondary" id="pdf-annotator-previous" type="button" aria-label="Previous page">‹</button><span id="pdf-annotator-page-count">Page 1 of 1</span><button class="button button-secondary" id="pdf-annotator-next" type="button" aria-label="Next page">›</button></div>
-          <button class="button button-primary pdf-annotator-save" id="pdf-annotator-save" type="button" disabled>Save annotated copy</button>
+          <div class="pdf-annotator-pages"><span id="pdf-annotator-page-count" aria-live="polite">Page 1 of 1 · Scroll to change pages</span></div>
+          <label class="pdf-annotator-page-selection hidden" id="pdf-annotator-page-selection-label"><input id="pdf-annotator-page-selection" type="checkbox"><span>Include this page in share</span></label>
+          <button class="button button-primary pdf-annotator-save" id="pdf-annotator-save" type="button" disabled>Save annotations</button>
         </div>
         <div class="pdf-annotator-text-panel hidden" id="pdf-annotator-text-panel">
           <label for="pdf-annotator-text">Text to place on the page</label>

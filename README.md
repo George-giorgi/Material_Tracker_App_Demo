@@ -29,6 +29,49 @@ network. If a tracker database already contains an older password-based
 account, its existing password still works in the PIN field; change it to a
 6-digit PIN after signing in.
 
+## Run the separate SEAI Red dataset
+
+The separate `instance\ewi.seai-red.sqlite3` database is a two-house template
+containing the oldest and newest of the 59 Red SEAI applications captured from
+the portal: WH570150 and WH618775. Other houses and their linked activity were
+removed from this copy; the original `instance\ewi.sqlite3` is unchanged. The
+application shows these two records in the normal house list. Their full
+captured application sections are stored in `seai_applications`, with measures
+in `seai_measures` and attachment filenames/categories in `seai_documents`.
+The nine PDF attachments listed in the Application, Survey, and Variation
+categories are stored in the separate database and can be opened and annotated
+from the Surveyor room. Saving annotations creates a separate PDF copy and
+preserves each original SEAI attachment unchanged; non-PDF attachments were not
+downloaded. Annotated copies can be shared as complete PDFs using **Share
+annotated PDF**, which appends the saved Survey note. In the annotator, select
+individual pages across multiple SEAI PDFs to share or download one combined PDF
+with the saved Survey note appended as its final page. Moving a house from Ready
+for start back to Not started clears its survey records, work plan, notes, snags,
+SEAI variation quantities, and saved annotations. Original PDFs and status
+history remain; PDFs are view-only while the house is Not started. The database
+retains the demo material catalog and stock data, which are not real inventory.
+A pre-change backup is kept beside the database in `instance\`.
+
+The SEAI property GPS fields are blank. Import approved coordinates using the
+House map CSV control to add exact pins. Coordinate-mapped houses can appear on
+the map while still Not started; the pin does not change their workflow status.
+For houses without saved coordinates, select a house and use **Open Eircode pin
+in Google Maps** to search its Eircode. Google receives only the Eircode when
+someone clicks the link.
+
+Start this copy on a separate local port from the project root in PowerShell:
+
+```powershell
+$env:EWI_DB_PATH = (Join-Path $PWD 'instance\ewi.seai-red.sqlite3')
+$env:EWI_PORT = '8011'
+py server.py
+```
+
+Open [http://127.0.0.1:8011](http://127.0.0.1:8011). It uses the copied
+database's existing user accounts. The SEAI records contain sensitive
+applicant, property, contact, and notes data; keep this database on a trusted
+machine and share it only with authorized people.
+
 Employees can view tracker records and record material movements against
 existing houses. They cannot add materials, count or adjust stock, import
 workbooks, create houses, or finish/reopen houses. These restrictions are
@@ -41,6 +84,19 @@ editing out of the card; use the Surveyor room for the pre-start work plan.
 House detail and movement history remain available to administrators only.
 The Teams tab also lists employees assigned to houses at activation and shows
 their open and closed house counts; selecting a count opens those houses.
+
+## Oldest-house photo preview
+
+After signing in as an administrator or surveyor, open
+`http://127.0.0.1:8001/oldest-house-test` to view a separate, read-only sample
+of the earliest application in the exported SEAI list. “Oldest” is based on
+application date, not the building's construction year. The sample photos are
+served locally, along with that application's six attached PDFs. The preview
+includes the captured application, property, contractor project manager, QA,
+measures, test result, variance, and notes sections. It does not import or
+change tracker house data. It contains sensitive applicant, property, contact,
+and notes information. Employee accounts cannot access this page, its photos,
+or its documents.
 
 ## County weather
 
@@ -148,10 +204,11 @@ Click **From SEAI** on Overview to open the house map. The current demo map
 and Ready for start list combine the original 50 houses with nine saved
 Eircode records. The nine Eircode records are Ready for start; the original
 50 houses are Not started. The map opens to an Ireland-wide OpenStreetMap view.
-Eligible houses appear in the map's house list even when they have no approved
-coordinates. The saved map-test houses appear as approximate demo pins, clearly
+Ready and active houses, plus coordinate-mapped Not started houses, appear in
+the map's house list. The saved map-test houses appear as approximate demo pins, clearly
 distinguished from verified locations; they do not show the exact Eircode
-locations. Map markers identify Ready houses and active Stage 1 or 2 houses.
+locations. Map markers identify mapped Not started houses, Ready houses, and
+active Stage 1 or 2 houses.
 Selecting a marker or list entry shows house details and a separate activity
 card with status changes, survey activity, movements, and work-stage changes,
 including who made each change and when. The sidebar scrolls independently so
@@ -166,6 +223,13 @@ notes, surveys, and history are retained when an ID is updated; rows absent
 from the file are not deleted. Use verified SEAI/Eircode data and coordinates:
 the demo-generated locations are fictional and are not suitable for live jobs.
 
+For application records captured from SEAI, not-started cards show the four
+insulation measure groups with both reported survey quantities. Administrators
+can open **View Surveyor room** to review the captured SEAI application sections
+and attachment metadata. Administrators can edit **Survey Qty including
+Variation** there for not-started houses; surveyors can edit it for ready houses.
+Saved quantities are reflected in the house cards. Detail data is returned only
+to administrators and surveyors.
 House coordinates stay in the tracker and are not submitted to a geocoder.
 Map imagery is loaded from the public OpenStreetMap tile service, which can
 observe tile requests and the approximate map area being viewed. OpenStreetMap
@@ -184,7 +248,7 @@ When the house is selected in the automatic calculator, saved dimensions and cor
 
 Use **Surveyor room** on a Ready for start house to open its full survey record, pre-start work plan, and measurement form. A house must have a survey saved before it can be activated; until then, the Activate house button is disabled and explains that surveyor review is required. Ready cards omit notes and checklist editing; surveyors enter the planned work and optional trade details in the Surveyor room. On activation, required work starts as **Not done** and work marked **Not required** starts as **Not necessary**. Admins and surveyors can save House notes and Survey notes separately; either note field clears after save and has an **Edit note** action to load the saved text back into the field. Admins and surveyors can also attach and view PDFs for Ready for start houses. **Share PDF** prepares a copy with the original document followed by a classic, professional Survey note page that presents each note as a separate bulleted item, alongside the house and source-document details; it does not include House notes. Use the native share sheet where supported, or choose **Email PDF** or **WhatsApp PDF** to download the combined file and open the chosen app. Browsers cannot attach a local file automatically to email or WhatsApp, so attach the downloaded PDF before sending. Uploads are private to signed-in admins and surveyors, limited to 8 MB per PDF and 25 PDFs per house, and are stored in the tracker database. A document is available only while its house remains Ready for start.
 
-Use **Annotate** beside an uploaded PDF to mark it up with a pen, highlighter, or text notes on a phone or tablet. Choose a pen thickness and use the zoom controls to work on details; drawing renders stroke segments as you move for a more responsive experience. **Save annotated copy** stores a separate PDF alongside the original, which remains unchanged; the new copy can then be shared or downloaded like any other survey PDF. PyMuPDF is required for local page previews and saving annotations.
+Use **Annotate** beside an uploaded PDF to mark it up with a pen, highlighter, or text notes on a phone or tablet. Use the mouse wheel or trackpad to move between pages; at higher zoom, scrolling changes pages after reaching the current page's top or bottom. Choose a pen thickness and use the zoom controls to work on details; drawing renders stroke segments as you move for a more responsive experience. **Save annotated copy** stores a separate PDF alongside the original uploaded house document. In the Surveyor room, **Open & annotate** on an SEAI PDF uses the same tools; saving creates a separately named annotated PDF in the same category, leaving the original unchanged. PyMuPDF is required for local page previews and saving annotations.
 
 Mortar / glue is estimated as the existing one bag per four insulation boards (100 mm and 60 mm combined) **plus** an area allowance of 18 bags per 100 m² of net wall area. Net wall area subtracts measured window and door areas from the wall area, and both parts are rounded up to whole bags before being added. With no openings or plinth deduction, the current examples are: 100 m² = 18 area-based + 35 existing board-based = **53 bags**; 200 m² = 36 + 70 = **106 bags**; 80 m² = 15 + 28 = **43 bags**. The calculator shows both parts and the combined total.
 

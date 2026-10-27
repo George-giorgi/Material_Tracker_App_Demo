@@ -75,6 +75,151 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_oldest_house_test_page_and_photos_require_login(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, _ = self.http_request(httpd, "GET", "/oldest-house-test")
+            self.assertEqual(status, 401)
+            status, _, _ = self.http_request(
+                httpd, "GET", "/oldest-house-test/photos/front.jpg"
+            )
+            self.assertEqual(status, 401)
+            status, _, _ = self.http_request(
+                httpd, "GET", "/oldest-house-test/pdfs/survey-report.pdf"
+            )
+            self.assertEqual(status, 401)
+
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "oldest-house-admin",
+                    "display_name": "Test Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_address[1], timeout=5
+            )
+            connection.request(
+                "GET", "/oldest-house-test", headers={"Cookie": admin_cookie}
+            )
+            response = connection.getresponse()
+            page = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("Oldest application in the list", page)
+            connection.close()
+
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_address[1], timeout=5
+            )
+            connection.request(
+                "GET",
+                "/oldest-house-test/photos/front.jpg",
+                headers={"Cookie": admin_cookie},
+            )
+            response = connection.getresponse()
+            image = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "image/jpeg")
+            self.assertTrue(image.startswith(b"\xff\xd8"))
+            connection.close()
+
+            for name in (
+                "application-letter.pdf",
+                "survey-report.pdf",
+                "survey-sketch.pdf",
+                "floor-plan-1.pdf",
+                "floor-plan-2.pdf",
+                "floor-plan-3.pdf",
+            ):
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", httpd.server_address[1], timeout=10
+                )
+                connection.request(
+                    "GET",
+                    f"/oldest-house-test/pdfs/{name}",
+                    headers={"Cookie": admin_cookie},
+                )
+                response = connection.getresponse()
+                pdf = response.read()
+                self.assertEqual(response.status, 200, name)
+                self.assertEqual(
+                    response.getheader("Content-Type"), "application/pdf", name
+                )
+                self.assertIn("inline", response.getheader("Content-Disposition"))
+                self.assertTrue(pdf.startswith(b"%PDF"), name)
+                connection.close()
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "oldest-house-employee",
+                    "display_name": "Test Employee",
+                    "pin": "345678",
+                    "pin_confirm": "345678",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "oldest-house-employee", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/oldest-house-test",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("Surveyor access", error["error"])
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/oldest-house-test/pdfs/survey-report.pdf",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("Surveyor access", error["error"])
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/oldest-house-test/photos/front.jpg",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("Surveyor access", error["error"])
+
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/oldest-house-test/photos/not-allowed.jpg",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(error["error"], "Photo not found.")
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/oldest-house-test/pdfs/not-allowed.pdf",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(error["error"], "PDF not found.")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def test_met_eireann_county_forecast_parses_mayo_and_sligo(self):
         feed = b"""<forecast issued="2026-10-22T21:00:00">
           <county><name>MAYO</name><day>

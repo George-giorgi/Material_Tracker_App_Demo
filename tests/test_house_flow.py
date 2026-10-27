@@ -162,6 +162,25 @@ class HttpBase(FlowBase):
         connection.close()
         return status, content_type, disposition, body
 
+    def call_raw_json(self, method, path, payload, cookie=None):
+        headers = {"Content-Type": "application/json"}
+        use_cookie = self.cookie if cookie is None else cookie
+        if use_cookie:
+            headers["Cookie"] = use_cookie
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request(method, path, body=json.dumps(payload), headers=headers)
+        response = connection.getresponse()
+        result = (
+            response.status,
+            response.getheader("Content-Type"),
+            response.getheader("Content-Disposition"),
+            response.read(),
+        )
+        connection.close()
+        return result
+
     def call_raw_with_headers(self, method, path, cookie=None):
         headers = {}
         use_cookie = self.cookie if cookie is None else cookie
@@ -495,7 +514,7 @@ class HouseDocumentHttpTests(HttpBase):
         )
         self.assertEqual(status, 401)
 
-    def test_uploaded_documents_are_not_available_after_house_leaves_ready_status(self):
+    def test_uploaded_documents_are_view_only_after_house_leaves_ready_status(self):
         self.make_ready_house()
         status, uploaded = self.call_multipart(
             "/api/house-documents", "DOC-TEST", "survey-plan.pdf", b"%PDF-1.4\n"
@@ -503,12 +522,21 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertEqual(status, 201)
         with server.connect_db() as db:
             db.execute("UPDATE provided_houses SET ready_for_start = 0 WHERE id = 'DOC-TEST'")
-        status, _, _ = self.call("GET", "/api/house-documents?house_id=DOC-TEST")
-        self.assertEqual(status, 404)
-        status, _, _, _ = self.call_raw(
+        status, documents, _ = self.call("GET", "/api/house-documents?house_id=DOC-TEST")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [document["filename"] for document in documents["documents"]],
+            ["survey-plan.pdf"],
+        )
+        status, _, _, body = self.call_raw(
             "GET", f"/api/house-documents/{uploaded['id']}"
         )
-        self.assertEqual(status, 404)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"%PDF-1.4\n")
+        self.assertEqual(
+            self.call_raw("GET", f"/api/house-documents/{uploaded['id']}/share")[0],
+            409,
+        )
 
     def test_document_upload_rejects_non_pdf_and_non_ready_house(self):
         self.make_ready_house()
@@ -834,6 +862,13 @@ class CalculatorApiTests(HttpBase):
         self.assertEqual(status, 200)
         return result["houses"]
 
+    def mark_ready(self, house_id):
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?",
+                (house_id,),
+            )
+
     def test_endpoints_require_login(self):
         for method, path, payload in [
             ("GET", "/api/calculator/houses?q=WH", None),
@@ -873,6 +908,783 @@ class CalculatorApiTests(HttpBase):
         self.call("POST", "/api/houses/status", {"id": "WH2133", "finished": True})
         status = {h["id"]: h["status"] for h in self.search("WH213")}
         self.assertEqual(status, {"WH2131": "not_started", "WH2132": "active", "WH2133": "closed"})
+
+    def test_seai_application_details_are_returned_only_to_survey_roles(self):
+        details = {
+            "Application Details": {"Applicant Name": "Sample Applicant"},
+            "Measures": [{"Name": "Attic (Loft) Insulation", "Survey Quantity": "45"}],
+        }
+        with server.connect_db() as db:
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                ("WH2131", json.dumps(details)),
+            )
+
+        _, admin_result, _ = self.call(
+            "GET", "/api/calculator/houses?status=not_started"
+        )
+        self.assertEqual(
+            next(house for house in admin_result["houses"] if house["id"] == "WH2131")[
+                "seai_details"
+            ],
+            details,
+        )
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'WH2131'"
+            )
+
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-detail-surveyor",
+                "display_name": "SEAI Detail Surveyor",
+                "pin": "456789",
+                "role": "surveyor",
+            },
+        )
+        _, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-detail-surveyor", "pin": "456789"},
+        )
+        _, surveyor_result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=ready",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(surveyor_result["houses"][0]["seai_details"], details)
+
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-detail-employee",
+                "display_name": "SEAI Detail Employee",
+                "pin": "567890",
+                "role": "employee",
+            },
+        )
+        _, _, employee_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-detail-employee", "pin": "567890"},
+        )
+        _, employee_result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=ready",
+            cookie=employee_cookie,
+        )
+        self.assertNotIn(
+            "seai_details",
+            next(house for house in employee_result["houses"] if house["id"] == "WH2131"),
+        )
+
+    def test_seai_measure_variation_can_be_updated_and_is_returned_on_cards(self):
+        self.mark_ready("WH2131")
+        details = {
+            "Measures": [
+                {
+                    "Name": "External Wall Insulation",
+                    "Survey Quantity": "94",
+                    "Survey Qty including Variation": "104",
+                }
+            ]
+        }
+        with server.connect_db() as db:
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                ("WH2131", json.dumps(details)),
+            )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/seai-measure-variation",
+            {"house_id": "WH2131", "measure_index": 0, "variation": "111.5"},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["variation"], "111.5")
+        self.assertEqual(
+            result["seai_details"]["Measures"][0]["Survey Qty including Variation"],
+            "111.5",
+        )
+        self.assertEqual(
+            self.search("WH2131")[0]["seai_details"]["Measures"][0][
+                "Survey Qty including Variation"
+            ],
+            "111.5",
+        )
+        with server.connect_db() as db:
+            stored = json.loads(
+                db.execute(
+                    "SELECT detail_data_json FROM seai_applications "
+                    "WHERE application_id = 'WH2131'"
+                ).fetchone()[0]
+            )
+        self.assertEqual(
+            stored["Measures"][0]["Survey Qty including Variation"], "111.5"
+        )
+
+        for invalid in ("-1", "1e3", "1.12345", "not a number"):
+            status, _, _ = self.call(
+                "POST",
+                "/api/seai-measure-variation",
+                {"house_id": "WH2131", "measure_index": 0, "variation": invalid},
+            )
+            self.assertEqual(status, 400, invalid)
+        status, _, _ = self.call(
+            "POST",
+            "/api/seai-measure-variation",
+            {"house_id": "WH2131", "measure_index": 3, "variation": "10"},
+        )
+        self.assertEqual(status, 404)
+
+    def test_seai_pdf_documents_are_role_restricted_and_served_inline(self):
+        house_id = "PDF-TEST-1"
+        self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
+        self.mark_ready(house_id)
+        pdf_buffer = BytesIO()
+        pdf = canvas.Canvas(pdf_buffer)
+        pdf.drawString(72, 720, "SEAI original page")
+        pdf.save()
+        original_pdf = pdf_buffer.getvalue()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+            }
+            self.assertIn("content", columns)
+            for category, filename, content in (
+                ("Application", "application.pdf", b"%PDF-1.4 application"),
+                ("Survey", "survey.pdf", b"%PDF-1.4 survey"),
+                ("Variation", "variation.pdf", b"%PDF-1.4 variation"),
+                ("Survey", "photo.jpg", b"not a PDF"),
+            ):
+                db.execute(
+                    """
+                    INSERT INTO seai_documents
+                        (application_id, category, filename, extension, content)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        house_id,
+                        category,
+                        filename,
+                        filename.rsplit(".", 1)[-1],
+                        original_pdf if filename == "application.pdf" else content,
+                    ),
+                )
+
+        status, result, _ = self.call(
+            "GET", f"/api/seai-documents?house_id={house_id}"
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(
+            [(doc["category"], doc["filename"]) for doc in result["documents"]],
+            [
+                ("Application", "application.pdf"),
+                ("Survey", "survey.pdf"),
+                ("Variation", "variation.pdf"),
+            ],
+        )
+        self.assertTrue(all(not doc["is_annotated"] for doc in result["documents"]))
+        self.assertNotIn("content", result["documents"][0])
+        document_id = result["documents"][0]["id"]
+        status, content_type, disposition, body = self.call_raw(
+            "GET", f"/api/seai-documents/{document_id}/file"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("inline;", disposition)
+        self.assertEqual(body, original_pdf)
+
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-pdf-employee",
+                "display_name": "SEAI PDF Employee",
+                "pin": "567890",
+                "role": "employee",
+            },
+        )
+        _, _, employee_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-pdf-employee", "pin": "567890"},
+        )
+        status, _, _ = self.call(
+            "GET",
+            f"/api/seai-documents?house_id={house_id}",
+            cookie=employee_cookie,
+        )
+        self.assertEqual(status, 403)
+        status, _, _, _ = self.call_raw(
+            "GET",
+            f"/api/seai-documents/{document_id}/file",
+            cookie=employee_cookie,
+        )
+        self.assertEqual(status, 403)
+        status, _, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{document_id}/annotations",
+            {"annotations": [{"page": 1, "tool": "text", "color": "#245fbd",
+                              "font_size": 0.02, "point": [0.2, 0.5], "text": "No access"}]},
+            cookie=employee_cookie,
+        )
+        self.assertEqual(status, 403)
+
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-pdf-surveyor",
+                "display_name": "SEAI PDF Surveyor",
+                "pin": "345678",
+                "role": "surveyor",
+            },
+        )
+        _, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-pdf-surveyor", "pin": "345678"},
+        )
+        status, _, _ = self.call(
+            "GET",
+            f"/api/seai-documents?house_id={house_id}",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        status, headers, preview = self.call_raw_with_headers(
+            "GET",
+            f"/api/seai-documents/{document_id}/preview?page=1",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["X-PDF-Page-Count"], "1")
+        self.assertTrue(preview.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        annotations = [
+            {
+                "page": 1,
+                "tool": "pen",
+                "color": "#d93025",
+                "width": 0.004,
+                "points": [[0.2, 0.3], [0.5, 0.4]],
+            },
+            {
+                "page": 1,
+                "tool": "text",
+                "color": "#245fbd",
+                "font_size": 0.02,
+                "point": [0.2, 0.5],
+                "text": "Saved SEAI note",
+            },
+        ]
+        status, saved, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{document_id}/annotations",
+            {"annotations": annotations},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 201, saved)
+        self.assertNotEqual(saved["id"], document_id)
+        self.assertEqual(saved["source_id"], document_id)
+        self.assertEqual(saved["filename"], "application-annotated.pdf")
+        with server.connect_db() as db:
+            rows = db.execute(
+                "SELECT filename, content FROM seai_documents WHERE id = ?",
+                (document_id,),
+            ).fetchall()
+            annotated_row = db.execute(
+                "SELECT filename, content FROM seai_documents WHERE id = ?",
+                (saved["id"],),
+            ).fetchone()
+            document_count = db.execute(
+                "SELECT COUNT(*) FROM seai_documents WHERE application_id = ?",
+                (house_id,),
+            ).fetchone()[0]
+        self.assertEqual(rows[0]["filename"], "application.pdf")
+        self.assertEqual(rows[0]["content"], original_pdf)
+        self.assertEqual(annotated_row["filename"], "application-annotated.pdf")
+        self.assertNotEqual(annotated_row["content"], original_pdf)
+        self.assertEqual(document_count, 5)
+        status, _, _, original_body = self.call_raw(
+            "GET", f"/api/seai-documents/{document_id}/file"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(original_body, original_pdf)
+        status, document_list, _ = self.call(
+            "GET", f"/api/seai-documents?house_id={house_id}"
+        )
+        self.assertEqual(status, 200)
+        self.assertIn(
+            "application-annotated.pdf",
+            [document["filename"] for document in document_list["documents"]],
+        )
+        listed_documents = {
+            document["filename"]: document["is_annotated"]
+            for document in document_list["documents"]
+        }
+        self.assertFalse(listed_documents["application.pdf"])
+        self.assertTrue(listed_documents["application-annotated.pdf"])
+        with fitz.open(stream=annotated_row["content"], filetype="pdf") as annotated:
+            self.assertIn("Saved SEAI note", annotated[0].get_text())
+            self.assertTrue(annotated[0].get_drawings())
+
+        status, second_saved, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{document_id}/annotations",
+            {
+                "annotations": [
+                    {
+                        "page": 1,
+                        "tool": "text",
+                        "color": "#18804b",
+                        "font_size": 0.02,
+                        "point": [0.2, 0.65],
+                        "text": "Another saved note",
+                    }
+                ]
+            },
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 201, second_saved)
+        self.assertEqual(second_saved["filename"], "application-annotated-2.pdf")
+        status, document_list, _ = self.call(
+            "GET", f"/api/seai-documents?house_id={house_id}"
+        )
+        self.assertEqual(status, 200)
+        listed_documents = {
+            document["filename"]: document["is_annotated"]
+            for document in document_list["documents"]
+        }
+        self.assertTrue(listed_documents["application-annotated-2.pdf"])
+        with server.connect_db() as db:
+            original = db.execute(
+                "SELECT content FROM seai_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            annotated_count = db.execute(
+                "SELECT COUNT(*) FROM seai_documents "
+                "WHERE application_id = ? AND filename LIKE '%-annotated%.pdf'",
+                (house_id,),
+            ).fetchone()[0]
+        self.assertEqual(original["content"], original_pdf)
+        self.assertEqual(annotated_count, 2)
+
+    def test_seai_pdf_listing_identifies_repeated_annotated_suffixes(self):
+        house_id = "PDF-LABEL-TEST"
+        self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
+        self.mark_ready(house_id)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            for filename in (
+                "original.pdf",
+                "original-annotated.pdf",
+                "original-annotated-2.pdf",
+                "original-annotated-annotated.pdf",
+                "original-annotated-annotated-annotated-3.pdf",
+            ):
+                db.execute(
+                    """
+                    INSERT INTO seai_documents
+                        (application_id, category, filename, extension, content)
+                    VALUES (?, 'Survey', ?, '.pdf', x'255044462d312e34')
+                    """,
+                    (house_id, filename),
+                )
+        status, result, _ = self.call(
+            "GET", f"/api/seai-documents?house_id={house_id}"
+        )
+        self.assertEqual(status, 200, result)
+        labels = {
+            document["filename"]: document["is_annotated"]
+            for document in result["documents"]
+        }
+        self.assertEqual(labels, {
+            "original.pdf": False,
+            "original-annotated.pdf": True,
+            "original-annotated-2.pdf": True,
+            "original-annotated-annotated.pdf": True,
+            "original-annotated-annotated-annotated-3.pdf": True,
+        })
+
+    def test_seai_share_combines_selected_pages_and_appends_survey_note(self):
+        house_id = "PDF-SHARE-TEST"
+        self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
+        self.mark_ready(house_id)
+        source_pdfs = []
+        for page_texts in (
+            ("Application page one", "Application selected page two"),
+            ("Survey selected page one", "Survey page two"),
+        ):
+            pdf_buffer = BytesIO()
+            pdf = canvas.Canvas(pdf_buffer)
+            for page_text in page_texts:
+                pdf.drawString(72, 720, page_text)
+                pdf.showPage()
+            pdf.save()
+            source_pdfs.append(pdf_buffer.getvalue())
+
+        annotated_survey = fitz.open(
+            stream=source_pdfs[1], filetype="pdf"
+        )
+        annotated_survey[0].insert_text(
+            (72, 150), "Saved annotation mark", color=(0.1, 0.3, 0.8)
+        )
+        annotated_survey_pdf = annotated_survey.tobytes()
+        annotated_survey.close()
+
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (?, ?, ?, 'Admin One', '2026-10-21T10:00:00')
+                """,
+                (
+                    house_id,
+                    json.dumps({
+                        "windows": [],
+                        "doors": [],
+                        "house_corners": [],
+                        "notes": "Saved SEAI survey note.",
+                    }),
+                    "Saved SEAI survey note.",
+                ),
+            )
+            source_document_ids = []
+            for category, filename, content in (
+                ("Application", "application.pdf", source_pdfs[0]),
+                ("Survey", "survey.pdf", source_pdfs[1]),
+            ):
+                source_document_ids.append(
+                    db.execute(
+                        """
+                        INSERT INTO seai_documents
+                            (application_id, category, filename, extension, content)
+                        VALUES (?, ?, ?, '.pdf', ?)
+                        """,
+                        (house_id, category, filename, content),
+                    ).lastrowid
+                )
+            annotated_document_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'survey-annotated.pdf', '.pdf', ?)
+                """,
+                (house_id, annotated_survey_pdf),
+            ).lastrowid
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-share-surveyor",
+                "display_name": "SEAI Share Surveyor",
+                "pin": "345678",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-share-surveyor", "pin": "345678"},
+        )
+        self.assertEqual(status, 200)
+
+        status, content_type, disposition, body = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                "house_id": house_id,
+                "pages": [
+                    {"document_id": source_document_ids[0], "page": 2},
+                    {"document_id": source_document_ids[1], "page": 1},
+                ],
+            },
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        reader = PdfReader(BytesIO(body))
+        self.assertEqual(len(reader.pages), 3)
+        self.assertIn(
+            "Application selected page two", reader.pages[0].extract_text()
+        )
+        self.assertIn("Survey selected page one", reader.pages[1].extract_text())
+        self.assertIn("Saved annotation mark", reader.pages[1].extract_text())
+        self.assertIn("Saved SEAI survey note.", reader.pages[2].extract_text())
+        with server.connect_db() as db:
+            stored_sources = [
+                (row["id"], row["content"])
+                for row in db.execute(
+                    "SELECT id, content FROM seai_documents WHERE application_id = ? ORDER BY id",
+                    (house_id,),
+                )
+            ]
+        self.assertEqual(
+            stored_sources,
+            [
+                (source_document_ids[0], source_pdfs[0]),
+                (source_document_ids[1], source_pdfs[1]),
+                (annotated_document_id, annotated_survey_pdf),
+            ],
+        )
+
+    def test_seai_annotated_copy_can_be_shared_with_survey_note(self):
+        house_id = "PDF-ANNOTATED-SHARE"
+        self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
+        self.mark_ready(house_id)
+        original_buffer = BytesIO()
+        original = canvas.Canvas(original_buffer)
+        original.drawString(72, 720, "Original content")
+        original.showPage()
+        original.drawString(72, 720, "Second original page")
+        original.save()
+        annotated = fitz.open(stream=original_buffer.getvalue(), filetype="pdf")
+        annotated[0].insert_text(
+            (72, 150), "Saved annotation mark", color=(0.1, 0.3, 0.8)
+        )
+        annotated_content = annotated.tobytes()
+        annotated.close()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            document_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'survey-annotated.pdf', '.pdf', ?)
+                """,
+                (house_id, annotated_content),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (?, ?, ?, 'Admin One', '2026-10-21T10:00:00')
+                """,
+                (
+                    house_id,
+                    json.dumps({"notes": "Survey note for annotated PDF"}),
+                    "Survey note for annotated PDF",
+                ),
+            )
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-annotated-share-surveyor",
+                "display_name": "SEAI Annotated Share Surveyor",
+                "pin": "345678",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-annotated-share-surveyor", "pin": "345678"},
+        )
+        self.assertEqual(status, 200)
+
+        status, content_type, disposition, body = self.call_raw_json(
+            "POST",
+            f"/api/seai-documents/{document_id}/share",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        reader = PdfReader(BytesIO(body))
+        self.assertEqual(len(reader.pages), 3)
+        self.assertIn("Original content", reader.pages[0].extract_text())
+        self.assertIn("Saved annotation mark", reader.pages[0].extract_text())
+        self.assertIn("Second original page", reader.pages[1].extract_text())
+        self.assertIn(
+            "Survey note for annotated PDF", reader.pages[2].extract_text()
+        )
+        with server.connect_db() as db:
+            stored = db.execute(
+                "SELECT content FROM seai_documents WHERE id = ?", (document_id,)
+            ).fetchone()["content"]
+        self.assertEqual(stored, annotated_content)
+
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_surveys SET data = ? WHERE house_id = ?",
+                (json.dumps({"notes": ""}), house_id),
+            )
+        status, _, _, error_body = self.call_raw_json(
+            "POST",
+            f"/api/seai-documents/{document_id}/share",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Save a survey note", error_body.decode("utf-8"))
+
+    def test_seai_share_rejects_invalid_selections_and_non_survey_roles(self):
+        house_id = "PDF-SHARE-VALIDATION"
+        self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
+        self.mark_ready(house_id)
+        pdf_buffer = BytesIO()
+        pdf = canvas.Canvas(pdf_buffer)
+        pdf.drawString(72, 720, "Only page")
+        pdf.save()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            document_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'survey.pdf', '.pdf', ?)
+                """,
+                (house_id, pdf_buffer.getvalue()),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (?, ?, 'Saved validation note', 'Admin One', '2026-10-21T10:00:00')
+                """,
+                (house_id, json.dumps({"notes": "Saved validation note"})),
+            )
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "seai-share-employee",
+                "display_name": "SEAI Share Employee",
+                "pin": "345678",
+                "role": "employee",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, employee_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "seai-share-employee", "pin": "345678"},
+        )
+        self.assertEqual(status, 200)
+        payload = {
+            "house_id": house_id,
+            "pages": [{"document_id": document_id, "page": 1}],
+        }
+        status, _, _, body = self.call_raw_json(
+            "POST", "/api/seai-documents/share", payload, cookie=employee_cookie
+        )
+        self.assertEqual(status, 403)
+        self.assertIn(
+            "Administrator or surveyor access is required",
+            body.decode("utf-8"),
+        )
+        status, _, _, body = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                **payload,
+                "pages": [
+                    {"document_id": document_id, "page": 1},
+                    {"document_id": document_id, "page": 1},
+                ],
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("selected more than once", body.decode("utf-8"))
+        status, _, _, body = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {**payload, "pages": [{"document_id": document_id, "page": 2}]},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("does not exist", body.decode("utf-8"))
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_surveys SET data = ? WHERE house_id = ?",
+                (json.dumps({"notes": ""}), house_id),
+            )
+        status, _, _, body = self.call_raw_json(
+            "POST", "/api/seai-documents/share", payload
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Save a survey note", body.decode("utf-8"))
 
     def test_closed_houses_sort_last(self):
         self.activate({"id": "WH2131"})
@@ -1647,6 +2459,273 @@ class CalculatorScenarioTests(unittest.TestCase):
         )
 
 
+class ReadyForStartResetTests(HttpBase):
+    def test_returning_to_not_started_clears_survey_data_and_keeps_original_pdfs_viewable(self):
+        house_id = "RESET-READY"
+        self.provide(house_id, postcode="D01 TEST")
+        status, _, _ = self.call(
+            "POST", "/api/houses/plan", {"id": house_id, "ready": True}
+        )
+        self.assertEqual(status, 200)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_applications (
+                    application_id TEXT PRIMARY KEY,
+                    detail_data_json TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+        server.initialize_db()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET notes = 'House note',
+                    plan_scaffolding = 'yes',
+                    plan_esb = 'no',
+                    plan_plumber = 'yes',
+                    plan_scaffolding_required = 1,
+                    plan_scaffolding_notes = 'Scaffolding note',
+                    plan_esb_required = 0,
+                    plan_esb_notes = 'ESB note',
+                    plan_plumber_required = 1,
+                    plan_plumber_notes = 'Plumber note'
+                WHERE id = ?
+                """,
+                (house_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (?, ?, 'Survey note', 'Test Surveyor', '2026-10-27T13:00:00')
+                """,
+                (
+                    house_id,
+                    json.dumps({
+                        "windows": [{"w": 1.2, "h": 1.4, "qty": 2}],
+                        "doors": [],
+                        "house_corners": [],
+                        "notes": "Survey note",
+                    }),
+                ),
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists
+                    (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                VALUES (?, 'yes', 'no', 'yes')
+                """,
+                (house_id,),
+            )
+            db.execute(
+                "INSERT INTO house_snags(house_id, text, created_at) VALUES (?, 'Snag', 1)",
+                (house_id,),
+            )
+            original_pdf = b"%PDF-1.4 original"
+            annotated_pdf = b"%PDF-1.4 annotated"
+            house_original_id = db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (?, 'survey.pdf', ?, ?, 'Admin One', '2026-10-27T13:00:00')
+                """,
+                (house_id, original_pdf, len(original_pdf)),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (?, 'survey-annotated.pdf', ?, ?, 'Annotated by Admin One',
+                    '2026-10-27T13:01:00')
+                """,
+                (house_id, annotated_pdf, len(annotated_pdf)),
+            )
+            seai_original_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'seai-survey.pdf', '.pdf', ?)
+                """,
+                (house_id, original_pdf),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'seai-survey-annotated.pdf', '.pdf', ?)
+                """,
+                (house_id, annotated_pdf),
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                (
+                    house_id,
+                    json.dumps({
+                        "Measures": [{
+                            "Name": "External Wall Insulation",
+                            "Survey Quantity": "94",
+                            "Survey Qty including Variation": "111.5",
+                        }]
+                    }),
+                ),
+            )
+
+        status, result, _ = self.call(
+            "POST", "/api/houses/plan", {"id": house_id, "ready": False}
+        )
+        self.assertEqual(status, 200, result)
+
+        with server.connect_db() as db:
+            house = db.execute(
+                """
+                SELECT ready_for_start, notes, plan_scaffolding,
+                       plan_scaffolding_required, plan_scaffolding_notes,
+                       plan_esb_required, plan_esb_notes,
+                       plan_plumber_required, plan_plumber_notes
+                FROM provided_houses WHERE id = ?
+                """,
+                (house_id,),
+            ).fetchone()
+            self.assertEqual(house["ready_for_start"], 0)
+            self.assertEqual(house["notes"], "")
+            self.assertIsNone(house["plan_scaffolding"])
+            self.assertIsNone(house["plan_scaffolding_required"])
+            self.assertEqual(house["plan_scaffolding_notes"], "")
+            self.assertIsNone(house["plan_esb_required"])
+            self.assertEqual(house["plan_esb_notes"], "")
+            self.assertIsNone(house["plan_plumber_required"])
+            self.assertEqual(house["plan_plumber_notes"], "")
+            for table in ("house_surveys", "house_checklists", "house_snags"):
+                self.assertEqual(
+                    db.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE house_id = ?",
+                        (house_id,),
+                    ).fetchone()[0],
+                    0,
+                )
+            self.assertEqual(
+                db.execute(
+                    "SELECT filename FROM house_documents WHERE house_id = ?",
+                    (house_id,),
+                ).fetchall()[0]["filename"],
+                "survey.pdf",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT filename FROM seai_documents WHERE application_id = ?",
+                    (house_id,),
+                ).fetchall()[0]["filename"],
+                "seai-survey.pdf",
+            )
+            variation = json.loads(
+                db.execute(
+                    "SELECT detail_data_json FROM seai_applications "
+                    "WHERE application_id = ?",
+                    (house_id,),
+                ).fetchone()[0]
+            )["Measures"][0]["Survey Qty including Variation"]
+            self.assertEqual(variation, "")
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM house_status_history WHERE house_id = ? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (house_id,),
+                ).fetchone()["status"],
+                "not_started",
+            )
+
+        status, documents, _ = self.call(
+            "GET", f"/api/house-documents?house_id={house_id}"
+        )
+        self.assertEqual(status, 200, documents)
+        self.assertEqual([document["filename"] for document in documents["documents"]], ["survey.pdf"])
+        status, _, _, body = self.call_raw(
+            "GET", f"/api/house-documents/{house_original_id}"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, original_pdf)
+        self.assertEqual(
+            self.call_raw("GET", f"/api/house-documents/{house_original_id}/share")[0],
+            409,
+        )
+        status, seai_documents, _ = self.call(
+            "GET", f"/api/seai-documents?house_id={house_id}"
+        )
+        self.assertEqual(status, 200, seai_documents)
+        self.assertEqual(
+            [document["filename"] for document in seai_documents["documents"]],
+            ["seai-survey.pdf"],
+        )
+        status, _, _, body = self.call_raw(
+            "GET", f"/api/seai-documents/{seai_original_id}/file"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, original_pdf)
+        status, result, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{seai_original_id}/annotations",
+            {"annotations": []},
+        )
+        self.assertEqual(status, 409, result)
+        self.assertIn("view-only", result["error"])
+        self.assertEqual(
+            self.call_raw_json(
+                "POST", f"/api/seai-documents/{seai_original_id}/share", {}
+            )[0],
+            409,
+        )
+        status, result, _ = self.call(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                "house_id": house_id,
+                "pages": [{"document_id": seai_original_id, "page": 1}],
+            },
+        )
+        self.assertEqual(status, 409, result)
+        status, result, _ = self.call(
+            "POST",
+            "/api/seai-measure-variation",
+            {"house_id": house_id, "measure_index": 0, "variation": "95"},
+        )
+        self.assertEqual(status, 409, result)
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            {
+                "house_id": house_id,
+                "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+            },
+        )
+        self.assertEqual(status, 409, result)
+        status, result, _ = self.call(
+            "POST", "/api/house-notes", {"house_id": house_id, "notes": "blocked"}
+        )
+        self.assertEqual(status, 409, result)
+        self.assertEqual(
+            self.call_raw_json(
+                "POST",
+                f"/api/house-documents/{house_original_id}/annotations",
+                {"annotations": []},
+            )[0],
+            404,
+        )
+
+
 @unittest.skipUnless(shutil.which("node"), "node is required for the front-end logic tests")
 class ReadyForStartAndNotesTests(HttpBase):
     def setUp(self):
@@ -1781,8 +2860,13 @@ class ReadyForStartAndNotesTests(HttpBase):
             ).fetchone()
         self.assertEqual(tuple(row), ("T12 AB12", 51.8985, -8.4756))
 
-    def test_map_listing_contains_only_ready_and_active_houses_with_stages(self):
+    def test_map_listing_includes_located_not_started_ready_and_active_houses(self):
         self.provide("WH3", "T3", "3 Elm", "Owner3")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET latitude = 53.4, longitude = -8.1 "
+                "WHERE id = 'WH3'"
+            )
         self.plan({"id": "WH1", "ready": True})
         self.activate({"id": "WH2", "postcode": "T2", "owner_name": "Owner2"})
         self.call(
@@ -1793,7 +2877,7 @@ class ReadyForStartAndNotesTests(HttpBase):
         _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
         self.assertEqual(
             {house["id"]: house["status"] for house in mapped["houses"]},
-            {"WH1": "ready"},
+            {"WH1": "ready", "WH3": "not_started"},
         )
         self.plan({"id": "WH1", "ready": False})
         self.activate({"id": "WH1", "postcode": "T1", "owner_name": "Owner"})
@@ -1802,7 +2886,7 @@ class ReadyForStartAndNotesTests(HttpBase):
         _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
         self.assertEqual(
             {house["id"]: (house["status"], house["stage"]) for house in mapped["houses"]},
-            {"WH1": ("active", 2)},
+            {"WH1": ("active", 2), "WH3": ("not_started", 1)},
         )
 
     def test_map_and_ready_listing_combine_provided_and_maptest_houses(self):
@@ -2143,6 +3227,147 @@ class UiWiringTests(unittest.TestCase):
     def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
         self.assertIn('${!isReady ? `<button class="text-button plan-ready-toggle"', APP_JS)
         self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
+        self.assertIn("seaiInsulationSummaryHtml(h.seai_details)", APP_JS)
+        self.assertIn("View Surveyor room", APP_JS)
+        self.assertIn('id="survey-room-seai-details"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+
+    def test_surveyor_room_lists_seai_pdfs_for_annotation(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('id="survey-room-seai-documents"', html)
+        self.assertIn('id="pdf-annotator-dialog"', html)
+        self.assertIn(
+            "loadSeaiDocuments(houseId, state.surveyRoomRequest, isReady)",
+            APP_JS,
+        )
+        self.assertIn('`/api/seai-documents?house_id=${encodeURIComponent(houseId)}`', APP_JS)
+        self.assertIn('data-document-id="${Number(document.id)}"', APP_JS)
+        self.assertIn('"seai-documents" : "house-documents"', APP_JS)
+        self.assertIn('"The original SEAI PDF stays unchanged.', APP_JS)
+        self.assertIn("The original is unchanged.", APP_JS)
+        self.assertIn(".seai-document-category", css)
+        self.assertIn("document.is_annotated ? \"Annotated copy\" : \"Original\"", APP_JS)
+        self.assertIn(".seai-document-status.original", css)
+        self.assertIn(".seai-document-status.annotated", css)
+        self.assertIn('data-seai-share-selected', APP_JS)
+        self.assertIn('data-seai-document-share="${Number(document.id)}"', APP_JS)
+        self.assertIn("Share annotated PDF", APP_JS)
+        self.assertIn('id="pdf-annotator-page-selection"', html)
+        self.assertIn('data-seai-share-clear', APP_JS)
+        self.assertIn("/api/seai-documents/share", APP_JS)
+        self.assertIn("View-only PDFs.", APP_JS)
+        self.assertIn("Uploading, annotations, and sharing are disabled", APP_JS)
+        self.assertIn(
+            '`<a class="button button-secondary" href="/api/seai-documents/${Number(document.id)}/file"',
+            APP_JS,
+        )
+        self.assertIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
+        self.assertIn("window.confirm(", APP_JS)
+        self.assertIn('data-not-started-only', html)
+
+    def test_pdf_annotator_uses_scroll_for_page_navigation_without_arrows(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="pdf-annotator-page-count"', html)
+        self.assertNotIn('id="pdf-annotator-previous"', html)
+        self.assertNotIn('id="pdf-annotator-next"', html)
+        self.assertIn('addEventListener("wheel", scrollPdfPage', APP_JS)
+        self.assertIn("Scroll to change pages", APP_JS)
+        self.assertIn("event.preventDefault();", APP_JS)
+        start = APP_JS.index("function scrollPdfPage(event)")
+        end = APP_JS.index("function openHouseDocumentAnnotator", start)
+        script = """
+          const state = { pdfAnnotator: {
+            page: 1, pageCount: 4, zoom: 1, wheelDelta: 0,
+            wheelLocked: false, loading: false
+          }};
+          let viewport = { scrollHeight: 100, clientHeight: 100, scrollTop: 0 };
+          const $ = () => viewport;
+          const requestedPages = [];
+          const loadHouseDocumentPage = page => requestedPages.push(page);
+          const prevented = [];
+        """ + APP_JS[start:end] + """
+          const wheel = deltaY => scrollPdfPage({
+            deltaY, preventDefault: () => prevented.push(deltaY)
+          });
+          wheel(20);
+          if (requestedPages.length) throw new Error("Small wheel delta changed page.");
+          wheel(20);
+          if (requestedPages.join(",") !== "2") throw new Error("Scroll did not advance one page.");
+          state.pdfAnnotator.wheelLocked = false;
+          state.pdfAnnotator.page = 2;
+          state.pdfAnnotator.zoom = 1.5;
+          viewport = { scrollHeight: 300, clientHeight: 100, scrollTop: 100 };
+          wheel(50);
+          if (requestedPages.length !== 1) throw new Error("Scroll changed page before reaching the zoomed page edge.");
+          viewport.scrollTop = 200;
+          wheel(50);
+          if (requestedPages.join(",") !== "2,3") throw new Error("Scroll at the page edge did not advance.");
+          console.log("PDF scroll navigation passed");
+        """;
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        self.assertIn("PDF scroll navigation passed", result.stdout)
+
+    def test_insulation_card_shows_both_seai_reported_quantities(self):
+        start = APP_JS.index("const SEAI_INSULATION_GROUPS")
+        end = APP_JS.index("async function loadSurveyorHouses", start)
+        script = (
+            'const escapeHtml=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;");\n'
+            + APP_JS[start:end]
+            + '\nconsole.log(seaiInsulationSummaryHtml({Measures:['
+            + '{"Name":"Attic (Loft) Insulation 100 mm top-up","Survey Quantity":"45","Survey Qty including Variation":"45"},'
+            + '{"Name":"External Wall Insulation: Greater than 85m2","Survey Quantity":"94","Survey Qty including Variation":"104"}'
+            + ']}));'
+        )
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Attic (Loft) Insulation", result.stdout)
+        self.assertIn("Survey qty", result.stdout)
+        self.assertIn("Including variation", result.stdout)
+        self.assertIn(">45<", result.stdout)
+        self.assertIn(">94<", result.stdout)
+        self.assertIn(">104<", result.stdout)
+        self.assertNotIn("seai-card-variation-edit", result.stdout)
+        self.assertNotIn("seai-card-variation-save", result.stdout)
+        self.assertIn("Not listed", result.stdout)
+        self.assertIn("Attic (Loft) Insulation", result.stdout)
+        self.assertIn("Internal Wall Insulation", result.stdout)
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('.house-insulation-row > [role="cell"] { display: flex; flex-direction: column; align-items: stretch;', css)
+        self.assertIn(".house-insulation-missing { display: flex; flex: 1 0 auto; align-items: flex-start; border: 1px solid #ead8a6;", css)
+        self.assertIn("background: #fff8e6; color: #82621a;", css)
+        self.assertIn('class="seai-variation-input"', APP_JS)
+        self.assertIn('request("/api/seai-measure-variation"', APP_JS)
+        self.assertIn('class="button button-secondary seai-variation-save"', APP_JS)
+        self.assertNotIn("seai-card-variation-edit", APP_JS)
+        start = APP_JS.index("function seaiDetailValue")
+        end = APP_JS.index("async function saveSeaiMeasureVariation", start)
+        render_result = subprocess.run(
+            [
+                "node",
+                "-e",
+                'const escapeHtml=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;");\n'
+                + APP_JS[start:end]
+                + '\nconsole.log(seaiDetailSectionHtml("Measures",[{'
+                + '"Name":"External Wall Insulation","Survey Qty including Variation":"104"}]));',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(render_result.returncode, 0, render_result.stderr)
+        self.assertIn('type="number"', render_result.stdout)
+        self.assertIn('data-seai-measure-index="0"', render_result.stdout)
+        self.assertIn('class="button button-secondary seai-variation-edit"', render_result.stdout)
+        self.assertIn(">Save</button>", render_result.stdout)
+        self.assertIn('event.target.closest(".seai-variation-edit")', APP_JS)
+        self.assertIn('.seai-variation-editor[hidden] { display: none; }', css)
 
     def test_plan_lists_refresh_without_flashing_loading_state(self):
         body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]
@@ -2308,15 +3533,16 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn("function updateHouseChecklistStatus(event)", APP_JS)
         self.assertIn("class=\"house-checklist-status\"", APP_JS)
         self.assertIn(".house-grid.house-grid-compact .house-plan-pending .house-card-actions .plan-ready-toggle[data-ready=\"true\"] { grid-column: 1 / -1;", css)
-        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: auto; }", css)
-        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending { height: auto; min-height: 0; padding: 10px; }", css)
-        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-body { flex: 0 1 auto; max-height: none; overflow: visible; padding: 0; }", css)
+        self.assertIn(".house-grid.house-grid-compact { grid-auto-rows: auto; align-items: stretch; }", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending { height: auto; min-height: 0; align-self: stretch; padding: 14px; }", css)
+        self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-body { flex: 1 0 auto; min-height: 0; max-height: none; overflow: visible;", css)
         self.assertIn(".house-grid.house-grid-compact > .house-plan-pending .house-card-actions { flex: 0 0 auto; height: auto;", css)
+        self.assertNotIn("overflow-y: auto;", css[css.index(".house-grid.house-grid-compact > .house-plan-pending .house-body"):css.index(".house-grid > .house-card.house-finished")])
 
     def test_house_cards_size_to_content_across_status_tabs(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(
-            ".house-grid.house-grid-ready { grid-auto-rows: auto; }\n.house-grid.house-grid-ready > .house-plan-ready { height: auto; min-height: 0; }\n.house-grid.house-grid-compact { grid-auto-rows: auto; }",
+            ".house-grid.house-grid-ready { grid-auto-rows: auto; }\n.house-grid.house-grid-ready > .house-plan-ready { height: auto; min-height: 0; }\n.house-grid.house-grid-compact { grid-auto-rows: auto; align-items: stretch; }",
             css,
         )
 
@@ -2417,7 +3643,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIsNotNone(closed)
         self.assertEqual(
             re.findall(r'<button class="text-button ([^"]+)', not_started.group(1)),
-            ["plan-ready-toggle"],
+            ["plan-ready-toggle", "house-survey-open survey-needed"],
         )
         self.assertEqual(
             re.findall(r'<button class="text-button ([^"]+)', closed.group(1)),
@@ -2453,7 +3679,7 @@ class UiWiringTests(unittest.TestCase):
         ):
             self.assertIn(element, html)
         legend = html[html.index('class="house-map-legend"'):html.index("</div>", html.index('class="house-map-legend"'))]
-        self.assertNotIn("Not started", legend)
+        self.assertIn("Not started · mapped", legend)
         self.assertNotIn("Closed", legend)
         self.assertIn("Ready for start", legend)
         self.assertIn("Active · Stage 1", legend)
@@ -2506,6 +3732,38 @@ class UiWiringTests(unittest.TestCase):
         )
         self.assertEqual(coordinate_result.returncode, 0, coordinate_result.stderr)
         self.assertEqual(json.loads(coordinate_result.stdout), [True, True, False])
+        eircode_helper = map_code[
+            map_code.index("function googleMapsEircodeUrl"):
+            map_code.index("function projectMapPoint")
+        ]
+        eircode_result = subprocess.run(
+            [
+                "node",
+                "-e",
+                eircode_helper
+                + '\nconsole.log(JSON.stringify(['
+                + 'googleMapsEircodeUrl({postcode:"K34 ET85",address:"32 Shenick Avenue, Skerries"}),'
+                + 'googleMapsEircodeUrl({postcode:"",address:"32 Shenick Avenue, Skerries"})'
+                + "]));",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(eircode_result.returncode, 0, eircode_result.stderr)
+        self.assertEqual(
+            json.loads(eircode_result.stdout),
+            [
+                "https://www.google.com/maps/search/?api=1&query=K34%20ET85",
+                "",
+            ],
+        )
+        map_selection = APP_JS[
+            APP_JS.index("function selectMapHouse"):
+            APP_JS.index("function openHouseMap")
+        ]
+        self.assertIn("house-map-eircode-link", map_selection)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', map_selection)
         self.assertIn('house.source === "map_test"', map_code)
         self.assertIn('notice.className = "house-map-empty house-map-approximate"', map_code)
         self.assertIn("Approximate demo pins", map_code)
@@ -2519,7 +3777,7 @@ class UiWiringTests(unittest.TestCase):
             'marker.title = `${house.id} · ${mapHouseStatusLabel(house)}${activeStage}${locationLabel}`;',
             APP_JS,
         )
-        self.assertIn('house.status === "active" ? String(house.stage || 1) : "R"', APP_JS)
+        self.assertIn('house.status === "not_started" ? "N" : "R"', APP_JS)
         self.assertIn("mapHouseActions(displayHouse)", APP_JS)
         self.assertIn("https://tile.openstreetmap.org/", APP_JS)
         self.assertIn("map-status-active[data-stage=\"2\"]", css)
@@ -2529,13 +3787,13 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('class="map-stage-caption">WORK STAGE</span>', APP_JS)
         self.assertIn(".house-map-list-item:focus-visible", css)
         self.assertIn(".house-map-empty strong", css)
-        self.assertIn("The map shows Ireland.", map_code)
+        self.assertIn("The map has no saved coordinates", map_code)
         self.assertIn(".house-map-marker-approximate", css)
         self.assertIn(".house-map-approximate", css)
         self.assertIn("house-map-sidebar-heading", html)
         self.assertIn("mappedCount", APP_JS)
         self.assertIn(".house-map-summary", css)
-        self.assertIn("We will not invent a residential postcode", html)
+        self.assertIn("Google receives only the Eircode when you click that link.", html)
 
     def test_presentation_guide_covers_survey_stages_and_house_history(self):
         guide = (ROOT / "DEMO-PRESENTATION.md").read_text(encoding="utf-8")
