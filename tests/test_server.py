@@ -57,18 +57,19 @@ class TrackerTests(unittest.TestCase):
         thread.start()
         return httpd, thread
 
-    def test_tommy_photo_is_served_for_sidebar(self):
+    def test_brusna_curious_cat_logo_is_served_for_app_branding(self):
         httpd, thread = self.start_test_server()
         connection = http.client.HTTPConnection(
             "127.0.0.1", httpd.server_address[1], timeout=5
         )
         try:
-            connection.request("GET", "/tommy.jpeg")
+            connection.request("GET", "/brusna-curious-cat-logo.png")
             response = connection.getresponse()
-            photo = response.read()
+            image = response.read()
             self.assertEqual(response.status, 200)
-            self.assertEqual(response.getheader("Content-Type"), "image/jpeg")
-            self.assertTrue(photo)
+            self.assertEqual(response.getheader("Content-Type"), "image/png")
+            self.assertTrue(image.startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertEqual(image[25], 6)
         finally:
             connection.close()
             httpd.shutdown()
@@ -1455,12 +1456,17 @@ class TrackerTests(unittest.TestCase):
             survey = {
                 "windows": [{"w": 1.2, "h": 1.0, "qty": 3}],
                 "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
-                "house_corners": [2.5], "notes": "Check access",
+                "house_corners": [2.5], "perimeter_m": 42.75,
+                "notes": "Check access",
             }
             for invalid_survey in [
                 {**survey, "windows": [{"w": 1.2, "h": 1.0, "qty": 0}]},
                 {**survey, "doors": [{"w": float("nan"), "h": 2.0, "qty": 1}]},
                 {**survey, "house_corners": [-1]},
+                {**survey, "perimeter_m": float("nan")},
+                {**survey, "perimeter_m": -1},
+                {**survey, "perimeter_m": None},
+                {key: value for key, value in survey.items() if key != "perimeter_m"},
                 {**survey, "notes": "x" * 2001},
             ]:
                 status, _, _ = self.http_request(

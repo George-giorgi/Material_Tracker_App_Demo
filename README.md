@@ -59,12 +59,15 @@ For houses without saved coordinates, select a house and use **Open Eircode pin
 in Google Maps** to search its Eircode. Google receives only the Eircode when
 someone clicks the link.
 
-Start this copy on a separate local port from the project root in PowerShell:
+### Quick start (PowerShell)
+
+From the project root, copy and run this block to start the SEAI Red database
+on port 8011:
 
 ```powershell
 $env:EWI_DB_PATH = (Join-Path $PWD 'instance\ewi.seai-red.sqlite3')
 $env:EWI_PORT = '8011'
-py server.py
+& .\.venv\Scripts\python.exe server.py
 ```
 
 Open [http://127.0.0.1:8011](http://127.0.0.1:8011). It uses the copied
@@ -246,7 +249,7 @@ Administrators can add employee or surveyor accounts in **Account ? Manage emplo
 
 When the house is selected in the automatic calculator, saved dimensions and corner lengths are loaded and shown read-only instead of requesting the same measurements again. The calculator continues to accept manual measurements when no surveyed house is selected. Existing user accounts and active sessions are preserved when the database is upgraded for the surveyor role.
 
-Use **Surveyor room** on a Ready for start house to open its full survey record, pre-start work plan, and measurement form. A house must have a survey saved before it can be activated; until then, the Activate house button is disabled and explains that surveyor review is required. Ready cards omit notes and checklist editing; surveyors enter the planned work and optional trade details in the Surveyor room. On activation, required work starts as **Not done** and work marked **Not required** starts as **Not necessary**. Admins and surveyors can save House notes and Survey notes separately; either note field clears after save and has an **Edit note** action to load the saved text back into the field. Admins and surveyors can also attach and view PDFs for Ready for start houses. **Share PDF** prepares a copy with the original document followed by a classic, professional Survey note page that presents each note as a separate bulleted item, alongside the house and source-document details; it does not include House notes. Use the native share sheet where supported, or choose **Email PDF** or **WhatsApp PDF** to download the combined file and open the chosen app. Browsers cannot attach a local file automatically to email or WhatsApp, so attach the downloaded PDF before sending. Uploads are private to signed-in admins and surveyors, limited to 8 MB per PDF and 25 PDFs per house, and are stored in the tracker database. A document is available only while its house remains Ready for start.
+Use **Surveyor room** on a Ready for start house to open its full survey record, pre-start work plan, and measurement form. A house must have a survey saved before it can be activated; until then, the Activate house button is disabled and explains that surveyor review is required. A surveyed perimeter and assigned employee are required before activation; the activation form can confirm or enter the perimeter and saves it with the survey. House details and history show the saved perimeter, SEAI EWI area, and a color-coded house status. SEAI insulation quantities are displayed in m². Ready cards omit notes and checklist editing; surveyors enter the planned work and optional trade details in the Surveyor room. On activation, required work starts as **Not done** and work marked **Not required** starts as **Not necessary**. Admins and surveyors can save House notes and Survey notes separately; either note field clears after save and has an **Edit note** action to load the saved text back into the field. Admins and surveyors can also attach and view PDFs for Ready for start houses. **Share PDF** prepares a copy with the original document followed by a classic, professional Survey note page that presents each note as a separate bulleted item, alongside the house and source-document details; it does not include House notes. Use the native share sheet where supported, or choose **Email PDF** or **WhatsApp PDF** to download the combined file and open the chosen app. Browsers cannot attach a local file automatically to email or WhatsApp, so attach the downloaded PDF before sending. Uploads are private to signed-in admins and surveyors, limited to 8 MB per PDF and 25 PDFs per house, and are stored in the tracker database. A document is available only while its house remains Ready for start.
 
 Use **Annotate** beside an uploaded PDF to mark it up with a pen, highlighter, or text notes on a phone or tablet. Use the mouse wheel or trackpad to move between pages; at higher zoom, scrolling changes pages after reaching the current page's top or bottom. Choose a pen thickness and use the zoom controls to work on details; drawing renders stroke segments as you move for a more responsive experience. **Save annotated copy** stores a separate PDF alongside the original uploaded house document. In the Surveyor room, **Open & annotate** on an SEAI PDF uses the same tools; saving creates a separately named annotated PDF in the same category, leaving the original unchanged. PyMuPDF is required for local page previews and saving annotations.
 

@@ -1127,14 +1127,14 @@ function renderInventory() {
     .map(
       (item) => `
     <tr>
-      <td><span class="material-name"><span class="material-dot"></span>${escapeHtml(item.name)}</span></td>
-      <td class="code-cell">${escapeHtml(item.code || "—")}</td>
-      <td class="${item.warehouse_qty === null ? "qty-unknown" : "qty-cell"}">${escapeHtml(formatQuantity(item.warehouse_qty, item.unit))}</td>
-      <td class="${locationTotal(item, "team") < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(locationTotal(item, "team"), item.unit))}</td>
-      <td class="${locationTotal(item, "house") < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(locationTotal(item, "house"), item.unit))}</td>
-      <td>${escapeHtml(item.unit)}</td>
-      <td><span class="status-pill ${item.needs_stocktake ? "warning" : ""}">${item.negative_locations?.length ? "Reconcile" : item.needs_stocktake ? "Count needed" : "Tracked"}</span></td>
-      <td>${canAdministerInventory ? `<button type="button" class="text-button stock-edit" data-material-id="${item.id}">Edit warehouse stock</button>` : ""}</td>
+      <td data-label="Material"><span class="material-name"><span class="material-dot"></span>${escapeHtml(item.name)}</span></td>
+      <td class="code-cell" data-label="Code"><span class="inventory-cell-label" aria-hidden="true">Code</span>${escapeHtml(item.code || "—")}</td>
+      <td class="${item.warehouse_qty === null ? "qty-unknown" : "qty-cell"}" data-label="Warehouse"><span class="inventory-cell-label" aria-hidden="true">Warehouse</span>${escapeHtml(formatQuantity(item.warehouse_qty, item.unit))}</td>
+      <td class="${locationTotal(item, "team") < 0 ? "qty-negative" : ""}" data-label="With teams"><span class="inventory-cell-label" aria-hidden="true">With teams</span>${escapeHtml(formatQuantity(locationTotal(item, "team"), item.unit))}</td>
+      <td class="${locationTotal(item, "house") < 0 ? "qty-negative" : ""}" data-label="On houses"><span class="inventory-cell-label" aria-hidden="true">On houses</span>${escapeHtml(formatQuantity(locationTotal(item, "house"), item.unit))}</td>
+      <td data-label="Unit"><span class="inventory-cell-label" aria-hidden="true">Unit</span>${escapeHtml(item.unit)}</td>
+      <td data-label="Status"><span class="inventory-cell-label" aria-hidden="true">Status</span><span class="status-pill ${item.needs_stocktake ? "warning" : ""}">${item.negative_locations?.length ? "Reconcile" : item.needs_stocktake ? "Count needed" : "Tracked"}</span></td>
+      <td data-label="Actions">${canAdministerInventory ? `<button type="button" class="text-button stock-edit" data-material-id="${item.id}">Edit warehouse stock</button>` : ""}</td>
     </tr>`,
     )
     .join("");
@@ -1280,10 +1280,16 @@ function seaiInsulationSummaryHtml(details) {
       ${SEAI_INSULATION_GROUPS.map(([label, matcher]) => {
         const matching = measures.filter((measure) => matcher.test(String(measure.Name || "")));
         const value = (measure, key) => String(measure[key] ?? "").trim() || "—";
-        return `<div class="house-insulation-row" role="row"><strong role="rowheader">${escapeHtml(label)}</strong><div role="cell">${matching.length ? matching.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(value(measure, "Survey Quantity"))}<small>${escapeHtml(measure.Name || "")}</small></span>`).join("") : '<span class="house-insulation-missing">Not listed</span>'}</div><div role="cell">${matching.length ? matching.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(value(measure, "Survey Qty including Variation"))}<small>${escapeHtml(measure.Name || "")}</small></span>`).join("") : '<span class="house-insulation-missing">Not listed</span>'}</div></div>`;
+        const quantity = (measure, key) => {
+          const raw = value(measure, key);
+          if (raw === "—") return raw;
+          const numeric = Number(raw);
+          return Number.isFinite(numeric) ? `${raw} m²` : raw;
+        };
+        return `<div class="house-insulation-row" role="row"><strong role="rowheader">${escapeHtml(label)}</strong><div role="cell">${matching.length ? matching.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Quantity"))}<small>${escapeHtml(measure.Name || "")}</small></span>`).join("") : '<span class="house-insulation-missing">Not listed</span>'}</div><div role="cell">${matching.length ? matching.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Qty including Variation"))}<small>${escapeHtml(measure.Name || "")}</small></span>`).join("") : '<span class="house-insulation-missing">Not listed</span>'}</div></div>`;
       }).join("")}
     </div>
-    <small>Quantities are shown as recorded in the SEAI application; no units are inferred.</small>
+    <small>Insulation quantities are shown in m² as recorded in the SEAI application.</small>
   </section>`;
 }
 function seaiDetailValue(value) {
@@ -1308,7 +1314,7 @@ function seaiDetailSectionHtml(title, value) {
     }).join("")}</tr>`).join("")}</tbody></table></div>`
     : `<dl class="survey-room-seai-fields">${rows.map((row, index) => `<div><dt>${escapeHtml(fields.length ? fields[index] : title)}</dt><dd>${escapeHtml(seaiDetailValue(row))}</dd></div>`).join("")}</dl>`;
   const isMeasures = title === "Measures";
-  return `<details class="survey-room-seai-section"${isMeasures ? " open" : ""}><summary>${escapeHtml(title)} <span>${rows.length}</span></summary>${title === "Files" ? '<p class="survey-room-seai-note">PDFs in the Application, Survey, and Variation categories can be opened in the SEAI PDFs section below. Other attachment types are shown as metadata only.</p>' : ""}${body}</details>`;
+  return `<details class="survey-room-seai-section${isMeasures ? " survey-room-seai-measures" : ""}"${isMeasures ? " open" : ""}><summary>${escapeHtml(title)} <span>${rows.length}</span></summary>${title === "Files" ? '<p class="survey-room-seai-note">PDFs in the Application, Survey, and Variation categories can be opened in the SEAI PDFs section below. Other attachment types are shown as metadata only.</p>' : ""}${body}</details>`;
 }
 function seaiApplicationRecordHtml(details) {
   if (!details || typeof details !== "object") return "";
@@ -1445,6 +1451,7 @@ function openHouseSurvey(houseId) {
     (survey[key] || []).forEach((item) => surveyRow(key, key.endsWith("corners") ? { length: item } : item));
     if (!target.children.length) surveyRow(key);
   }
+  $("#survey-perimeter").value = survey.perimeter_m ?? "";
   $("#house-survey-title").textContent = isNotStarted
     ? `${houseId} · PDFs`
     : `${houseId} · Surveyor room`;
@@ -2386,6 +2393,9 @@ async function submitHouseSurvey(event) {
     windows: dims("windows"),
     doors: dims("doors"),
     house_corners: lengths("house_corners"),
+    perimeter_m: $("#survey-perimeter").value.trim()
+      ? Number($("#survey-perimeter").value)
+      : null,
     notes: currentHouse?.survey?.notes || "",
   };
   button.disabled = true;
@@ -3257,21 +3267,42 @@ function renderHouseDetail(result) {
     [house.owner_name, house.employee_name, house.postcode, house.address]
       .filter(Boolean)
       .join(" · ") || "House details have not been recorded.";
+  const externalWallMeasure = house.seai_details?.Measures?.find((measure) =>
+    /external wall insulation/i.test(String(measure.Name || "")),
+  );
+  const ewiArea = String(
+    [
+      externalWallMeasure?.["Survey Qty including Variation"],
+      externalWallMeasure?.["Survey Quantity"],
+    ].map((value) => String(value ?? "").trim()).find(Boolean) || "",
+  );
+  const surveyPerimeter = house.survey_perimeter_m ?? house.perimeter_m;
+  const statusClass = {
+    not_started: "pending",
+    ready: "ready",
+    active: "active",
+    closed: "finished",
+  }[house.status] || "pending";
   $("#house-detail-facts").innerHTML = [
     ["Owner", house.owner_name],
     ["Assigned employee", house.employee_name],
     ["Postcode / Eircode", house.postcode],
     ["Address", house.address],
-    ["Floor area", house.area_m2 === null ? "" : `${formatQuantity(house.area_m2)} m²`],
-    ["Perimeter", house.perimeter_m === null ? "" : `${formatQuantity(house.perimeter_m)} m`],
+    ["EWI area", ewiArea ? `${ewiArea} m²` : ""],
+    ["Perimeter", surveyPerimeter == null ? "" : `${formatQuantity(surveyPerimeter)} m`],
     ["Status", statusLabel],
   ]
     .map(
-      ([label, value]) => `
+      ([label, value]) => {
+        const displayValue = label === "Status"
+          ? `<span class="status-pill ${statusClass}">${escapeHtml(statusLabel)}</span>`
+          : `<strong>${escapeHtml(value || "Not recorded")}</strong>`;
+        return `
         <article class="card house-detail-fact${label === "Status" ? " house-detail-fact-status" : ""}">
           <div class="house-stock-title">${escapeHtml(label)}</div>
-          <strong>${escapeHtml(value || "Not recorded")}</strong>
-        </article>`,
+          ${displayValue}
+        </article>`;
+      },
     )
     .join("");
 
@@ -3641,12 +3672,24 @@ function fillSeaiHouse(h) {
   form.elements.id.value = h.id;
   form.elements.postcode.value = h.postcode || "";
   form.elements.owner_name.value = h.owner_name || "";
+  form.elements.perimeter_m.value = h.survey?.perimeter_m ?? "";
   if (h.employee_name) form.elements.employee_name.value = h.employee_name;
-  const fmt = (v, u) => (v === null || v === undefined ? "—" : `${v} ${u}`);
+  const externalWallMeasure = h.seai_details?.Measures?.find((measure) =>
+    /external wall insulation/i.test(String(measure.Name || "")),
+  );
+  const ewiArea = String(
+    externalWallMeasure?.["Survey Qty including Variation"] ?? "",
+  ).trim();
+  const surveyPerimeter = h.survey?.perimeter_m;
   $("#seai-info").innerHTML = [
     ["Address", h.address || "—"],
-    ["Area", fmt(h.area_m2, "m²")],
-    ["Perimeter", fmt(h.perimeter_m, "m")],
+    ["EWI Area", ewiArea ? `${ewiArea} m²` : "—"],
+    [
+      "Perimeter",
+      surveyPerimeter == null || surveyPerimeter === ""
+        ? "—"
+        : `${formatQuantity(surveyPerimeter)} m`,
+    ],
   ]
     .map(([k, v]) => `<span>${k}: <b>${escapeHtml(String(v))}</b></span>`)
     .join("");
@@ -3869,9 +3912,26 @@ async function submitMaterial(event) {
   }
 }
 
+function validateHouseActivation(formElement) {
+  const employeeField = formElement.elements.employee_name;
+  const perimeterField = formElement.elements.perimeter_m;
+  employeeField.value = employeeField.value.trim();
+  employeeField.setCustomValidity(
+    employeeField.value ? "" : "Assign an employee before opening the calculator.",
+  );
+  const perimeter = Number(perimeterField.value);
+  perimeterField.setCustomValidity(
+    Number.isFinite(perimeter) && perimeter > 0 && perimeter <= 10000
+      ? ""
+      : "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
+  );
+  return formElement.reportValidity();
+}
+
 async function submitHouse(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
+  if (!validateHouseActivation(formElement)) return;
   const button = $("button[type='submit']", formElement);
   button.disabled = true;
   const form = new FormData(formElement);
@@ -4468,6 +4528,12 @@ function bindEvents() {
   );
   $("#material-form").addEventListener("submit", submitMaterial);
   $("#house-form").addEventListener("submit", submitHouse);
+  $("#house-form").elements.employee_name.addEventListener("input", (event) => {
+    event.currentTarget.setCustomValidity("");
+  });
+  $("#house-form").elements.perimeter_m.addEventListener("input", (event) => {
+    event.currentTarget.setCustomValidity("");
+  });
   $("#house-request").addEventListener("change", toggleRequestItem);
   $("#seai-search").addEventListener("input", () => {
     clearTimeout(seaiTimer);

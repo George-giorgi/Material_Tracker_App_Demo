@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Install dependencies",
+      "type": "shell",
+      "command": "py -m pip install -r requirements.txt",
+      "inAgents": true,
+      "runOptions": {
+        "runOn": "worktreeCreated"
+      }
+    },
+    {
+      "label": "Run SEAI Red app (port 8011)",
+      "type": "shell",
+      "command": "py server.py",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "EWI_DB_PATH": "${workspaceFolder}\\instance\\ewi.seai-red.sqlite3",
+          "EWI_PORT": "8011"
+        }
+      },
+      "inAgents": true
+    }
+  ]
+}

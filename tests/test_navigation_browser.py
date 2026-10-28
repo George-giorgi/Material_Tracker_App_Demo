@@ -157,6 +157,289 @@ class NavigationBrowserTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM movements").fetchone()[0], 0)
         self.assertEqual(self.browser_errors, [])
 
+    def test_dark_theme_keeps_inventory_overview_and_ready_cards_readable(self):
+        logo = self.page.locator(".sidebar .brand-logo")
+        logo.wait_for()
+        self.page.wait_for_function(
+            "() => document.querySelector('.sidebar .brand-logo').naturalWidth > 0"
+        )
+        self.assertEqual(
+            logo.get_attribute("src"),
+            "/brusna-curious-cat-logo.png",
+        )
+        self.assertIn("Curious Cat", logo.get_attribute("alt"))
+        for branded_image in self.page.locator(
+            "#auth-screen .auth-logo, .mobile-brand .brand-logo"
+        ).all():
+            self.assertEqual(
+                branded_image.get_attribute("src"),
+                "/brusna-curious-cat-logo.png",
+            )
+        self.assertEqual(
+            logo.evaluate(
+                """(image) => {
+                    const canvas = document.createElement("canvas");
+                    canvas.width = image.naturalWidth;
+                    canvas.height = image.naturalHeight;
+                    const context = canvas.getContext("2d");
+                    context.drawImage(image, 0, 0);
+                    return context.getImageData(0, 0, 1, 1).data[3];
+                }"""
+            ),
+            0,
+        )
+        self.assertFalse(self.page.locator(".sidebar-tommy").count())
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO materials(code, name, unit, opening_qty) "
+                "VALUES ('DARK-TEST', 'Readable test material', 'units', 12)"
+            )
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, owner_name, source, ready_for_start) "
+                "VALUES ('DARK-READY-TEST', 'D01 TEST', 'Dark Theme Owner', 'government', 1)"
+            )
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, owner_name, source) "
+                "VALUES ('DARK-PENDING-TEST', 'D02 TEST', 'Pending Theme Owner', 'government')"
+            )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator("#theme-toggle").click()
+        self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
+
+        self.page.locator('[data-tab="inventory"]').click()
+        inventory_row = self.page.locator("#inventory-table tr").filter(
+            has_text="Readable test material"
+        )
+        inventory_row.wait_for()
+        self.assertEqual(
+            inventory_row.evaluate("(row) => getComputedStyle(row).display"),
+            "table-row",
+        )
+        self.assertEqual(
+            inventory_row.locator(".material-name").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(237, 246, 240)",
+        )
+
+        self.page.locator('[data-tab="overview"]').click()
+        overview_row = self.page.locator("#overview-stock tr").filter(
+            has_text="Readable test material"
+        )
+        overview_row.wait_for()
+        self.assertEqual(
+            overview_row.locator(".material-name").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(237, 246, 240)",
+        )
+        overview_row.hover()
+        self.assertEqual(
+            overview_row.locator("td").first.evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(41, 58, 50)",
+        )
+
+        self.assertEqual(self.active_page(), "overview")
+        self.page.locator('[data-house-view="ready"]').click()
+        self.assertEqual(self.active_page(), "houses")
+        ready_card = self.page.locator(
+            '.house-plan-ready[data-house-id="DARK-READY-TEST"]'
+        )
+        ready_card.wait_for()
+        self.assertEqual(
+            ready_card.locator(".house-body").evaluate(
+                "(element) => getComputedStyle(element).overflowY"
+            ),
+            "visible",
+        )
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertLessEqual(
+            ready_card.locator(".house-body").evaluate(
+                "(element) => element.scrollHeight - element.clientHeight"
+            ),
+            1,
+        )
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="not_started"]').click()
+        pending_card = self.page.locator(
+            '.house-plan-pending[data-house-id="DARK-PENDING-TEST"]'
+        )
+        pending_card.wait_for()
+        self.assertEqual(
+            pending_card.locator(".house-workflow-heading strong").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(237, 245, 239)",
+        )
+        self.page.locator("#house-detail").evaluate(
+            "(element) => element.classList.remove('hidden')"
+        )
+        back_button = self.page.locator("#back-to-houses")
+        back_button.wait_for()
+        self.assertEqual(
+            back_button.evaluate("(element) => getComputedStyle(element).color"),
+            "rgb(220, 235, 225)",
+        )
+        self.assertEqual(
+            back_button.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(37, 55, 47)",
+        )
+        self.page.locator('[data-tab="movements"]').click()
+        movement_card = self.page.locator("#page-movements .card").first
+        self.assertTrue(movement_card.is_visible())
+        self.assertNotEqual(
+            movement_card.evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(255, 255, 255)",
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_dark_seai_insulation_measures_have_readable_scrollable_table(self):
+        self.page.evaluate(
+            """() => {
+                document.documentElement.dataset.theme = "dark";
+                const card = document.createElement("article");
+                card.innerHTML = `
+                    <details class="survey-room-seai-section survey-room-seai-measures" open>
+                        <summary>Measures <span>1</span></summary>
+                        <div class="table-wrap survey-room-seai-table">
+                            <table>
+                                <thead><tr><th>Name</th><th>Quantity</th></tr></thead>
+                                <tbody><tr><td>External Wall Insulation</td><td>
+                                    <div class="seai-variation-cell">
+                                        <input class="seai-variation-input" value="104">
+                                        <button class="button button-secondary seai-variation-edit">Edit</button>
+                                    </div>
+                                </td></tr></tbody>
+                            </table>
+                        </div>
+                    </details>`;
+                document.querySelector(".app-shell").append(card);
+            }"""
+        )
+        section = self.page.locator(".survey-room-seai-measures")
+        table_wrap = section.locator(".survey-room-seai-table")
+        self.assertEqual(
+            section.evaluate("(el) => getComputedStyle(el).backgroundColor"),
+            "rgb(25, 38, 34)",
+        )
+        self.assertEqual(
+            section.locator("summary").evaluate("(el) => getComputedStyle(el).color"),
+            "rgb(226, 238, 230)",
+        )
+        self.assertEqual(
+            table_wrap.evaluate("(el) => getComputedStyle(el).overflow"),
+            "auto",
+        )
+        self.assertEqual(
+            table_wrap.locator("thead").evaluate("(el) => getComputedStyle(el).position"),
+            "sticky",
+        )
+        self.assertEqual(
+            section.locator("tbody td").first.evaluate(
+                "(el) => getComputedStyle(el).color"
+            ),
+            "rgb(220, 232, 225)",
+        )
+        self.assertEqual(
+            section.locator(".seai-variation-input").evaluate(
+                "(el) => getComputedStyle(el).backgroundColor"
+            ),
+            "rgb(23, 33, 30)",
+        )
+
+    def test_dark_not_started_card_seai_insulation_summary_is_readable(self):
+        self.page.evaluate(
+            """() => {
+                document.documentElement.dataset.theme = "dark";
+                const list = document.createElement("section");
+                list.id = "houses-list";
+                list.className = "house-grid house-grid-compact";
+                list.innerHTML = `
+                    <article class="card house-card house-pending house-plan-pending">
+                        <div class="house-insulation-summary">
+                            <h3>SEAI insulation measures</h3>
+                            <div class="house-insulation-header">
+                                <span>Measure</span><span>Survey qty</span><span>Including variation</span>
+                            </div>
+                            <div class="house-insulation-row">
+                                <strong>External Wall Insulation</strong>
+                                <div role="cell"><span class="house-insulation-quantity">94 m²
+                                    <small>External Wall Insulation: Greater than 85m2</small>
+                                </span></div>
+                                <div role="cell"><span class="house-insulation-quantity">104 m²
+                                    <small>External Wall Insulation: Greater than 85m2</small>
+                                </span></div>
+                            </div>
+                            <small>Insulation quantities are shown in m² as recorded in the SEAI application.</small>
+                        </div>
+                        <div class="house-card-actions">
+                            <button class="text-button plan-ready-toggle" data-ready="true">Mark ready for start</button>
+                            <button class="text-button house-survey-open survey-needed">View Surveyor room</button>
+                        </div>
+                    </article>`;
+                document.querySelector(".app-shell").append(list);
+            }"""
+        )
+        summary = self.page.locator(
+            "#houses-list.house-grid-compact .house-insulation-summary"
+        )
+        self.assertEqual(
+            summary.evaluate("(el) => getComputedStyle(el).backgroundColor"),
+            "rgb(25, 38, 34)",
+        )
+        self.assertEqual(
+            summary.locator("h3").evaluate("(el) => getComputedStyle(el).color"),
+            "rgb(220, 235, 225)",
+        )
+        self.assertEqual(
+            summary.locator(".house-insulation-header").evaluate(
+                "(el) => getComputedStyle(el).color"
+            ),
+            "rgb(169, 189, 176)",
+        )
+        self.assertEqual(
+            summary.locator(".house-insulation-quantity").first.evaluate(
+                "(el) => getComputedStyle(el).color"
+            ),
+            "rgb(226, 238, 230)",
+        )
+        self.assertEqual(
+            summary.locator(".house-insulation-quantity small").first.evaluate(
+                "(el) => getComputedStyle(el).color"
+            ),
+            "rgb(169, 187, 176)",
+        )
+        actions = self.page.locator(
+            "#houses-list.house-grid-compact .house-card-actions"
+        )
+        self.assertEqual(
+            actions.evaluate("(el) => getComputedStyle(el).backgroundImage"),
+            "linear-gradient(rgb(29, 43, 38), rgb(23, 35, 31))",
+        )
+        self.assertEqual(
+            actions.evaluate("(el) => getComputedStyle(el).borderTopColor"),
+            "rgb(57, 77, 67)",
+        )
+        primary_action = actions.locator(".plan-ready-toggle")
+        self.assertEqual(
+            primary_action.evaluate("(el) => getComputedStyle(el).backgroundImage"),
+            "linear-gradient(135deg, rgb(40, 110, 74), rgb(32, 93, 64))",
+        )
+        self.assertEqual(
+            primary_action.evaluate("(el) => getComputedStyle(el).color"),
+            "rgb(242, 255, 246)",
+        )
+        self.assertEqual(
+            actions.locator(".house-survey-open").evaluate(
+                "(el) => getComputedStyle(el).backgroundColor"
+            ),
+            "rgb(34, 53, 68)",
+        )
+
     def test_overview_shows_mayo_and_sligo_county_forecasts(self):
         status = self.page.locator("#weather-status")
         self.page.wait_for_function(
@@ -949,6 +1232,18 @@ class NavigationBrowserTests(unittest.TestCase):
                 VALUES ('ACTIVATE-READY', 'D01 TEST', 'Ready address', 'Ready Owner', 'government', 1)
                 """
             )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications(application_id, detail_data_json) VALUES (?, ?)",
+                (
+                    "ACTIVATE-READY",
+                    '{"Measures":[{"Name":"External Wall Insulation: Greater than 85m2",'
+                    '"Survey Quantity":"94","Survey Qty including Variation":"104"}]}',
+                ),
+            )
         self.page.reload(wait_until="domcontentloaded")
         self.page.locator('[data-house-view="ready"]').click()
         activate_button = self.page.locator(
@@ -965,6 +1260,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator(
             '.house-card[data-house-id="ACTIVATE-READY"] .house-survey-open'
         ).click()
+        self.page.locator("#survey-perimeter").fill("42.75")
         self.page.locator("#house-survey-form button[type='submit']").click()
         self.page.wait_for_function(
             "() => document.querySelector('#surveyor-room').classList.contains('hidden')"
@@ -980,6 +1276,8 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator('#house-form input[name="id"]').input_value(),
             "ACTIVATE-READY",
         )
+        self.assertIn("EWI Area: 104 m²", self.page.locator("#seai-info").inner_text())
+        self.assertIn("Perimeter: 42.75 m", self.page.locator("#seai-info").inner_text())
         self.page.locator("#house-dialog").get_by_role("button", name="Cancel").click()
 
         self.page.locator("#open-house").click()
@@ -1651,7 +1949,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(summary_status.inner_text(), "Not surveyed")
         self.assertIn("survey-not-surveyed", summary_status.get_attribute("class"))
         nav = self.page.locator(".survey-room-nav")
-        self.assertEqual(nav.locator("a").count(), 4)
+        self.assertEqual(nav.locator("a").count(), 6)
         nav.locator('a[href="#survey-room-work-plan"]').click()
         self.assertEqual(
             self.page.evaluate("window.location.hash"),
@@ -1697,6 +1995,7 @@ class NavigationBrowserTests(unittest.TestCase):
             tuple(plan),
             (1, "Rear access only", 0, 1, "Coordinate with owner"),
         )
+        self.page.locator("#survey-perimeter").fill("42.75")
         self.page.locator("#house-survey-form button[type='submit']").click()
         self.page.wait_for_function(
             "() => document.querySelector('#surveyor-room').classList.contains('hidden')"
@@ -1827,7 +2126,7 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(
             self.page.locator("#pdf-annotator-page-count").inner_text(),
-            "Page 1 of 2",
+            "Page 1 of 2 · Scroll to change pages",
         )
         self.assertEqual(
             self.page.locator("#pdf-annotator-zoom-level").inner_text(),
@@ -1844,13 +2143,15 @@ class NavigationBrowserTests(unittest.TestCase):
             "100%",
         )
         self.page.locator("#pdf-annotator-size").select_option("4")
-        self.page.locator("#pdf-annotator-next").click()
+        viewport = self.page.locator("#pdf-annotator-viewport")
+        viewport.hover()
+        self.page.mouse.wheel(0, 40)
         self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2 · Scroll to change pages'"
         )
-        self.page.locator("#pdf-annotator-previous").click()
+        self.page.mouse.wheel(0, -40)
         self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2 · Scroll to change pages'"
         )
         annotation_canvas = self.page.locator("#pdf-annotator-canvas")
         canvas_bounds = annotation_canvas.bounding_box()

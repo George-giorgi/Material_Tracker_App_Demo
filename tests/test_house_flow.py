@@ -36,7 +36,13 @@ def calculate_material_scenarios(scenarios):
         + json.dumps(scenarios)
         + ";console.log(JSON.stringify(scenarios.map(calculateMaterialQuantities)))"
     )
-    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+    )
     if result.returncode:
         raise AssertionError(result.stderr)
     return json.loads(result.stdout)
@@ -92,6 +98,12 @@ class HttpBase(FlowBase):
         super().tearDown()
 
     def activate(self, payload):
+        payload = {
+            **payload,
+            "employee_name": payload.get("employee_name") or "Test Employee",
+            "perimeter_m": payload.get("perimeter_m") or 20,
+        }
+        survey_perimeter = payload["perimeter_m"]
         with server.connect_db() as db:
             db.execute("UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?", (payload["id"],))
             db.execute(
@@ -100,7 +112,13 @@ class HttpBase(FlowBase):
                 SELECT id, ?, '', 'Test Surveyor', '2026-10-21T10:00:00'
                 FROM provided_houses WHERE id = ?
                 """,
-                (json.dumps({"windows": [], "doors": [], "house_corners": [], "notes": ""}), payload["id"]),
+                (json.dumps({
+                    "windows": [],
+                    "doors": [],
+                    "house_corners": [],
+                    "notes": "",
+                    "perimeter_m": survey_perimeter,
+                }), payload["id"]),
             )
         return self.call("POST", "/api/houses", payload)
 
@@ -1767,6 +1785,7 @@ class EndToEndFlowTests(HttpBase):
             "windows": [{"w": 1.2, "h": 1.5, "qty": 2}],
             "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
             "house_corners": [2.4, 3.1],
+            "perimeter_m": 42.5,
             "notes": "Rear access confirmed; double-check corner by the kitchen.",
         }
         status, saved, _ = self.call(
@@ -1781,6 +1800,8 @@ class EndToEndFlowTests(HttpBase):
         self.assertEqual(listed["houses"][0]["survey"], survey)
         status, _, _ = self.call("POST", "/api/houses", {
             "id": "WH-SURVEY-1", "postcode": "T1", "owner_name": "Survey Owner",
+            "employee_name": "Assigned Worker",
+            "perimeter_m": 42.5,
         })
         self.assertEqual(status, 201)
         _, active, _ = self.call("GET", "/api/calculator/houses?q=WH-SURVEY-1")
@@ -1808,7 +1829,13 @@ class EndToEndFlowTests(HttpBase):
         house = found["houses"][0]
         self.assertEqual(house["status"], "not_started")
 
-        details = {"id": house["id"], "postcode": house["postcode"], "owner_name": house["owner_name"]}
+        details = {
+            "id": house["id"],
+            "postcode": house["postcode"],
+            "owner_name": house["owner_name"],
+            "employee_name": "Assigned Worker",
+            "perimeter_m": 40,
+        }
         self.assertEqual(self.call("POST", "/api/houses", details)[0], 409)
         self.assertEqual(self.call("POST", "/api/houses/plan", {"id": house["id"], "ready": True})[0], 200)
         self.assertEqual(
@@ -1817,11 +1844,39 @@ class EndToEndFlowTests(HttpBase):
                 "/api/house-survey",
                 {
                     "house_id": house["id"],
-                    "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+                    "survey": {
+                        "windows": [],
+                        "doors": [],
+                        "house_corners": [],
+                        "notes": "",
+                        "perimeter_m": 40,
+                    },
                 },
             )[0],
             200,
         )
+        status, result, _ = self.call(
+            "POST", "/api/houses", {**details, "employee_name": "  "}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("Assign an employee", result["error"])
+        with server.connect_db() as db:
+            self.assertIsNone(
+                db.execute(
+                    "SELECT 1 FROM houses WHERE id = ?", (house["id"],)
+                ).fetchone()
+            )
+        status, result, _ = self.call(
+            "POST", "/api/houses", {**details, "perimeter_m": 0}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("surveyed perimeter", result["error"])
+        with server.connect_db() as db:
+            self.assertIsNone(
+                db.execute(
+                    "SELECT 1 FROM houses WHERE id = ?", (house["id"],)
+                ).fetchone()
+            )
         status, _, _ = self.call("POST", "/api/houses", details)
         self.assertEqual(status, 201)
         _, found, _ = self.call("GET", "/api/calculator/houses?q=WH2140")
@@ -1875,6 +1930,7 @@ class EndToEndFlowTests(HttpBase):
             "windows": [{"w": 1.2, "h": 1.5, "qty": 2}],
             "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
             "house_corners": [2.4, 3.1],
+            "perimeter_m": 40,
             "notes": "Access confirmed.",
         }
         status, saved, _ = self.call(
@@ -1886,7 +1942,14 @@ class EndToEndFlowTests(HttpBase):
             self.call(
                 "POST",
                 "/api/houses",
-                {"id": house_id, "postcode": "T1", "owner_name": "Test Owner"},
+                {
+                    "id": house_id,
+                    "postcode": "T1",
+                    "owner_name": "Test Owner",
+                    "employee_name": "Assigned Worker",
+                    "perimeter_m": 40,
+                    "employee_name": "Assigned Worker",
+                },
             )[0],
             201,
         )
@@ -2028,6 +2091,7 @@ class HouseOrderStabilityTests(HttpBase):
     def setUp(self):
         super().setUp()
         for n, stamp in (("A", 300), ("B", 200), ("C", 100)):
+            self.provide(n)
             self.activate({"id": n})
         with server.connect_db() as db:
             for n, stamp in (("A", 300), ("B", 200), ("C", 100)):
@@ -2048,6 +2112,7 @@ class HouseOrderStabilityTests(HttpBase):
         self.assertEqual(self.order(), ["A", "B", "C"])
 
     def test_new_house_still_appears_first(self):
+        self.provide("NEW")
         self.activate({"id": "NEW"})
         self.assertEqual(self.order()[0], "NEW")
 
@@ -2880,7 +2945,12 @@ class ReadyForStartAndNotesTests(HttpBase):
             {"WH1": "ready", "WH3": "not_started"},
         )
         self.plan({"id": "WH1", "ready": False})
-        self.activate({"id": "WH1", "postcode": "T1", "owner_name": "Owner"})
+        self.activate({
+            "id": "WH1",
+            "postcode": "T1",
+            "owner_name": "Owner",
+            "perimeter_m": 51.2,
+        })
         with server.connect_db() as db:
             db.execute("UPDATE houses SET stage = 2 WHERE id = 'WH1'")
         _, mapped, _ = self.call("GET", "/api/calculator/houses?status=map")
@@ -2916,6 +2986,23 @@ class ReadyForStartAndNotesTests(HttpBase):
                 "UPDATE provided_houses SET area_m2 = 142.5, perimeter_m = 51.2 "
                 "WHERE id = 'WH1'"
             )
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                (
+                    "WH1",
+                    json.dumps({
+                        "Measures": [{
+                            "Name": "External Wall Insulation",
+                            "Survey Quantity": "94",
+                            "Survey Qty including Variation": "104",
+                        }]
+                    }),
+                ),
+            )
         self.plan({"id": "WH1", "ready": True, "notes": "Key with neighbour"})
         status, _, _ = self.call("POST", "/api/house-checklist", {
             "house_id": "WH1", "scaffolding_status": "done",
@@ -2923,7 +3010,12 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(status, 200)
         _, planned, _ = self.call("GET", "/api/house-checklist/WH1")
         self.assertEqual(planned["scaffolding_status"], "done")
-        self.activate({"id": "WH1", "postcode": "T1", "owner_name": "Owner"})
+        self.activate({
+            "id": "WH1",
+            "postcode": "T1",
+            "owner_name": "Owner",
+            "perimeter_m": 51.2,
+        })
         self.assertEqual(self.listing("ready"), {})
         self.assertEqual(self.summary()["ready"], 0)
         _, dash, _ = self.call("GET", "/api/dashboard")
@@ -2936,6 +3028,13 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual((house["scaffolding_status"], house["esb_unclipped"], house["plumber_status"]),
                          ("done", "no", "not_necessary"))
         _, details, _ = self.call("GET", "/api/houses/WH1")
+        self.assertEqual(details["house"]["survey_perimeter_m"], 51.2)
+        self.assertEqual(
+            details["house"]["seai_details"]["Measures"][0][
+                "Survey Qty including Variation"
+            ],
+            "104",
+        )
         self.assertEqual(
             (details["house"]["postcode"], details["house"]["address"],
              details["house"]["area_m2"], details["house"]["perimeter_m"]),
@@ -2990,7 +3089,13 @@ class ReadyForStartAndNotesTests(HttpBase):
                 "/api/house-survey",
                 {
                     "house_id": "WH-ACTIVE",
-                    "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+                    "survey": {
+                        "windows": [],
+                        "doors": [],
+                        "house_corners": [],
+                        "notes": "",
+                        "perimeter_m": 51.2,
+                    },
                 },
             )[0],
             200,
@@ -2999,7 +3104,13 @@ class ReadyForStartAndNotesTests(HttpBase):
         status, _, _ = self.call(
             "POST",
             "/api/houses",
-            {"id": "WH-ACTIVE", "postcode": "WRONG", "owner_name": "Wrong owner"},
+            {
+                "id": "WH-ACTIVE",
+                "postcode": "WRONG",
+                "owner_name": "Wrong owner",
+                "employee_name": "Assigned Worker",
+                "perimeter_m": 51.2,
+            },
         )
         self.assertEqual(status, 201)
         with server.connect_db() as db:
@@ -3052,11 +3163,24 @@ class ReadyForStartAndNotesTests(HttpBase):
             "/api/house-survey",
             {
                 "house_id": "WH1",
-                "survey": {"windows": [], "doors": [], "house_corners": [], "notes": ""},
+                "survey": {
+                    "windows": [],
+                    "doors": [],
+                    "house_corners": [],
+                    "notes": "",
+                    "perimeter_m": 40,
+                },
             },
         )
         self.assertEqual(status, 200, survey_result)
-        self.assertEqual(self.call("POST", "/api/houses", {"id": "WH1"})[0], 201)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/houses",
+                {"id": "WH1", "employee_name": "Assigned Worker", "perimeter_m": 40},
+            )[0],
+            201,
+        )
         self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 201)
 
     def test_house_moved_back_to_not_started_cannot_be_activated(self):
@@ -3262,7 +3386,6 @@ class UiWiringTests(unittest.TestCase):
             APP_JS,
         )
         self.assertIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
-        self.assertIn("window.confirm(", APP_JS)
         self.assertIn('data-not-started-only', html)
 
     def test_pdf_annotator_uses_scroll_for_page_navigation_without_arrows(self):
@@ -3322,20 +3445,30 @@ class UiWiringTests(unittest.TestCase):
             + APP_JS[start:end]
             + '\nconsole.log(seaiInsulationSummaryHtml({Measures:['
             + '{"Name":"Attic (Loft) Insulation 100 mm top-up","Survey Quantity":"45","Survey Qty including Variation":"45"},'
-            + '{"Name":"External Wall Insulation: Greater than 85m2","Survey Quantity":"94","Survey Qty including Variation":"104"}'
+            + '{"Name":"External Wall Insulation: Greater than 85m2","Survey Quantity":"94","Survey Qty including Variation":"104"},'
+            + '{"Name":"Internal Wall Insulation: Vertical Surface","Survey Quantity":"10","Survey Qty including Variation":"0"},'
+            + '{"Name":"Cavity Wall Insulation Bonded Bead","Survey Quantity":"16","Survey Qty including Variation":"16"}'
             + ']}));'
         )
-        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=20,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Attic (Loft) Insulation", result.stdout)
         self.assertIn("Survey qty", result.stdout)
         self.assertIn("Including variation", result.stdout)
-        self.assertIn(">45<", result.stdout)
-        self.assertIn(">94<", result.stdout)
-        self.assertIn(">104<", result.stdout)
+        self.assertIn(">45 m\u00b2<", result.stdout)
+        self.assertIn(">94 m\u00b2<", result.stdout)
+        self.assertIn(">104 m\u00b2<", result.stdout)
+        self.assertIn(">10 m\u00b2<", result.stdout)
+        self.assertIn(">0 m\u00b2<", result.stdout)
+        self.assertIn(">16 m\u00b2<", result.stdout)
         self.assertNotIn("seai-card-variation-edit", result.stdout)
         self.assertNotIn("seai-card-variation-save", result.stdout)
-        self.assertIn("Not listed", result.stdout)
         self.assertIn("Attic (Loft) Insulation", result.stdout)
         self.assertIn("Internal Wall Insulation", result.stdout)
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -3343,6 +3476,9 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(".house-insulation-missing { display: flex; flex: 1 0 auto; align-items: flex-start; border: 1px solid #ead8a6;", css)
         self.assertIn("background: #fff8e6; color: #82621a;", css)
         self.assertIn('class="seai-variation-input"', APP_JS)
+        self.assertIn('survey-room-seai-measures', APP_JS)
+        self.assertIn('html[data-theme="dark"] .survey-room-seai-measures .survey-room-seai-table thead', css)
+        self.assertIn('html[data-theme="dark"] .survey-room-seai-measures .seai-variation-input', css)
         self.assertIn('request("/api/seai-measure-variation"', APP_JS)
         self.assertIn('class="button button-secondary seai-variation-save"', APP_JS)
         self.assertNotIn("seai-card-variation-edit", APP_JS)
@@ -3368,6 +3504,107 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(">Save</button>", render_result.stdout)
         self.assertIn('event.target.closest(".seai-variation-edit")', APP_JS)
         self.assertIn('.seai-variation-editor[hidden] { display: none; }', css)
+
+    def test_seai_activation_dialog_uses_external_wall_variation_as_ewi_area(self):
+        start = APP_JS.index("function fillSeaiHouse")
+        end = APP_JS.index("function renderAll", start)
+        script = (
+            'const form={elements:{id:{},postcode:{},owner_name:{},employee_name:{},perimeter_m:{value:""}}};\n'
+            + 'const info={innerHTML:"",classList:{remove(){}}};\n'
+            + 'const results={classList:{add(){}}};\n'
+            + 'const search={value:""};\n'
+            + 'const perimeterInput={value:""};\n'
+            + 'const $=selector=>({"#house-form":form,"#seai-info":info,"#seai-results":results,"#seai-search":search,"#survey-perimeter":perimeterInput}[selector]);\n'
+            + 'const escapeHtml=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;");\n'
+            + 'const formatQuantity=value=>new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(value);\n'
+            + APP_JS[start:end]
+            + '\nfillSeaiHouse({id:"WH-TEST",seai_details:{Measures:['
+            + '{"Name":"External Wall Insulation: Greater than 85m2",'
+            + '"Survey Qty including Variation":"104"}]},'
+            + 'survey:{house_corners:[2.4,3.1],perimeter_m:42.75},perimeter_m:51.2});\n'
+            + 'console.log(JSON.stringify([info.innerHTML,form.elements.perimeter_m.value]));'
+        )
+        result = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, timeout=20
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EWI Area: <b>104 m", result.stdout)
+        self.assertIn("`${ewiArea} m²`", APP_JS)
+        self.assertEqual(json.loads(result.stdout)[1], 42.75)
+        self.assertIn("Perimeter: <b>42.75 m</b>", json.loads(result.stdout)[0])
+        self.assertIn('form.elements.perimeter_m.value = h.survey?.perimeter_m ?? "";', APP_JS)
+        self.assertIn('$("#survey-perimeter").value = survey.perimeter_m ?? "";', APP_JS)
+        self.assertIn('perimeter_m: $("#survey-perimeter").value.trim()', APP_JS)
+        self.assertNotIn("Area: <b>—</b>", result.stdout)
+
+    def test_house_activation_requires_employee_and_perimeter(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        employee_input = re.search(
+            r'<label class="field">Assigned employee(<input[^>]+>)', html
+        )
+        self.assertIsNotNone(employee_input)
+        self.assertIn("required", employee_input.group(1))
+
+        perimeter_input = re.search(
+            r'<label class="field">Perimeter \(m\)(<input[^>]+>)', html
+        )
+        self.assertIsNotNone(perimeter_input)
+        self.assertIn("required", perimeter_input.group(1))
+        survey_perimeter = re.search(
+            r'id="survey-perimeter"([^>]*)', html
+        )
+        self.assertIsNotNone(survey_perimeter)
+        self.assertIn("required", survey_perimeter.group(1))
+
+        validation = APP_JS[
+            APP_JS.index("function validateHouseActivation"):
+            APP_JS.index("async function submitHouse(event)")
+        ]
+        script = validation + """
+const employee={value:"  ",setCustomValidity(message){this.message=message;},
+  };
+const perimeter={value:"42.5",setCustomValidity(message){this.message=message;}};
+const form={elements:{employee_name:employee,perimeter_m:perimeter},
+  reportValidity(){return !employee.message&&!perimeter.message;}};
+const blankValid=validateHouseActivation(form);
+const blankMessage=employee.message;
+employee.value="  Assigned Worker  ";
+const assignedValid=validateHouseActivation(form);
+perimeter.value="";
+const missingPerimeterValid=validateHouseActivation(form);
+const perimeterMessage=perimeter.message;
+console.log(JSON.stringify([blankValid,blankMessage,assignedValid,employee.value,missingPerimeterValid,perimeterMessage]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, timeout=20
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                False,
+                "Assign an employee before opening the calculator.",
+                True,
+                "Assigned Worker",
+                False,
+                "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
+            ],
+        )
+        self.assertIn(
+            '$("#house-form").elements.employee_name.addEventListener("input"',
+            APP_JS,
+        )
+
+    def test_house_details_show_survey_perimeter_and_seai_ewi_area_only(self):
+        detail_renderer = APP_JS[
+            APP_JS.index("function renderHouseDetail"):
+            APP_JS.index("async function loadHouseDetail")
+        ]
+        self.assertIn('house.seai_details?.Measures?.find', detail_renderer)
+        self.assertIn('house.survey_perimeter_m ?? house.perimeter_m', detail_renderer)
+        self.assertIn('["EWI area", ewiArea ? `${ewiArea} m²` : ""]', detail_renderer)
+        self.assertIn('["Perimeter", surveyPerimeter == null ? "" : `${formatQuantity(surveyPerimeter)} m`]', detail_renderer)
+        self.assertNotIn('"Floor area"', detail_renderer)
 
     def test_plan_lists_refresh_without_flashing_loading_state(self):
         body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]
@@ -3470,6 +3707,38 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn("Each length is considered separately when reusing 2.5 m pieces.", loader)
         self.assertIn('className="survey-note"', loader)
 
+    def test_auto_calculator_uses_seai_ewi_area_and_survey_perimeter(self):
+        helpers = CALC_HTML[
+            CALC_HTML.index("function calculatorArea"):
+            CALC_HTML.index("function closeHouseResults")
+        ]
+        script = helpers + """
+const house={
+  area_m2:null,
+  perimeter_m:51.2,
+  survey:{perimeter_m:42.75},
+  seai_details:{Measures:[
+    {Name:"External Wall Insulation: Greater than 85m2","Survey Qty including Variation":"104"}
+  ]}
+};
+console.log(JSON.stringify([
+  calculatorArea(house),
+  calculatorPerimeter(house),
+  calculatorArea({area_m2:25,seai_details:{Measures:[]}}),
+  calculatorPerimeter({perimeter_m:18,survey:{}})
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, timeout=20
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            [104, 42.75, 25, 18],
+        )
+        self.assertIn('document.getElementById("wall").value=wallArea??""', CALC_HTML)
+        self.assertIn('document.getElementById("per").value=perimeter??""', CALC_HTML)
+
     def test_saved_survey_is_marked_and_has_a_review_action(self):
         self.assertIn("function surveyStatusBadge(survey)", APP_JS)
         self.assertIn('class="status-pill survey-complete">Survey recorded', APP_JS)
@@ -3554,6 +3823,148 @@ class UiWiringTests(unittest.TestCase):
             ".house-grid.house-grid-ready { grid-auto-rows: auto; }\n.house-grid.house-grid-ready > .house-plan-ready { height: auto; min-height: 0; }\n.house-grid.house-grid-compact { grid-auto-rows: auto; align-items: stretch; }",
             css,
         )
+
+    def test_ready_and_not_started_cards_fit_content_without_inner_scroll(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            ".house-grid.house-grid-ready { grid-auto-rows: 1fr; align-items: stretch; }",
+            css,
+        )
+        self.assertIn(
+            ".house-grid.house-grid-ready > .house-plan-ready .house-body,\n.house-grid.house-grid-ready > .house-plan-ready .house-card-actions { max-height: none; overflow: visible; }",
+            css,
+        )
+        self.assertNotIn(
+            ".house-grid.house-grid-ready,\n"
+            ".house-grid.house-grid-compact { grid-auto-rows: 390px;",
+            css,
+        )
+        self.assertNotIn(
+            ".house-grid.house-grid-ready > .house-plan-ready .house-body,\n"
+            ".house-grid.house-grid-compact > .house-plan-pending .house-body {\n"
+            "  flex: 1 1 auto;\n"
+            "  min-height: 0;\n"
+            "  overflow-x: hidden;\n"
+            "  overflow-y: auto;",
+            css,
+        )
+
+    def test_dark_inventory_uses_readable_material_cards(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('html[data-theme="dark"] #page-inventory .table-wrap table {\n  display: table;', css)
+        self.assertIn('html[data-theme="dark"] #inventory-table {\n  display: table-row-group;', css)
+        self.assertIn('html[data-theme="dark"] #inventory-table tr {\n  display: table-row;', css)
+        self.assertNotIn('html[data-theme="dark"] #inventory-table {\n  display: grid;', css)
+        self.assertIn('html[data-theme="dark"] #inventory-table .inventory-cell-label {', css)
+        self.assertIn('html[data-theme="dark"] #inventory-table td[data-label="Material"] .material-name {', css)
+        self.assertIn('html[data-theme="dark"] #inventory-table td[data-label="Material"] {', css)
+        self.assertIn(
+            'html[data-theme="dark"] #inventory-table .text-button {\n  padding: 6px 12px;',
+            css,
+        )
+        self.assertIn('data-label="Warehouse"', APP_JS)
+        self.assertIn('data-label="With teams"', APP_JS)
+        self.assertIn('data-label="On houses"', APP_JS)
+
+    def test_dark_overview_stock_material_names_are_visible(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('html[data-theme="dark"] #overview-stock td:first-child {', css)
+        self.assertIn('html[data-theme="dark"] #overview-stock .material-name {', css)
+        self.assertIn('html[data-theme="dark"] #overview-stock .material-dot {', css)
+        self.assertIn(
+            'html[data-theme="dark"] #overview-stock tr:hover,\nhtml[data-theme="dark"] #overview-stock tr:hover td {\n  background: #293a32;\n  color: #edf6f0;',
+            css,
+        )
+        self.assertIn('$("#overview-stock").innerHTML', APP_JS)
+
+    def test_dark_search_fields_have_consistent_background_and_placeholders(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            'html[data-theme="dark"] .search-box {\n  border-color: #465951;\n  background: #17211e;\n  color: #a9bbb0;',
+            css,
+        )
+        self.assertIn('html[data-theme="dark"] .search-box input::placeholder,', css)
+        self.assertIn('html[data-theme="dark"] input[type="search"]::placeholder {', css)
+        self.assertIn('color-scheme: dark;', css[css.index('html[data-theme="dark"] input[type="search"] {'):])
+
+    def test_dark_mode_cards_use_cohesive_dark_surfaces(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('html[data-theme="dark"] .card,\nhtml[data-theme="dark"] .stat-card,\nhtml[data-theme="dark"] .team-card,\nhtml[data-theme="dark"] .house-card,', css)
+        self.assertIn('html[data-theme="dark"] .kpi.seai { border-left-color: #86a9ba; background: #202d32; }', css)
+        self.assertIn('html[data-theme="dark"] .house-tile.active { border-color: #3e7054; background: #20382b; }', css)
+        self.assertIn('html[data-theme="dark"] .house-grid.house-grid-ready > .house-plan-ready,', css)
+        self.assertIn('html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending .house-workflow-heading strong {\n  color: #edf5ef;', css)
+        self.assertIn('html[data-theme="dark"] .back-button {\n  border-color: #4a6656;', css)
+        self.assertIn('html[data-theme="dark"] .back-button:hover {\n  border-color: #75a987;', css)
+        self.assertIn('html[data-theme="dark"] .activity-item { border-top-color: #34463e; }', css)
+
+    def test_house_card_scrollbars_are_visible_and_theme_aware(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn("--scroll-track: #e8efeb;", css)
+        self.assertIn("--scroll-track: #26352e;", css)
+        self.assertIn("scroll-behavior: auto; scroll-snap-type: none;", css)
+        self.assertIn(".house-card .house-body::-webkit-scrollbar-thumb,", css)
+        self.assertIn(".house-grid-scrollable::-webkit-scrollbar-thumb,", css)
+        self.assertIn("scrollbar-width: auto;", css)
+        self.assertIn("html[data-theme=\"dark\"] .house-grid-scrollable::-webkit-scrollbar-thumb:hover,", css)
+
+    def test_dark_ready_house_card_has_one_scroll_area_and_no_light_panels(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-top {\n'
+            '  height: auto;\n'
+            '  min-height: 0;\n'
+            '  overflow: visible;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-body {\n'
+            '  flex: 1 0 auto;',
+            css,
+        )
+        self.assertIn('overflow: visible;', css[css.index(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-body {'
+        ):])
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready {\n'
+            '  grid-auto-rows: auto;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-insulation-summary {\n'
+            '  border-color: #394d43;\n'
+            '  background: #192622;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending .house-insulation-summary {\n'
+            '  border-color: #394d43;\n'
+            '  background: #192622;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending .house-card-actions {\n'
+            '  gap: 8px;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending .house-card-actions .plan-ready-toggle[data-ready="true"] {\n'
+            '  grid-column: 1 / -1;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-card-actions {',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-workflow-steps li.current > span {',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-card-actions .seai-activate {',
+            css,
+        )
+        self.assertIn('href="/app.css?v=20261028-1125"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
 
     def test_active_house_cards_have_equal_height_and_scroll_overflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -3697,7 +4108,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('request("/api/calculator/houses?status=map")', APP_JS)
         self.assertIn('request(`/api/calculator/houses?status=${mode}`)', APP_JS)
         self.assertIn(".house-map-layout { grid-template-columns: minmax(0, 1.8fr) minmax(310px, .82fr);", css)
-        self.assertIn("scroll-snap-type: y proximity", css)
+        self.assertIn("scroll-snap-type: none", css)
         self.assertIn('marker.dataset.stage = String(house.stage || 1)', APP_JS)
         map_code = APP_JS[
             APP_JS.index("const HOUSE_MAP_TILE_SIZE"):

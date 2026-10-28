@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="/app.css?v=20261028-1125">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
       <section class="auth-card">
-        <img class="auth-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists">
+        <img class="auth-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat">
         <div class="eyebrow" id="auth-eyebrow">SECURE WORKSPACE</div>
         <h1 id="auth-title">Sign in</h1>
         <p id="auth-description">Sign in with your tracker account to continue.</p>
@@ -28,7 +28,7 @@
     <div class="app-shell hidden">
       <aside class="sidebar">
         <a class="brand" href="/" aria-label="BRUSNA Material Tracker home">
-          <img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists">
+          <img class="brand-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat">
         </a>
         <div class="workspace-label">WORKSPACE</div>
         <nav class="main-nav" aria-label="Main navigation">
@@ -37,7 +37,6 @@
           <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span>Houses &amp; teams</button>
           <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
         </nav>
-        <img class="sidebar-cat" src="/tommy.jpeg" alt="Tommy the cat">
         <div class="sidebar-bottom">
           <div class="local-badge"><span class="status-dot"></span><span><strong>Shared workspace</strong><small>Data stays on the tracker host</small></span></div>
           <p>First step toward clearer stock, delivery and usage records.</p>
@@ -46,7 +45,7 @@
 
       <main class="main-content">
         <header class="topbar">
-          <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-logo.jpg" alt="BRUSNA — The Retrofit Specialists"></a>
+          <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat"></a>
           <button class="button button-secondary overview-shortcut" id="go-overview" type="button" aria-label="Return to Overview">← Overview</button>
           <div class="topbar-spacer"></div>
           <button class="button button-secondary" id="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><span aria-hidden="true">☾</span> Dark mode</button>
@@ -209,6 +208,7 @@
                 <p class="helper-text">Enter measurements once. Window corner lengths are calculated from each window's width and two sides (2 × height).</p>
                 <h3>Windows <button class="text-button survey-add-row" type="button" data-survey-list="windows">+ Add window size</button></h3><div id="survey-windows" class="survey-rows"></div>
                 <h3>Doors <button class="text-button survey-add-row" type="button" data-survey-list="doors">+ Add door size</button></h3><div id="survey-doors" class="survey-rows"></div>
+                <label class="field survey-perimeter">Perimeter (m)<input id="survey-perimeter" type="number" min="0.01" max="10000" step="0.01" inputmode="decimal" required placeholder="Enter surveyed perimeter"></label>
                 <div class="form-grid survey-corners"><div><h3>House corner lengths <button class="text-button survey-add-row" type="button" data-survey-list="house_corners">+ Add length</button></h3><div id="survey-house_corners" class="survey-rows"></div></div></div>
                 <div id="survey-meta" class="helper-text"></div>
                 <div class="dialog-actions"><button class="button button-primary" type="submit">Save survey</button></div>
@@ -510,7 +510,8 @@
           <div class="seai-info full hidden" id="seai-info"></div>
           <label class="field">Postcode / Eircode<input name="postcode" maxlength="80" placeholder="Optional"></label>
           <label class="field">House owner<input name="owner_name" maxlength="160" placeholder="Optional"></label>
-          <label class="field full">Assigned employee<input name="employee_name" list="assigned-crew-options" maxlength="160" placeholder="Choose or enter employee name"><small>Choose a crew member or enter another employee.</small></label>
+          <label class="field">Perimeter (m)<input name="perimeter_m" type="number" min="0.01" max="10000" step="0.01" required placeholder="Enter surveyed perimeter"></label>
+          <label class="field">Assigned employee<input name="employee_name" list="assigned-crew-options" maxlength="160" required placeholder="Choose or enter employee name"><small>Assign an employee before opening the calculator.</small></label>
         </div>
         <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save &amp; open calculator</button></div>
       </form>

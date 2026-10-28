@@ -1923,12 +1923,25 @@ def _validate_survey_payload(payload):
     notes = str(payload.get("notes") or "").strip()
     if len(notes) > 2000:
         raise ApiError(400, "Survey notes must be 2,000 characters or fewer.")
-    return {
+    raw_perimeter = payload.get("perimeter_m")
+    if raw_perimeter in (None, ""):
+        perimeter = None
+    else:
+        try:
+            perimeter = float(raw_perimeter)
+        except (TypeError, ValueError, OverflowError):
+            raise ApiError(400, "Enter a valid surveyed perimeter.")
+        if not math.isfinite(perimeter) or not (0 < perimeter <= 10000):
+            raise ApiError(400, "Surveyed perimeter must be between 0 and 10,000 metres.")
+    survey = {
         "windows": dimensions("windows"),
         "doors": dimensions("doors"),
         "house_corners": lengths("house_corners"),
         "notes": notes,
     }
+    if "perimeter_m" in payload:
+        survey["perimeter_m"] = perimeter
+    return survey
 
 
 def _dashboard(db):
@@ -2638,6 +2651,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_file(STATIC_DIR / "app.css", "text/css; charset=utf-8")
         elif path == "/app.js":
             self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
+        elif path == "/brusna-curious-cat-logo.png":
+            self._send_file(STATIC_DIR / "brusna-curious-cat-logo.png", "image/png")
         elif path == "/calculator":
             self._send_file(ROOT / "Auto_calc.html", "text/html; charset=utf-8")
         elif path == "/api/calculator/houses":
@@ -3134,6 +3149,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 WHEN h.is_finished = 1 THEN 'closed'
                                 ELSE 'active' END AS status,
                            COALESCE(p.notes, '') AS notes,
+                           hs.data AS survey_data,
                            COALESCE(hs.notes, '') AS survey_notes,
                            COALESCE(hs.updated_by, '') AS survey_updated_by,
                            COALESCE(hs.updated_at, '') AS survey_updated_at
@@ -3153,7 +3169,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                                hc.scaffolding_status, hc.esb_unclipped,
                                hc.plumber_status, is_finished,
                                CASE WHEN is_finished = 1 THEN 'closed' ELSE 'active' END AS status,
-                               '' AS notes, '' AS survey_notes,
+                               '' AS notes, NULL AS survey_data, '' AS survey_notes,
                                '' AS survey_updated_by, '' AS survey_updated_at
                         FROM houses
                         LEFT JOIN house_checklists hc ON hc.house_id = houses.id
@@ -3166,6 +3182,35 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 movements = _house_movement_rows(db, house_id)
                 house_data = dict(house)
+                try:
+                    survey_data = (
+                        json.loads(house_data["survey_data"])
+                        if house_data.get("survey_data")
+                        else {}
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    raise ApiError(500, "Stored house survey data is invalid.")
+                if not isinstance(survey_data, dict):
+                    raise ApiError(500, "Stored house survey data is invalid.")
+                house_data["survey_perimeter_m"] = survey_data.get("perimeter_m")
+                house_data.pop("survey_data", None)
+                seai_application = db.execute(
+                    "SELECT detail_data_json FROM seai_applications "
+                    "WHERE application_id = ?",
+                    (house_id,),
+                ).fetchone() if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'seai_applications'"
+                ).fetchone() else None
+                if seai_application:
+                    try:
+                        house_data["seai_details"] = json.loads(
+                            seai_application["detail_data_json"]
+                        )
+                    except (TypeError, json.JSONDecodeError):
+                        raise ApiError(500, "Stored SEAI application details are invalid.")
+                else:
+                    house_data["seai_details"] = None
                 house_data["esb_unclipped"] = _esb_unclipped_status(
                     house_data["esb_unclipped"]
                 )
@@ -3690,6 +3735,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                         """, (house_id,)).fetchone()
                         if not ready:
                             raise ApiError(409, "Survey measurements can only be saved for houses ready for start.")
+                        if survey.get("perimeter_m") is None:
+                            raise ApiError(
+                                400,
+                                "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
+                            )
                         db.execute("""
                             INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
                             VALUES (?, ?, ?, ?, ?)
@@ -4412,6 +4462,44 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with connect_db() as db:
                     with db:
                         _require_ready_to_activate(db, house_id)
+                        if not employee_name:
+                            raise ApiError(
+                                400,
+                                "Assign an employee before opening the calculator.",
+                            )
+                        try:
+                            perimeter = float(payload.get("perimeter_m"))
+                        except (TypeError, ValueError, OverflowError):
+                            raise ApiError(
+                                400,
+                                "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
+                            )
+                        if not math.isfinite(perimeter) or not (0 < perimeter <= 10000):
+                            raise ApiError(
+                                400,
+                                "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
+                            )
+                        survey_row = db.execute(
+                            "SELECT data FROM house_surveys WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        try:
+                            survey_data = json.loads(survey_row["data"])
+                        except (TypeError, json.JSONDecodeError):
+                            raise ApiError(500, "Stored house survey data is invalid.")
+                        if not isinstance(survey_data, dict):
+                            raise ApiError(500, "Stored house survey data is invalid.")
+                        survey_data["perimeter_m"] = perimeter
+                        db.execute(
+                            "UPDATE house_surveys SET data = ?, updated_by = ?, "
+                            "updated_at = ? WHERE house_id = ?",
+                            (
+                                json.dumps(survey_data, ensure_ascii=False),
+                                user["display_name"],
+                                datetime.now().isoformat(timespec="seconds"),
+                                house_id,
+                            ),
+                        )
                         was_active = db.execute(
                             "SELECT 1 FROM houses WHERE id = ?", (house_id,)
                         ).fetchone() is not None
