@@ -2591,14 +2591,6 @@ async function submitHouseNote(event) {
 }
 
 async function toggleHouseReady(houseId, ready) {
-  if (
-    !ready &&
-    !window.confirm(
-      `Move ${houseId} back to Not started? This permanently clears survey measurements, notes, work plans, snags, variation quantities, and saved annotations. Original PDFs and status history will remain.`,
-    )
-  ) {
-    return;
-  }
   try {
     await request("/api/houses/plan", {
       method: "POST",
@@ -2608,7 +2600,7 @@ async function toggleHouseReady(houseId, ready) {
     showToast(
       ready
         ? `${houseId} is ready for start.`
-        : `${houseId} moved back to Not started; survey records cleared and original PDFs kept.`,
+        : `${houseId} moved back to Not started; survey records cleared, variation quantities and original PDFs kept.`,
     );
     await refresh();
   } catch (error) {

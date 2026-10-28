@@ -2638,7 +2638,7 @@ class ReadyForStartResetTests(HttpBase):
                     (house_id,),
                 ).fetchone()[0]
             )["Measures"][0]["Survey Qty including Variation"]
-            self.assertEqual(variation, "")
+            self.assertEqual(variation, "111.5")
             self.assertEqual(
                 db.execute(
                     "SELECT status FROM house_status_history WHERE house_id = ? "
@@ -3517,7 +3517,16 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions { height: auto;", css)
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions .seai-activate { grid-column: auto;", css)
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-card-actions .text-button { height: 39px; min-height: 39px;", css)
-        self.assertIn(".house-grid.house-grid-ready > .house-plan-ready .house-card-actions { flex: 0 0 auto; height: auto; min-height: 0; max-height: none; overflow: visible; }", css)
+        self.assertIn(".house-grid.house-grid-ready > .house-plan-ready .house-body,\n.house-grid.house-grid-ready > .house-plan-ready .house-card-actions { max-height: none; overflow: visible; }", css)
+        self.assertIn(".house-grid.house-grid-ready { grid-auto-rows: 1fr; align-items: stretch; }", css)
+
+    def test_returning_house_to_not_started_has_no_confirmation_prompt(self):
+        toggle_ready = APP_JS[
+            APP_JS.index("async function toggleHouseReady"):
+            APP_JS.index("const HOUSE_MAP_TILE_SIZE")
+        ]
+        self.assertNotIn("confirm(", toggle_ready)
+        self.assertIn("variation quantities and original PDFs kept", toggle_ready)
 
     def test_not_started_queue_cards_fit_their_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")

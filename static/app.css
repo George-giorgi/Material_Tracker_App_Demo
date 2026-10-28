@@ -1929,7 +1929,7 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 }
 .checklist-static-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; }
 .checklist-card-row .checklist-static-status strong { text-align: center; }
-.house-grid.house-grid-ready { grid-auto-rows: auto; align-items: start; }
+.house-grid.house-grid-ready { grid-auto-rows: 1fr; align-items: stretch; }
 .house-grid.house-grid-ready > .house-plan-ready { height: auto; min-height: 0; max-height: none; overflow: visible; }
 .house-grid.house-grid-ready > .house-plan-ready .house-top { box-sizing: border-box; flex: 0 0 auto; height: auto; min-height: 0; max-height: none; margin-bottom: 6px; border-bottom: 1px solid #e8eef4; padding-bottom: 8px; overflow: visible; scrollbar-gutter: auto; }
 .house-grid.house-grid-ready > .house-plan-ready .house-meta { min-width: 0; overflow-wrap: anywhere; }

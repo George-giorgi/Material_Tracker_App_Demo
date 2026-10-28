@@ -47,10 +47,10 @@ annotated PDF**, which appends the saved Survey note. In the annotator, select
 individual pages across multiple SEAI PDFs to share or download one combined PDF
 with the saved Survey note appended as its final page. Moving a house from Ready
 for start back to Not started clears its survey records, work plan, notes, snags,
-SEAI variation quantities, and saved annotations. Original PDFs and status
-history remain; PDFs are view-only while the house is Not started. The database
-retains the demo material catalog and stock data, which are not real inventory.
-A pre-change backup is kept beside the database in `instance\`.
+and saved annotations, but preserves SEAI variation quantities. Original PDFs
+and status history remain; PDFs are view-only while the house is Not started.
+The database retains the demo material catalog and stock data, which are not
+real inventory. A pre-change backup is kept beside the database in `instance\`.
 
 The SEAI property GPS fields are blank. Import approved coordinates using the
 House map CSV control to add exact pins. Coordinate-mapped houses can appear on

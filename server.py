@@ -593,45 +593,6 @@ def _clear_house_survey_records(db, house_id):
                 ((document_id,) for document_id in annotated_ids),
             )
 
-    applications_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-        "AND name = 'seai_applications'"
-    ).fetchone()
-    if applications_table:
-        columns = {
-            row["name"] for row in db.execute("PRAGMA table_info(seai_applications)")
-        }
-        if not {"application_id", "detail_data_json"}.issubset(columns):
-            raise ApiError(500, "SEAI application details could not be reset.")
-        application = db.execute(
-            "SELECT detail_data_json FROM seai_applications WHERE application_id = ?",
-            (house_id,),
-        ).fetchone()
-        if application:
-            try:
-                details = json.loads(application["detail_data_json"])
-            except (TypeError, json.JSONDecodeError) as exc:
-                raise ApiError(500, "Stored SEAI application details are invalid.") from exc
-            if not isinstance(details, dict):
-                raise ApiError(500, "Stored SEAI application details are invalid.")
-            measures = details.get("Measures")
-            changed = False
-            if isinstance(measures, list):
-                for measure in measures:
-                    if (
-                        isinstance(measure, dict)
-                        and measure.get("Survey Qty including Variation") != ""
-                    ):
-                        measure["Survey Qty including Variation"] = ""
-                        changed = True
-            if changed:
-                db.execute(
-                    "UPDATE seai_applications SET detail_data_json = ? "
-                    "WHERE application_id = ?",
-                    (json.dumps(details, ensure_ascii=False), house_id),
-                )
-
-
 @contextmanager
 def connect_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
