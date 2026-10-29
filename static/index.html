@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261028-1542">
+    <link rel="stylesheet" href="/app.css?v=20261029-0938">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -116,7 +116,14 @@
 
         <section class="page" id="page-houses" data-page="houses">
           <div id="houses-overview">
-            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1>Houses &amp; teams</h1><p class="page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div></div>
+            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1 id="houses-page-title">Houses &amp; teams</h1><p class="page-subtitle" id="houses-page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div></div>
+            <div id="assign-houses-dashboard" class="kpi-row assign-house-kpis hidden" aria-label="House status dashboard">
+              <button type="button" class="kpi seai" data-assign-house-filter="seai" aria-pressed="false"><span class="kpi-label"><svg class="assign-map-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 3v15m6-12v15" stroke="currentColor" stroke-width="1.5"/><path d="M12 7.2a2.1 2.1 0 0 0-2.1 2.1c0 1.5 2.1 3.8 2.1 3.8s2.1-2.3 2.1-3.8A2.1 2.1 0 0 0 12 7.2Z" fill="currentColor" stroke="white" stroke-width=".8"/></svg>From SEAI</span><span class="kpi-value" id="assign-stat-seai">0</span></button>
+              <button type="button" class="kpi pending" data-assign-house-filter="not_started" aria-pressed="false"><span class="kpi-label">Not started</span><span class="kpi-value" id="assign-stat-not-started">0</span></button>
+              <button type="button" class="kpi ready" data-assign-house-filter="ready" aria-pressed="false"><span class="kpi-label">Ready for start</span><span class="kpi-value" id="assign-stat-ready">0</span></button>
+              <button type="button" class="kpi active" data-assign-house-filter="active" aria-pressed="true"><span class="kpi-label">Active houses</span><span class="kpi-value" id="assign-stat-active">0</span></button>
+              <button type="button" class="kpi closed" data-assign-house-filter="closed" aria-pressed="false"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="assign-stat-closed">0</span></button>
+            </div>
             <div class="houses-teams-tabs" id="houses-teams-tabs" role="tablist" aria-label="Houses and teams views">
               <button class="houses-teams-tab active" id="houses-tab" type="button" role="tab" aria-selected="true" aria-controls="houses-section" tabindex="0">Houses</button>
               <button class="houses-teams-tab" id="teams-tab" type="button" role="tab" aria-selected="false" aria-controls="teams-section" tabindex="-1">Teams</button>
@@ -244,15 +251,16 @@
               </div>
               <aside class="card house-map-side">
                 <div class="house-map-sidebar-heading"><div><span class="eyebrow">MAP KEY</span><h3>House status</h3></div></div>
-                <div class="house-map-legend" aria-label="Map status legend">
-                  <span><i class="map-status-not_started"></i>Not started · mapped</span>
-                  <span><i class="map-status-ready"></i>Ready for start</span>
-                  <span><i class="map-status-active" data-stage="1"></i>Active · Stage 1</span>
-                  <span><i class="map-status-active" data-stage="2"></i>Active · Stage 2</span>
+                <div class="house-map-legend" id="house-map-legend" role="group" aria-label="Filter map pins by house stage">
+                  <button type="button" class="house-map-stage-filter" data-map-stage-filter="not_started" aria-pressed="true"><i class="map-status-not_started"></i>Not started</button>
+                  <button type="button" class="house-map-stage-filter" data-map-stage-filter="ready" aria-pressed="true"><i class="map-status-ready"></i>Ready for start</button>
+                  <button type="button" class="house-map-stage-filter" data-map-stage-filter="active-1" aria-pressed="true"><i class="map-status-active" data-stage="1"></i>Active · Stage 1</button>
+                  <button type="button" class="house-map-stage-filter" data-map-stage-filter="active-2" aria-pressed="true"><i class="map-status-active" data-stage="2"></i>Active · Stage 2</button>
+                  <button type="button" class="house-map-stage-filter" data-map-stage-filter="closed" aria-pressed="true"><i class="map-status-closed"></i>Closed</button>
                 </div>
                 <div class="house-map-sidebar-heading house-map-selection-heading"><div><span class="eyebrow">SELECTED LOCATION</span><h3>House details</h3></div></div>
                 <div id="house-map-selection" class="house-map-selection"><strong>Select a house</strong><p>Choose a marker or an address from the list below.</p></div>
-                <section class="house-map-activity-card" aria-labelledby="house-map-activity-title">
+                <section id="house-map-activity" class="house-map-activity-card" aria-labelledby="house-map-activity-title">
                   <div class="house-map-activity-heading"><span class="house-map-activity-icon" aria-hidden="true">&#8635;</span><div><span class="eyebrow">HOUSE TIMELINE</span><h3 id="house-map-activity-title">Recent activity</h3></div><span id="house-map-activity-count" class="house-map-activity-count">—</span></div>
                   <div id="house-map-audit" class="house-map-audit"><div class="house-map-audit-empty"><span class="house-map-audit-empty-icon" aria-hidden="true">&#8982;</span><strong>Choose a house</strong><p>Select a house to see who marked it ready, completed the survey, specified materials, activated or closed it, or recorded a material movement.</p></div></div>
                 </section>

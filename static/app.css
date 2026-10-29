@@ -46,6 +46,7 @@ a.nav-item { text-decoration: none; }
 .main-content { min-height: 100vh; margin-left: 244px; padding: 0 38px 42px; }
 .topbar { display: flex; height: 75px; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
 .topbar .button { padding-right: 16px; padding-left: 16px; }
+#account-button { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-shortcut { border-color: #cbd9e8; background: #f2f6fb; color: #385777; }
 .overview-shortcut:hover { border-color: #a9bfd7; background: #e7eff8; }
 .topbar-spacer { flex: 1; }
@@ -512,6 +513,7 @@ html[data-theme="dark"] .weather-day { background: #1b2928; border-color: var(--
   .house-card-actions { align-items: flex-start; flex-direction: column; }
   .topbar { height: 58px; gap: 4px; }
   .topbar .button { padding-right: 9px; padding-left: 9px; }
+  #account-button { max-width: 88px; }
   .mobile-brand { display: block; width: 80px; flex: 0 0 auto; }
   .mobile-brand .brand-logo { width: 100%; }
   .overview-shortcut { width: 34px; min-height: 33px; flex: 0 0 34px; overflow: hidden; padding: 0 !important; font-size: 0 !important; }
@@ -657,6 +659,10 @@ html[data-theme="dark"] .weather-day { background: #1b2928; border-color: var(--
 .kpi-strip { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 16px; padding: 0 4px; color: #697871; font-size: 12px; }
 .kpi-strip b { color: #1d2a3a; font-size: 14px; }
 .kpi-strip .kpi-warn b { color: #b86053; }
+.assign-house-kpis .kpi { cursor: pointer; }
+.assign-house-kpis .kpi.seai .kpi-label { display: inline-flex; align-items: center; gap: 7px; }
+.assign-map-icon { width: 18px; height: 18px; color: #52735f; }
+.assign-house-kpis .kpi[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--green-2); }
 @media (max-width: 1120px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .house-card { display: flex; flex-direction: column; }
 .house-card .house-card-actions { margin-top: auto; }
@@ -733,6 +739,7 @@ html[data-theme="dark"] .weather-day { background: #1b2928; border-color: var(--
 .house-property-details span { display: inline-flex; align-items: center; border: 1px solid #dce5ed; border-radius: 20px; padding: 3px 7px; background: #f5f8fb; color: #52657b; font-size: 9px; font-weight: 600; }
 .house-insulation-summary { margin: 10px 0; border: 1px solid #e3ebe5; border-radius: 9px; padding: 9px; background: #fbfdfb; }
 .house-insulation-summary h3 { margin: 0 0 7px; color: #31533d; font-size: 11px; }
+.house-insulation-demo-note { margin: 0 0 7px; border: 1px solid #ead8a6; border-radius: 6px; padding: 5px 7px; background: #fff8e6; color: #765814; font-size: 9px; font-weight: 650; line-height: 1.4; }
 .house-insulation-table { display: grid; }
 .house-insulation-header, .house-insulation-row { display: grid; grid-template-columns: minmax(115px, 1fr) repeat(2, minmax(85px, .7fr)); gap: 7px; align-items: stretch; border-bottom: 1px solid #e8eee9; padding: 6px 3px; }
 .house-insulation-header { color: #718078; font-size: 9px; font-weight: 700; }
@@ -1013,7 +1020,9 @@ h1 { margin-bottom: 3px; font-size: 24px; }
 .house-map-marker-approximate { border-style: dashed; }
 .house-map-side { min-width: 0; padding: 12px; }
 .house-map-legend { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 12px; color: #53665b; font-size: 10px; }
-.house-map-legend span { display: inline-flex; min-height: 30px; align-items: center; gap: 7px; border: 1px solid #e4ebe6; border-radius: 20px; padding: 4px 10px; background: #fbfdfb; font-weight: 600; }
+.house-map-stage-filter { display: inline-flex; min-height: 30px; align-items: center; gap: 7px; border: 1px solid #e4ebe6; border-radius: 20px; padding: 4px 10px; background: #fbfdfb; color: inherit; font: inherit; font-weight: 600; cursor: pointer; transition: background .12s, border-color .12s, opacity .12s; }
+.house-map-stage-filter[aria-pressed="false"] { border-color: #e4e8e5; background: #f0f2f0; opacity: .48; }
+.house-map-stage-filter:focus-visible { outline: 2px solid #267344; outline-offset: 2px; }
 .house-map-legend i { display: inline-grid; width: 12px; height: 12px; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px currentColor; }
 .house-map-legend i.map-status-active { color: #18875f; background: #18875f; }
 .house-map-legend i.map-status-active[data-stage="2"] { color: #b87732; background: #b87732; }
@@ -2079,9 +2088,50 @@ html[data-theme="dark"] .house-map-approximate { border-color: #735d34; backgrou
 html[data-theme="dark"] .house-map-approximate strong,
 html[data-theme="dark"] .house-map-approximate span { color: #f0d7a4; }
 html[data-theme="dark"] .house-map-legend { border-color: var(--line); color: #c0d0c6; }
-html[data-theme="dark"] .house-map-legend span { border-color: #3b4d43; background: #26332e; }
-html[data-theme="dark"] .house-map-canvas { background-color: #27342d; background-image: radial-gradient(#405348 1px, transparent 1px); }
-html[data-theme="dark"] .house-map-tiles { background-color: #27342d; }
+html[data-theme="dark"] .house-map-stage-filter { border-color: #40564a; background: #263630; color: #d3e2d9; }
+html[data-theme="dark"] .house-map-stage-filter:hover,
+html[data-theme="dark"] .house-map-stage-filter[aria-pressed="true"] { border-color: #5a9070; background: #30483a; }
+html[data-theme="dark"] .house-map-stage-filter[aria-pressed="false"] { border-color: #35463f; background: #1b2622; color: #92a39a; opacity: .8; }
+html[data-theme="dark"] .house-map-stage-filter:focus-visible { outline-color: #75c997; }
+html[data-theme="dark"] .house-map-legend i { box-shadow: inset 0 0 0 2px #263630, 0 0 0 1px currentColor; }
+html[data-theme="dark"] .house-map-canvas { background-color: #18221e; background-image: radial-gradient(#34473d 1px, transparent 1px); }
+html[data-theme="dark"] .house-map-tiles { background-color: #18221e; }
+html[data-theme="dark"] .house-map-tile { filter: brightness(.76) invert(.88) hue-rotate(180deg) saturate(.68); }
+html[data-theme="dark"] .house-map-side { border-color: var(--line); background: #202c29; color: var(--ink); }
+html[data-theme="dark"] .house-map-sidebar-heading .eyebrow { color: #9eafa5; }
+html[data-theme="dark"] .house-map-sidebar-heading h3,
+html[data-theme="dark"] .house-map-selected-heading > div > strong { color: #e4ece8; }
+html[data-theme="dark"] .house-map-list-item { border-color: transparent; border-bottom-color: #35463f; background: #202c29; color: #e0ebe5; }
+html[data-theme="dark"] .house-map-list-item:hover,
+html[data-theme="dark"] .house-map-list-item.selected { border-color: #476253; background: #2a3d33; }
+html[data-theme="dark"] .house-map-list-item:focus-visible { outline-color: #75c997; }
+html[data-theme="dark"] .house-map-list-item small,
+html[data-theme="dark"] .house-map-selected-heading > p { color: #adbbb3; }
+html[data-theme="dark"] .house-map-list-status { border-color: #3b5870; background: #263c4b; color: #b7dafa; }
+html[data-theme="dark"] .house-map-list-status.map-list-status-not_started { border-color: #465564; background: #303e4b; color: #d0dbe4; }
+html[data-theme="dark"] .house-map-list-status.map-list-status-ready { border-color: #3b5870; background: #263c4b; color: #b7dafa; }
+html[data-theme="dark"] .house-map-list-status.map-list-status-active { border-color: #35644d; background: #203b2e; color: #a9e3bd; }
+html[data-theme="dark"] .house-map-list-status.map-list-status-active[data-stage="2"] { border-color: #705333; background: #3b3022; color: #f0cd91; }
+html[data-theme="dark"] .house-map-list-status.map-list-status-closed { border-color: #70443e; background: #3c2927; color: #f1b1a8; }
+html[data-theme="dark"] .house-map-selection { border-color: #3b4d43; background: #1b2723; }
+html[data-theme="dark"] .house-map-selection > strong { color: #e4ece8; }
+html[data-theme="dark"] .house-map-selection > p { color: #adbbb3; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .text-button { border-color: #40564a; background: #263630; color: #d3e2d9; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .text-button:hover { border-color: #5a9070; background: #30483a; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .stage-switch { border-color: #40564a; background: #1b2723; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .map-stage-caption { color: #a4b5aa; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .stage-btn { border-color: #40564a; background: #263630; color: #d3e2d9; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .stage-btn.on { border-color: #4a8c68; background: #254333; color: #b8edca; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .stage-btn[data-stage="2"].on { border-color: #80623b; background: #433521; color: #f5d399; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .seai-activate { border-color: #28714e; background: #176b4a; color: #fff; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-survey-open.survey-needed { border-color: #3b5870; background: #263c4b; color: #b7dafa; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-survey-open.survey-reviewed { border-color: #35644d; background: #203b2e; color: #a9e3bd; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-note-open { border-color: #705d35; background: #393020; color: #ecd294; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-snags-open { border-color: #584773; background: #30283d; color: #d6c3f4; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-record-movement { border-color: #3b6070; background: #20343d; color: #b5dce9; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-finish-toggle { border-color: #70443e; background: #3c2927; color: #f1b1a8; }
+html[data-theme="dark"] .house-map-selection .house-card-actions .house-open { border-color: #40564a; background: #263630; color: #d3e2d9; }
+html[data-theme="dark"] .house-map-activity-card { border-color: #3b4d43; background: #202c29; color: #d3e2d9; }
 
 html[data-theme="dark"] .suggestions { border-color: #40544a; background: #202c29; }
 html[data-theme="dark"] .suggestion-option { border-color: #35463f; background: #202c29; color: #dbe8e0; }
@@ -2247,6 +2297,16 @@ html[data-theme="dark"] #inventory-table .status-pill.warning {
   border-color: #806639;
   background: #433721;
   color: #f0ce8b;
+}
+html[data-theme="dark"] .house-map-side.card {
+  border-color: #35483f;
+  background: #1c2925;
+  color: #e4ece8;
+}
+html[data-theme="dark"] .house-map-activity-card {
+  border-color: #35483f;
+  background: #202c29;
+  color: #d3e2d9;
 }
 html[data-theme="dark"] #inventory-table .text-button {
   padding: 6px 12px;
@@ -2565,6 +2625,11 @@ html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending .h
   background: #342d1e;
   color: #efd18e;
 }
+html[data-theme="dark"] .house-insulation-demo-note {
+  border-color: #806639;
+  background: #433721;
+  color: #f0ce8b;
+}
 html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-card-actions {
   flex: 0 0 auto;
   max-height: none;
@@ -2733,4 +2798,208 @@ html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house
   border-color: #3f7255;
   background: #203b2c;
   color: #a9e3bb;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active {
+  border-color: #3e7054;
+  background: linear-gradient(155deg, #202c29 15%, #1c2924 100%);
+  background-color: #1c2924;
+  box-shadow: 0 6px 20px #080f0d50;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .status-pill.active {
+  border-color: #3f7255;
+  background: #203b2c;
+  color: #a9e3bb;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow,
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-checklist-card {
+  border: 1px solid #3b5547;
+  border-radius: 10px;
+  background: #24352d;
+  color: #d7e5dc;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow {
+  padding: 11px;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-checklist-card {
+  margin-top: 10px;
+  padding: 10px;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-heading strong {
+  color: #e4eee7;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-steps li {
+  color: #a9bbb0;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-steps li:not(:last-child)::after {
+  background: #46584d;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-steps li > span {
+  border-color: #51665a;
+  background: #1b2823;
+  color: #c3d2c8;
+  box-shadow: none;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-steps li.complete > span {
+  border-color: #47855d;
+  background: #244333;
+  color: #b4e8c2;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-steps li.current.workflow-stage-3 > span {
+  border-color: #4aa875;
+  background: #26734f;
+  color: #f3fff7;
+  box-shadow: 0 0 0 3px #4aa87525;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-stock {
+  border-top-color: #3b5045;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-stock-title {
+  color: #a8bbb0;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .balance-row {
+  color: #c6d5cc;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .balance-row span:last-child {
+  color: #a9e3bb;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-card-row {
+  border-bottom-color: #35483f;
+  color: #c6d5cc;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-card-label small {
+  color: #9eafa5;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-value-positive {
+  background: #244333;
+  color: #b4e8c2;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-value-negative {
+  background: #482b29;
+  color: #ffb8ae;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-value-unnecessary,
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-value-unset {
+  background: #35423c;
+  color: #c1cec6;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-toggle {
+  border-color: #465b4e;
+  background: #1e2b25;
+  color: #c4d2c9;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-toggle-indicator {
+  border-color: #65796c;
+  background: #26352d;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-toggle.is-done {
+  border-color: #47855d;
+  background: #244333;
+  color: #b4e8c2;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .checklist-toggle.is-done .checklist-toggle-indicator {
+  border-color: #4aa875;
+  background: #26734f;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-note p {
+  background: #3b3424;
+  color: #f0d99c;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .snag-text {
+  color: #ff9aa8;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .snag-row.done .snag-text {
+  color: #9ab8a3;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions {
+  border-top-color: #394c42;
+  background: #192521;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .text-button {
+  border-color: #40564a;
+  background: #23332c;
+  color: #d7e7dc;
+  box-shadow: none;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .text-button:hover {
+  transform: none;
+  border-color: #64816f;
+  background: #2a4034;
+  box-shadow: 0 2px 8px #080f0d50;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-map-open {
+  border-color: #405d75;
+  background: #223544;
+  color: #b9d8ef;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-record-movement {
+  border-color: #32835b;
+  background: #26734f;
+  color: #f3fff7;
+  font-weight: 750;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-note-open {
+  border-color: #705d32;
+  background: #3b3424;
+  color: #f0d99c;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-note-open.note-action-add {
+  border-color: #426d9c;
+  background: #315eaa;
+  color: #fff;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-note-open.note-action-edit {
+  border-color: #a65b16;
+  background: #8d4d13;
+  color: #fff3dc;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-snags-open {
+  border-color: #65518a;
+  background: #382e4c;
+  color: #ddcafa;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-open,
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-checklist-open {
+  border-color: #46594e;
+  background: #26362f;
+  color: #d4e5da;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .house-finish-toggle {
+  border-color: #754944;
+  background: #402b29;
+  color: #ffb8ae;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .stage-switch {
+  border-color: #3b5045;
+  background: #1b2823;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .stage-btn {
+  color: #c4d2c9;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .stage-btn:hover:not(.on) {
+  background: #2a4034;
+  color: #edf6f0;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .stage-btn[data-stage="1"].on {
+  background: #26734f;
+  color: #f3fff7;
+}
+html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-card-actions .stage-btn[data-stage="2"].on {
+  background: #8d5b22;
+  color: #fff5e3;
+}
+html[data-theme="dark"] .card.house-map-side {
+  border-color: #35483f;
+  background-color: #1c2925;
+  color: #e4ece8;
+}
+html[data-theme="dark"] .card.house-map-activity-card {
+  border-color: #35483f;
+  background: #202c29;
+  color: #d3e2d9;
+}
+html[data-theme="dark"] .house-map-stage-filter[aria-pressed="false"] {
+  border-color: #35463f;
+  background: #1b2622;
+  color: #a4b3aa;
+  opacity: 1;
 }

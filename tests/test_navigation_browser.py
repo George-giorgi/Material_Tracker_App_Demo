@@ -108,6 +108,234 @@ class NavigationBrowserTests(unittest.TestCase):
     def active_page(self):
         return self.page.locator(".page.active").get_attribute("data-page")
 
+    def test_assign_user_sees_house_dashboard_and_status_filters(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, owner_name, ready_for_start)
+                VALUES ('READY-ASSIGN', 'Ready Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, owner_name, ready_for_start)
+                VALUES ('PENDING-ASSIGN', 'Pending Owner', 0)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, owner_name, ready_for_start)
+                VALUES ('ACTIVE-ASSIGN', 'Active Owner', 0)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO houses(id, owner_name, employee_name, is_finished)
+                VALUES ('ACTIVE-ASSIGN', 'Active Owner', 'Assign Browser', 0)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, owner_name, ready_for_start)
+                VALUES ('CLOSED-ASSIGN', 'Closed Owner', 0)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO houses(id, owner_name, employee_name, is_finished)
+                VALUES ('CLOSED-ASSIGN', 'Closed Owner', 'Assign Browser', 1)
+                """
+            )
+
+        result = self.page.evaluate(
+            """async () => {
+              const response = await fetch('/api/users', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                  username: 'assign-dashboard',
+                  display_name: 'Assign Dashboard',
+                  pin: '234567',
+                  role: 'assign',
+                }),
+              });
+              return {status: response.status, body: await response.json()};
+            }"""
+        )
+        self.assertEqual(result["status"], 201, result)
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("assign-dashboard")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+
+        dashboard = self.page.locator("#assign-houses-dashboard")
+        dashboard.wait_for(state="visible")
+        self.assertEqual(self.active_page(), "houses")
+        self.assertEqual(
+            self.page.locator("#houses-page-title").inner_text(),
+            "House dashboard",
+        )
+        self.assertEqual(
+            [
+                self.page.locator(f"#assign-stat-{key}").inner_text()
+                for key in ("seai", "active", "closed", "ready", "not-started")
+            ],
+            ["4", "1", "1", "1", "1"],
+        )
+        self.assertEqual(
+            self.page.locator(
+                "[data-assign-house-filter='active']"
+            ).get_attribute("aria-pressed"),
+            "true",
+        )
+
+        self.assertTrue(
+            self.page.locator("#assign-stat-seai").locator("..").locator(
+                ".assign-map-icon"
+            ).is_visible()
+        )
+        self.page.locator("[data-assign-house-filter='seai']").click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        self.page.locator(
+            "#house-map-markers .house-map-marker[data-location-accuracy='approximate']"
+        ).first.wait_for()
+        self.assertEqual(
+            self.page.locator("#house-map-markers .house-map-marker").count(),
+            4,
+        )
+        coordinate_spread = self.page.evaluate(
+            """() => {
+              const houses = state.houseMapData;
+              return {
+                latitude: Math.max(...houses.map((house) => house.latitude))
+                  - Math.min(...houses.map((house) => house.latitude)),
+                longitude: Math.max(...houses.map((house) => house.longitude))
+                  - Math.min(...houses.map((house) => house.longitude)),
+              };
+            }"""
+        )
+        self.assertGreater(coordinate_spread["latitude"], 1)
+        self.assertGreater(coordinate_spread["longitude"], 2)
+        self.assertIn(
+            "Approximate demo pins",
+            self.page.locator("#house-map-canvas").inner_text(),
+        )
+        self.assertEqual(
+            self.page.locator("#house-map-house-list [data-map-house-id]").count(),
+            4,
+        )
+        self.assertTrue(self.page.locator("#house-map-activity").is_hidden())
+        self.page.locator("#theme-toggle").click()
+        self.assertEqual(
+            self.page.locator("html").get_attribute("data-theme"),
+            "dark",
+        )
+        self.assertIn(
+            "invert",
+            self.page.locator(".house-map-tile").first.evaluate(
+                "(tile) => getComputedStyle(tile).filter"
+            ),
+        )
+        self.page.wait_for_function(
+            "getComputedStyle(document.querySelector('.house-map-side')).backgroundColor !== 'rgb(255, 255, 255)'"
+        )
+        dark_map_colors = self.page.locator(
+            "#house-map-legend [data-map-stage-filter='not_started']"
+        ).evaluate(
+            """button => ({
+              background: getComputedStyle(button).backgroundColor,
+              color: getComputedStyle(button).color,
+              side: getComputedStyle(document.querySelector('.house-map-side')).backgroundColor,
+            })"""
+        )
+        self.assertNotEqual(dark_map_colors["background"], "rgb(255, 255, 255)")
+        self.assertNotEqual(dark_map_colors["side"], "rgb(255, 255, 255)")
+        self.page.locator("#theme-toggle").click()
+        not_started_filter = self.page.locator(
+            "#house-map-legend [data-map-stage-filter='not_started']"
+        )
+        not_started_filter.click()
+        self.assertEqual(
+            self.page.locator("#house-map-markers .house-map-marker").count(),
+            3,
+        )
+        self.assertEqual(
+            self.page.locator("#house-map-house-list [data-map-house-id]").count(),
+            3,
+        )
+        not_started_filter.click()
+        self.assertEqual(
+            self.page.locator("#house-map-markers .house-map-marker").count(),
+            4,
+        )
+        active_stage_one_filter = self.page.locator(
+            "#house-map-legend [data-map-stage-filter='active-1']"
+        )
+        active_stage_one_filter.click()
+        self.assertEqual(
+            self.page.locator("#house-map-markers .house-map-marker").count(),
+            3,
+        )
+        active_stage_one_filter.click()
+        self.assertEqual(
+            self.page.locator("#house-map-markers .house-map-marker").count(),
+            4,
+        )
+        self.page.locator("#house-map-markers [data-map-house-id='PENDING-ASSIGN']").click()
+        self.assertIn(
+            "PENDING-ASSIGN",
+            self.page.locator("#house-map-selection").inner_text(),
+        )
+        self.assertNotIn(
+            "materials",
+            self.page.locator("#page-houses").inner_text().lower(),
+        )
+        self.page.locator("#house-map-list-view").click()
+        self.assertTrue(self.page.locator("#assign-houses-dashboard").is_visible())
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        self.page.get_by_role("heading", name="READY-ASSIGN").wait_for()
+        self.page.locator("[data-assign-house-filter='closed']").click()
+        self.page.get_by_role("heading", name="CLOSED-ASSIGN").wait_for()
+        self.page.locator("[data-assign-house-filter='not_started']").click()
+        pending_card = self.page.locator(
+            "#houses-list [data-house-id='PENDING-ASSIGN']"
+        )
+        pending_card.locator(".house-insulation-summary").wait_for()
+        self.assertEqual(
+            pending_card.locator(".house-insulation-row").count(),
+            4,
+        )
+        for measure in (
+            "External Wall Insulation",
+            "Internal Wall Insulation",
+            "Attic (Loft) Insulation",
+            "Cavity Wall Insulation",
+        ):
+            self.assertTrue(
+                pending_card.locator(".house-insulation-row").filter(
+                    has_text=measure
+                ).count()
+            )
+        self.assertIn(
+            "DEMO DATA",
+            pending_card.locator(".house-insulation-demo-note").inner_text(),
+        )
+        self.assertIn("m²", pending_card.locator(".house-insulation-summary").inner_text())
+        self.assertNotIn(
+            "materials",
+            self.page.locator("#page-houses").inner_text().lower(),
+        )
+        self.page.evaluate("window.__logoClickToken = 'assign-dashboard'")
+        self.page.locator(".sidebar .brand").click()
+        self.assertEqual(
+            self.page.evaluate("window.__logoClickToken"),
+            "assign-dashboard",
+        )
+        self.assertTrue(self.page.locator("#go-overview").is_hidden())
+        self.assertEqual(self.browser_errors, [])
+
     def test_navigation_tour_reaches_every_workspace_view_without_saving(self):
         self.page.locator("#start-navigation-tour").click()
         tour = self.page.locator("#navigation-tour")
@@ -1353,6 +1581,56 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertAlmostEqual(map_button_box["width"], actions_box["width"] - 28, delta=3)
         self.assertTrue(actions.get_by_role("button", name="Mark house finished").is_visible())
         self.assertTrue(actions.get_by_role("button", name="View on map").is_visible())
+        self.assertEqual(self.browser_errors, [])
+
+    def test_active_house_card_has_readable_dark_mode_surfaces_and_actions(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, source)
+                VALUES ('ACTIVE-DARK-TEST', 'D01 TEST', 'Dark Active Owner', 'government')
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO houses(id, postcode, owner_name, is_finished)
+                VALUES ('ACTIVE-DARK-TEST', 'D01 TEST', 'Dark Active Owner', 0)
+                """
+            )
+        self.page.reload(wait_until="domcontentloaded")
+        if self.page.locator("html").get_attribute("data-theme") != "dark":
+            self.page.locator("#theme-toggle").click()
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="active"]').click()
+        card = self.page.locator(
+            '#houses-list.house-grid-active > .house-active:has(h2:text("ACTIVE-DARK-TEST"))'
+        )
+        card.wait_for()
+        actions = card.locator(".house-card-actions")
+        workflow = card.locator(".house-workflow")
+        movement_button = actions.get_by_role("button", name="＋ Record movement")
+        active_step = card.locator(".house-workflow-steps li.current > span")
+        self.assertEqual(
+            card.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(28, 41, 36)",
+        )
+        self.assertEqual(
+            workflow.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(36, 53, 45)",
+        )
+        self.assertEqual(
+            actions.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(25, 37, 33)",
+        )
+        self.assertEqual(
+            movement_button.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(38, 115, 79)",
+        )
+        self.assertEqual(
+            active_step.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(38, 115, 79)",
+        )
+        self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
         self.assertEqual(self.browser_errors, [])
 
     def test_closed_house_cards_fit_their_content(self):

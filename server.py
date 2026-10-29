@@ -2552,6 +2552,21 @@ class RequestHandler(BaseHTTPRequestHandler):
         if user is None:
             self._send_json(401, {"error": "Sign in to continue."})
             return None
+        path = urlparse(self.path).path
+        if user["role"] == "assign" and path in {
+            "/api/calculator/requests",
+            "/api/import",
+            "/api/materials",
+            "/api/movements",
+            "/api/movements/batch",
+            "/api/stocktakes",
+            "/api/houses/status",
+        }:
+            self._send_json(
+                403,
+                {"error": "Assign accounts cannot access material information."},
+            )
+            return None
         if user["role"] == "surveyor":
             allowed = self.command == "GET" and self.path.split("?", 1)[0] == "/api/calculator/houses"
             allowed = allowed or (
@@ -2722,6 +2737,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/brusna-curious-cat-logo.png":
             self._send_file(STATIC_DIR / "brusna-curious-cat-logo.png", "image/png")
         elif path == "/calculator":
+            user = self._current_user()
+            if user is not None and user["role"] == "assign":
+                self._send_json(
+                    403,
+                    {"error": "Assign accounts cannot access material information."},
+                )
+                return
             self._send_file(ROOT / "Auto_calc.html", "text/html; charset=utf-8")
         elif path == "/api/calculator/houses":
             user = self._login_required()
@@ -2812,13 +2834,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if user["role"] in {"admin", "surveyor"}:
                     house["seai_details"] = seai_details.get(row["id"])
                 raw_survey = house.pop("survey_data", None)
-                house["survey"] = json.loads(raw_survey) if raw_survey else None
+                if user["role"] == "assign":
+                    house["survey"] = bool(raw_survey)
+                else:
+                    house["survey"] = json.loads(raw_survey) if raw_survey else None
                 house["snags"] = snags.get(row["id"], [])
                 house.update(
                     house_audit.get(
                         row["id"], {"status_history": [], "last_movement": None}
                     )
                 )
+                if user["role"] == "assign":
+                    house.pop("last_movement", None)
+                    house["activity_history"] = [
+                        entry
+                        for entry in house.get("activity_history", [])
+                        if entry.get("type") not in {"movement", "material_request"}
+                    ]
                 houses.append(house)
             self._send_json(200, {"houses": houses})
         elif path == "/api/house-documents":
@@ -3118,6 +3150,22 @@ class RequestHandler(BaseHTTPRequestHandler):
             with connect_db() as db:
                 db.execute("BEGIN")
                 dashboard = _dashboard(db)
+            if user["role"] == "assign":
+                dashboard["materials"] = []
+                dashboard["movements"] = []
+                dashboard["teams"] = []
+                dashboard["locations"] = [
+                    location
+                    for location in dashboard["locations"]
+                    if not location.startswith("warehouse")
+                ]
+                for house in dashboard["house_list"]:
+                    house.pop("last_movement", None)
+                    house["activity_history"] = [
+                        entry
+                        for entry in house.get("activity_history", [])
+                        if entry.get("type") not in {"movement", "material_request"}
+                    ]
             self._send_json(200, dashboard)
         elif path == "/api/weather":
             user = self._login_required()

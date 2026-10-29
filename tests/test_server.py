@@ -158,6 +158,128 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_assign_cannot_view_material_data_or_access_material_endpoints(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "assign-test-admin",
+                    "display_name": "Assign Test Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            material_id = self.add_material("Restricted Board", opening=10)
+            self.add_movement(
+                material_id,
+                "collection",
+                2,
+                person="Test Person",
+                team="Test Team",
+            )
+            with server.connect_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                    VALUES ('ASSIGN-HOUSE', 'A00 0000', 'Test Owner', 1)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                    VALUES (?, ?, '', 'Test User', '2026-10-29T08:00:00')
+                    """,
+                    (
+                        "ASSIGN-HOUSE",
+                        json.dumps(
+                            {
+                                "perimeter_m": 21,
+                                "windows": [{"w": 1, "h": 1, "qty": 2}],
+                            }
+                        ),
+                    ),
+                )
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "assign-test-user",
+                    "display_name": "Assign Test User",
+                    "pin": "234567",
+                    "role": "assign",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, assign_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "assign-test-user", "pin": "234567"},
+            )
+            self.assertEqual(status, 200)
+
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=assign_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(dashboard["materials"], [])
+            self.assertEqual(dashboard["movements"], [])
+            self.assertNotIn("Restricted Board", json.dumps(dashboard))
+            self.assertNotIn("warehouse", dashboard["locations"])
+
+            status, admin_dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(admin_dashboard["materials"][0]["name"], "Restricted Board")
+
+            status, houses_result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/calculator/houses?status=all",
+                cookie=assign_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertIs(houses_result["houses"][0]["survey"], True)
+            self.assertIsNone(houses_result["houses"][0]["perimeter_m"])
+            self.assertNotIn('"windows":', json.dumps(houses_result))
+            self.assertNotIn("Restricted Board", json.dumps(houses_result))
+
+            for path in (
+                "/api/movements",
+                "/api/calculator/requests?house_id=H-1",
+                "/calculator",
+            ):
+                status, result, _ = self.http_request(
+                    httpd, "GET", path, cookie=assign_cookie
+                )
+                self.assertEqual(status, 403, path)
+                self.assertIn("cannot access material information", result["error"])
+
+            for path in (
+                "/api/movements",
+                "/api/movements/batch",
+                "/api/materials",
+                "/api/stocktakes",
+                "/api/calculator/requests",
+                "/api/import",
+                "/api/houses/status",
+            ):
+                status, result, _ = self.http_request(
+                    httpd, "POST", path, {}, assign_cookie
+                )
+                self.assertEqual(status, 403, path)
+                self.assertIn("cannot access material information", result["error"])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def start_test_server(self):
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RequestHandler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)

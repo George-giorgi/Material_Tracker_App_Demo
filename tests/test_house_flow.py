@@ -3351,7 +3351,7 @@ class UiWiringTests(unittest.TestCase):
     def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
         self.assertIn('${!isReady ? `<button class="text-button plan-ready-toggle"', APP_JS)
         self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
-        self.assertIn("seaiInsulationSummaryHtml(h.seai_details)", APP_JS)
+        self.assertIn("seaiInsulationSummaryHtml(h.seai_details, h.id)", APP_JS)
         self.assertIn("View Surveyor room", APP_JS)
         self.assertIn('id="survey-room-seai-details"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
 
@@ -3964,7 +3964,7 @@ console.log(JSON.stringify([
             'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-card-actions .seai-activate {',
             css,
         )
-        self.assertIn('href="/app.css?v=20261028-1542"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        self.assertIn('href="/app.css?v=20261028-1543"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
 
     def test_active_house_cards_have_equal_height_and_scroll_overflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -4099,13 +4099,16 @@ console.log(JSON.stringify([
         ):
             self.assertIn(element, html)
         legend = html[html.index('class="house-map-legend"'):html.index("</div>", html.index('class="house-map-legend"'))]
-        self.assertIn("Not started · mapped", legend)
-        self.assertNotIn("Closed", legend)
+        self.assertIn('data-map-stage-filter="not_started"', legend)
+        self.assertIn('data-map-stage-filter="closed"', legend)
+        self.assertIn("Closed", legend)
         self.assertIn("Ready for start", legend)
         self.assertIn("Active · Stage 1", legend)
         self.assertIn("Active · Stage 2", legend)
+        self.assertIn('role="group" aria-label="Filter map pins by house stage"', legend)
         self.assertIn('if (tile.dataset.houseView === "")', APP_JS)
-        self.assertIn('request("/api/calculator/houses?status=map")', APP_JS)
+        self.assertIn('const status = state.user?.role === "assign" ? "all" : "map"', APP_JS)
+        self.assertIn('request(`/api/calculator/houses?status=${status}`)', APP_JS)
         self.assertIn('request(`/api/calculator/houses?status=${mode}`)', APP_JS)
         self.assertIn(".house-map-layout { grid-template-columns: minmax(0, 1.8fr) minmax(310px, .82fr);", css)
         self.assertIn("scroll-snap-type: none", css)
