@@ -297,6 +297,19 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
+    def test_sidebar_brand_logo_is_slightly_larger_than_brand_area(self):
+        logo = self.page.locator(".sidebar .brand-logo")
+        self.page.wait_for_function(
+            "() => document.querySelector('.sidebar .brand-logo').naturalWidth > 0"
+        )
+        self.assertAlmostEqual(
+            logo.evaluate(
+                "(image) => image.getBoundingClientRect().width - image.parentElement.getBoundingClientRect().width"
+            ),
+            10,
+            delta=1,
+        )
+
     def test_dark_seai_insulation_measures_have_readable_scrollable_table(self):
         self.page.evaluate(
             """() => {

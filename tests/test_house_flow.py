@@ -3964,7 +3964,7 @@ console.log(JSON.stringify([
             'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-card-actions .seai-activate {',
             css,
         )
-        self.assertIn('href="/app.css?v=20261028-1125"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        self.assertIn('href="/app.css?v=20261028-1542"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
 
     def test_active_house_cards_have_equal_height_and_scroll_overflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
