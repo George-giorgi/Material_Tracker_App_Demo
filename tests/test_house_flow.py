@@ -524,6 +524,12 @@ class HouseDocumentHttpTests(HttpBase):
         )
         self.assertEqual(status, 403)
         self.assertIn("Surveyor access", result["error"])
+        status, result, _ = self.call(
+            "POST",
+            f"/api/house-documents/{document_id}/delete",
+            cookie=employee_cookie,
+        )
+        self.assertEqual(status, 403)
 
         status, result, _ = self.call(
             "GET",
@@ -531,6 +537,64 @@ class HouseDocumentHttpTests(HttpBase):
             cookie="",
         )
         self.assertEqual(status, 401)
+
+        status, result, _ = self.call(
+            "POST",
+            f"/api/house-documents/{document_id}/delete",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["filename"], "survey-plan.pdf")
+        status, result, _ = self.call(
+            "GET",
+            f"/api/house-documents?house_id=DOC-TEST",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["documents"], [])
+
+    def test_house_document_delete_requires_ready_inactive_house_and_reports_missing(self):
+        self.make_ready_house()
+        status, uploaded = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "survey-plan.pdf", b"%PDF-1.4\n"
+        )
+        self.assertEqual(status, 201)
+        document_id = uploaded["id"]
+
+        status, result, _ = self.call(
+            "POST", "/api/house-documents/999999/delete"
+        )
+        self.assertEqual(status, 404)
+
+        with server.connect_db() as db:
+            db.execute("INSERT INTO houses(id) VALUES ('DOC-TEST')")
+        status, result, _ = self.call(
+            "POST", f"/api/house-documents/{document_id}/delete"
+        )
+        self.assertEqual(status, 409)
+        with server.connect_db() as db:
+            db.execute("DELETE FROM houses WHERE id = 'DOC-TEST'")
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 0 WHERE id = 'DOC-TEST'"
+            )
+        status, result, _ = self.call(
+            "POST", f"/api/house-documents/{document_id}/delete"
+        )
+        self.assertEqual(status, 409)
+
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'DOC-TEST'"
+            )
+        status, result, _ = self.call(
+            "POST", f"/api/house-documents/{document_id}/delete"
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["filename"], "survey-plan.pdf")
+        status, result, _ = self.call(
+            "POST", f"/api/house-documents/{document_id}/delete"
+        )
+        self.assertEqual(status, 404)
 
     def test_uploaded_documents_are_view_only_after_house_leaves_ready_status(self):
         self.make_ready_house()
@@ -956,7 +1020,7 @@ class CalculatorApiTests(HttpBase):
                 "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'WH2131'"
             )
 
-        self.call(
+        surveyor_status, surveyor_created, _ = self.call(
             "POST",
             "/api/users",
             {
@@ -966,6 +1030,16 @@ class CalculatorApiTests(HttpBase):
                 "role": "surveyor",
             },
         )
+        self.assertEqual(surveyor_status, 201)
+        assignment_status, _, _ = self.call(
+            "POST",
+            "/api/house-assignments",
+            {
+                "house_id": "WH2131",
+                "surveyor_user_id": surveyor_created["user"]["id"],
+            },
+        )
+        self.assertEqual(assignment_status, 200)
         _, _, surveyor_cookie = self.call(
             "POST",
             "/api/auth/login",
@@ -976,7 +1050,10 @@ class CalculatorApiTests(HttpBase):
             "/api/calculator/houses?status=ready",
             cookie=surveyor_cookie,
         )
-        self.assertEqual(surveyor_result["houses"][0]["seai_details"], details)
+        surveyor_house = next(
+            house for house in surveyor_result["houses"] if house["id"] == "WH2131"
+        )
+        self.assertEqual(surveyor_house["seai_details"], details)
 
         self.call(
             "POST",
@@ -1795,9 +1872,11 @@ class EndToEndFlowTests(HttpBase):
         self.assertEqual(status, 200)
         self.assertTrue(saved["saved"])
         self.assertEqual(saved["survey"]["notes"], survey["notes"])
+        self.assertTrue(saved["updated_at"])
 
         _, listed, _ = self.call("GET", "/api/calculator/houses?q=WH-SURVEY-1")
         self.assertEqual(listed["houses"][0]["survey"], survey)
+        self.assertEqual(listed["houses"][0]["survey_updated_at"], saved["updated_at"])
         status, _, _ = self.call("POST", "/api/houses", {
             "id": "WH-SURVEY-1", "postcode": "T1", "owner_name": "Survey Owner",
             "employee_name": "Assigned Worker",
@@ -2818,6 +2897,67 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(self.listing("ready"), {})
         self.assertEqual(self.summary()["not_started"], 2)
 
+    def test_assign_can_only_mark_a_house_ready(self):
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "assign-house-user",
+                "display_name": "Assign House User",
+                "pin": "234567",
+                "role": "assign",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "assign-house-user", "pin": "234567"},
+        )
+        self.assertEqual(status, 200)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "WH1", "ready": True},
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "WH1", "ready": False},
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("only mark houses ready", result["error"])
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "WH2", "notes": "not allowed"},
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("only mark houses ready", result["error"])
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT ready_for_start FROM provided_houses WHERE id = 'WH1'"
+                ).fetchone()["ready_for_start"],
+                1,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT notes FROM provided_houses WHERE id = 'WH2'"
+                ).fetchone()["notes"],
+                "",
+            )
+        self.assertEqual(
+            self.call("GET", "/api/movements", cookie=assign_cookie)[0],
+            403,
+        )
+
     def test_newly_ready_house_is_first_in_ready_queue(self):
         with server.connect_db() as db:
             with db:
@@ -3195,6 +3335,566 @@ class ReadyForStartAndNotesTests(HttpBase):
 
     def test_unknown_house_has_no_checklist(self):
         self.assertEqual(self.call("GET", "/api/house-checklist/NOPE")[0], 404)
+
+
+class HouseRoleAssignmentTests(HttpBase):
+    def setUp(self):
+        super().setUp()
+        self.provide("ASSIGN-1", "T1", "1 Elm", "Assignment Owner")
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "assign-operator",
+                "display_name": "Assign Operator",
+                "pin": "234567",
+                "role": "assign",
+            },
+        )
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "house-surveyor",
+                "display_name": "House Surveyor",
+                "pin": "345678",
+                "role": "surveyor",
+            },
+        )
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "house-supervisor",
+                "display_name": "House Supervisor",
+                "pin": "456789",
+                "role": "supervisor",
+            },
+        )
+        _, _, self.assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "assign-operator", "pin": "234567"},
+        )
+        self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "ASSIGN-1", "ready": True},
+            cookie=self.assign_cookie,
+        )
+        with server.connect_db() as db:
+            self.surveyor_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'house-surveyor'"
+            ).fetchone()["id"]
+            self.supervisor_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'house-supervisor'"
+            ).fetchone()["id"]
+
+    def test_assign_dashboard_reports_surveyor_workload(self):
+        self.provide("ASSIGN-COMPLETED", "T2", "2 Elm", "Completed Owner")
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "available-surveyor",
+                "display_name": "Available Surveyor",
+                "pin": "654321",
+                "role": "surveyor",
+            },
+        )
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('ASSIGN-1', 'surveyor', ?, 'Assign Operator', '2026-10-29T10:00:00')
+                """,
+                (self.surveyor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('ASSIGN-COMPLETED', 'surveyor', ?, 'Assign Operator', '2026-10-29T10:00:00')
+                """,
+                (self.surveyor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, updated_by, updated_at)
+                VALUES ('ASSIGN-COMPLETED', '{}', 'House Surveyor', '2026-10-29T12:00:00')
+                """
+            )
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.assign_cookie
+        )
+        self.assertEqual(status, 200, dashboard)
+        workload = {
+            surveyor["name"]: surveyor
+            for surveyor in dashboard["surveyor_workload"]
+        }
+        self.assertEqual(
+            workload["House Surveyor"],
+            {
+                "user_id": self.surveyor_id,
+                "name": "House Surveyor",
+                "pending_house_ids": ["ASSIGN-1"],
+                "completed_count": 1,
+                "pending_count": 1,
+                "busy": True,
+            },
+        )
+        self.assertEqual(workload["Available Surveyor"]["pending_count"], 0)
+        self.assertFalse(workload["Available Surveyor"]["busy"])
+        self.assertNotIn("surveyor_workload", self.call("GET", "/api/dashboard")[1])
+
+    def test_change_revisions_track_dashboard_and_user_updates_separately(self):
+        before = self.call("GET", "/api/updates")[1]["revisions"]
+        self.provide("REVISION-TEST-1", "TR1", "1 Elm", "Revision Owner")
+        status, _, _ = self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "REVISION-TEST-1", "ready": True},
+        )
+        self.assertEqual(status, 200)
+        after_house = self.call("GET", "/api/updates")[1]["revisions"]
+        self.assertEqual(after_house["dashboard"], before["dashboard"] + 1)
+        self.assertEqual(after_house["movements"], before["movements"])
+        self.assertEqual(after_house["users"], before["users"])
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "revision-user",
+                "display_name": "Revision User",
+                "pin": "654321",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        after_user = self.call("GET", "/api/updates")[1]["revisions"]
+        self.assertEqual(after_user["dashboard"], after_house["dashboard"])
+        self.assertEqual(after_user["movements"], after_house["movements"])
+        self.assertEqual(after_user["users"], after_house["users"] + 1)
+
+    def test_surveyor_only_sees_ready_houses_assigned_to_their_account(self):
+        self.provide("ASSIGN-2", "T2", "2 Elm", "Second Owner")
+        self.provide("ASSIGN-3", "T3", "3 Elm", "Unassigned Owner")
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "second-surveyor",
+                "display_name": "Second Surveyor",
+                "pin": "654321",
+                "role": "surveyor",
+            },
+        )
+        with server.connect_db() as db:
+            second_surveyor_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'second-surveyor'"
+            ).fetchone()["id"]
+
+        for house_id in ("ASSIGN-1", "ASSIGN-2", "ASSIGN-3"):
+            status, result, _ = self.call(
+                "POST",
+                "/api/houses/plan",
+                {"id": house_id, "ready": True},
+            )
+            self.assertEqual(status, 200, result)
+
+        for house_id, surveyor_id in (
+            ("ASSIGN-1", self.surveyor_id),
+            ("ASSIGN-2", second_surveyor_id),
+        ):
+            status, result, _ = self.call(
+                "POST",
+                "/api/house-assignments",
+                {"house_id": house_id, "surveyor_user_id": surveyor_id},
+            )
+            self.assertEqual(status, 200, result)
+
+        _, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "house-surveyor", "pin": "345678"},
+        )
+        status, result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=all",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual([house["id"] for house in result["houses"]], ["ASSIGN-1"])
+
+    def test_assignment_dashboard_activation_prerequisites_and_material_restrictions(self):
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-assignments?house_id=ASSIGN-1",
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertFalse(result["requirements"]["has_survey"])
+        self.assertFalse(result["requirements"]["has_assigned_surveyor"])
+        self.assertEqual(len(result["users"]["surveyor"]), 1)
+        self.assertEqual(len(result["users"]["supervisor"]), 1)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-assignments",
+            {
+                "house_id": "ASSIGN-1",
+                "surveyor_user_id": self.surveyor_id,
+            },
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-assignments?house_id=ASSIGN-1",
+            cookie=self.assign_cookie,
+        )
+        self.assertTrue(result["requirements"]["has_assigned_surveyor"])
+        self.assertFalse(
+            any(assignment["role"] == "supervisor" for assignment in result["assignments"])
+        )
+
+        status, result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=ready",
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["houses"][0]["assigned_surveyor_name"], "House Surveyor")
+        self.assertTrue(result["houses"][0]["surveyor_assigned_at"])
+        self.assertNotIn("surveyor_assigned_by", result["houses"][0])
+        self.assertFalse(result["houses"][0]["survey"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses",
+            {"id": "ASSIGN-1", "supervisor_user_id": self.supervisor_id},
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Surveyor review", result["error"])
+
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (?, ?, '', 'House Surveyor', '2026-10-29T10:00:00')
+                """,
+                (
+                    "ASSIGN-1",
+                    json.dumps(
+                        {
+                            "windows": [],
+                            "doors": [],
+                            "house_corners": [],
+                            "notes": "",
+                        }
+                    ),
+                ),
+            )
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-assignments?house_id=ASSIGN-1",
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["requirements"]["has_survey"])
+        self.assertFalse(result["requirements"]["has_surveyed_perimeter"])
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses",
+            {"id": "ASSIGN-1", "supervisor_user_id": self.supervisor_id},
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("valid surveyed perimeter", result["error"])
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_surveys SET data = ? WHERE house_id = ?",
+                (
+                    json.dumps(
+                        {
+                            "windows": [],
+                            "doors": [],
+                            "house_corners": [],
+                            "notes": "",
+                            "perimeter_m": 42.5,
+                        }
+                    ),
+                    "ASSIGN-1",
+                ),
+            )
+        status, result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=ready",
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(result["houses"][0]["assigned_surveyor_name"], "House Surveyor")
+        self.assertTrue(result["houses"][0]["surveyor_assigned_at"])
+        self.assertNotIn("surveyor_assigned_by", result["houses"][0])
+        self.assertTrue(result["houses"][0]["survey"])
+        self.assertTrue(result["houses"][0]["has_assigned_surveyor"])
+        self.assertTrue(result["houses"][0]["has_surveyed_perimeter"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses",
+            {"id": "ASSIGN-1", "supervisor_user_id": self.surveyor_id},
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("active Supervisor", result["error"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses",
+            {"id": "ASSIGN-1", "supervisor_user_id": self.supervisor_id},
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 201, result)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/houses",
+                {
+                    "id": "ASSIGN-1",
+                    "supervisor_user_id": self.supervisor_id,
+                },
+                cookie=self.assign_cookie,
+            )[0],
+            409,
+        )
+        with server.connect_db() as db:
+            house = db.execute(
+                "SELECT employee_name FROM houses WHERE id = 'ASSIGN-1'"
+            ).fetchone()
+            survey = db.execute(
+                "SELECT updated_by, data FROM house_surveys WHERE house_id = 'ASSIGN-1'"
+            ).fetchone()
+            supervisor_assignment = db.execute(
+                """
+                SELECT user_id FROM house_role_assignments
+                WHERE house_id = 'ASSIGN-1' AND role = 'supervisor'
+                """
+            ).fetchone()
+        self.assertEqual(house["employee_name"], "House Supervisor")
+        self.assertEqual(survey["updated_by"], "House Surveyor")
+        self.assertEqual(json.loads(survey["data"])["perimeter_m"], 42.5)
+        self.assertEqual(supervisor_assignment["user_id"], self.supervisor_id)
+        self.assertEqual(self.call("GET", "/api/movements", cookie=self.assign_cookie)[0], 403)
+
+    def test_surveyor_can_be_assigned_before_house_is_ready(self):
+        self.provide("ASSIGN-NOT-READY", "T2", "2 Elm", "Pending Owner")
+
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-assignments?house_id=ASSIGN-NOT-READY",
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-assignments",
+            {
+                "house_id": "ASSIGN-NOT-READY",
+                "surveyor_user_id": self.surveyor_id,
+            },
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=not_started",
+            cookie=self.assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        house = next(
+            item for item in result["houses"] if item["id"] == "ASSIGN-NOT-READY"
+        )
+        self.assertEqual(house["assigned_surveyor_name"], "House Surveyor")
+        self.assertFalse(house["survey"])
+        self.assertNotIn("surveyor_assigned_by", house)
+        with server.connect_db() as db:
+            assignment = db.execute(
+                """
+                SELECT assigned_by FROM house_role_assignments
+                WHERE house_id = 'ASSIGN-NOT-READY' AND role = 'surveyor'
+                """
+            ).fetchone()
+        self.assertEqual(assignment["assigned_by"], "Assign Operator")
+
+    def test_only_admin_and_assign_users_can_manage_house_assignments(self):
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "ordinary-supervisor",
+                "display_name": "Ordinary Supervisor",
+                "pin": "567890",
+                "role": "supervisor",
+            },
+        )
+        _, _, supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ordinary-supervisor", "pin": "567890"},
+        )
+        self.assertEqual(
+            self.call(
+                "GET",
+                "/api/house-assignments?house_id=ASSIGN-1",
+                cookie=supervisor_cookie,
+            )[0],
+            403,
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-assignments",
+                {
+                    "house_id": "ASSIGN-1",
+                    "surveyor_user_id": self.surveyor_id,
+                    "supervisor_user_id": self.supervisor_id,
+                },
+                cookie=supervisor_cookie,
+            )[0],
+            403,
+        )
+
+    def test_supervisor_dashboard_is_scoped_and_can_assign_delivery_details(self):
+        self.provide("SUPERVISOR-OTHER", "T2", "2 Elm", "Other Owner")
+        self.provide("SUPERVISOR-UNASSIGNED", "T3", "3 Elm", "Unassigned Owner")
+        for username, display_name, is_active in (
+            ("teamlead-one", "Team Lead One", True),
+            ("teamlead-two", "Team Lead Two", True),
+            ("teamlead-inactive", "Inactive Team Lead", False),
+        ):
+            status, _, _ = self.call(
+                "POST",
+                "/api/users",
+                {
+                    "username": username,
+                    "display_name": display_name,
+                    "pin": "654321",
+                    "role": "teamlead",
+                },
+            )
+            self.assertEqual(status, 201)
+            if not is_active:
+                with server.connect_db() as db:
+                    db.execute(
+                        "UPDATE app_users SET is_active = 0 WHERE username = ?",
+                        (username,),
+                    )
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "other-supervisor",
+                "display_name": "Other Supervisor",
+                "pin": "567890",
+                "role": "supervisor",
+            },
+        )
+        with server.connect_db() as db:
+            self.other_supervisor_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'other-supervisor'"
+            ).fetchone()["id"]
+            with db:
+                server._upsert_house(db, "ASSIGN-1")
+                server._upsert_house(db, "SUPERVISOR-OTHER")
+                server._upsert_house(db, "SUPERVISOR-UNASSIGNED")
+                db.executemany(
+                    """
+                    INSERT INTO house_role_assignments
+                        (house_id, role, user_id, assigned_by, assigned_at)
+                    VALUES (?, 'supervisor', ?, 'Test Admin', '2026-10-29T10:00:00')
+                    """,
+                    (
+                        ("ASSIGN-1", self.supervisor_id),
+                        ("SUPERVISOR-OTHER", self.other_supervisor_id),
+                    ),
+                )
+        _, _, supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "house-supervisor", "pin": "456789"},
+        )
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=supervisor_cookie
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([house["id"] for house in dashboard["house_list"]], ["ASSIGN-1"])
+        self.assertEqual(dashboard["materials"], [])
+        self.assertEqual(dashboard["movements"], [])
+        self.assertEqual(dashboard["teams"], [])
+        self.assertEqual(dashboard["locations"], [])
+        self.assertEqual(dashboard["house_summary"]["active"], 1)
+        self.assertEqual(
+            dashboard["supervisor_assignment_options"]["delivery_people"],
+            ["Gary Lowther", "Karol", "Team Lead One", "Team Lead Two"],
+        )
+        self.assertEqual(
+            dashboard["supervisor_assignment_options"]["teams"],
+            ["Team Lead One", "Team Lead Two"],
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/supervisor/house-assignment",
+            {
+                "house_id": "ASSIGN-1",
+                "delivery_person": "Karol",
+                "delivery_team": "Crew North",
+            },
+            cookie=supervisor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["delivery_person"], "Karol")
+        self.assertEqual(result["delivery_team"], "Crew North")
+
+        _, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=supervisor_cookie
+        )
+        house = dashboard["house_list"][0]
+        self.assertEqual(house["delivery_person"], "Karol")
+        self.assertEqual(house["delivery_team"], "Crew North")
+
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/supervisor/house-assignment",
+                {
+                    "house_id": "SUPERVISOR-OTHER",
+                    "delivery_person": "Karol",
+                    "delivery_team": "Crew North",
+                },
+                cookie=supervisor_cookie,
+            )[0],
+            404,
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/supervisor/house-assignment",
+                {
+                    "house_id": "ASSIGN-1",
+                    "delivery_person": "Karol",
+                    "delivery_team": "Crew North",
+                },
+                cookie=self.cookie,
+            )[0],
+            403,
+        )
 
 
 class FrontEndLogicTests(unittest.TestCase):
@@ -3740,8 +4440,8 @@ console.log(JSON.stringify([
         self.assertIn('document.getElementById("per").value=perimeter??""', CALC_HTML)
 
     def test_saved_survey_is_marked_and_has_a_review_action(self):
-        self.assertIn("function surveyStatusBadge(survey)", APP_JS)
-        self.assertIn('class="status-pill survey-complete">Survey recorded', APP_JS)
+        self.assertIn("function surveyStatusBadge(survey, completedAt = \"\")", APP_JS)
+        self.assertIn('class="status-pill survey-complete">Survey completed', APP_JS)
         self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
         self.assertIn('${h.survey ? "survey-reviewed" : "survey-needed"}', APP_JS)
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -3919,7 +4619,7 @@ console.log(JSON.stringify([
         )
         self.assertIn(
             'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-body {\n'
-            '  flex: 1 0 auto;',
+            '  flex: 0 0 auto;',
             css,
         )
         self.assertIn('overflow: visible;', css[css.index(
@@ -3927,7 +4627,7 @@ console.log(JSON.stringify([
         ):])
         self.assertIn(
             'html[data-theme="dark"] #houses-list.house-grid-ready {\n'
-            '  grid-auto-rows: auto;',
+            '  grid-auto-rows: max-content;',
             css,
         )
         self.assertIn(
@@ -3964,7 +4664,9 @@ console.log(JSON.stringify([
             'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-card-actions .seai-activate {',
             css,
         )
-        self.assertIn('href="/app.css?v=20261028-1543"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        index_html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertRegex(index_html, r'href="/app\.css\?v=[^"]+"')
+        self.assertRegex(index_html, r'src="/app\.js\?v=[^"]+"')
 
     def test_active_house_cards_have_equal_height_and_scroll_overflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -4063,7 +4765,7 @@ console.log(JSON.stringify([
         self.assertIsNotNone(closed)
         self.assertEqual(
             re.findall(r'<button class="text-button ([^"]+)', not_started.group(1)),
-            ["plan-ready-toggle", "house-survey-open survey-needed"],
+            ["plan-ready-toggle"],
         )
         self.assertEqual(
             re.findall(r'<button class="text-button ([^"]+)', closed.group(1)),
@@ -4072,8 +4774,6 @@ console.log(JSON.stringify([
         ready_actions = re.search(r": `([\s\S]*?)`\}", not_started_actions)
         self.assertIsNotNone(ready_actions)
         self.assertNotIn("house-snags-open", ready_actions.group(1))
-        self.assertIn("h.area_m2", APP_JS)
-        self.assertIn("h.perimeter_m", APP_JS)
         self.assertIn('id="go-overview"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
         self.assertIn('$("#go-overview").addEventListener("click", goToHomeView)', APP_JS)
 

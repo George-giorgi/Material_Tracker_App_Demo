@@ -1,5 +1,6 @@
 """End-to-end browser test for the guided workspace navigation flow."""
 from io import BytesIO
+import http.client
 import json
 import tempfile
 import threading
@@ -108,6 +109,395 @@ class NavigationBrowserTests(unittest.TestCase):
     def active_page(self):
         return self.page.locator(".page.active").get_attribute("data-page")
 
+    def test_cross_user_updates_refresh_the_current_view_and_keep_other_views_stale(self):
+        self.page.wait_for_function(
+            "document.querySelector('#stat-ready').textContent !== '—'"
+        )
+        ready_count = self.page.locator("#stat-ready").inner_text()
+        self.page.evaluate(
+            """() => {
+                const originalFetch = window.fetch.bind(window);
+                window.__dashboardRequests = 0;
+                window.fetch = (input, options) => {
+                    if (String(input).startsWith("/api/dashboard")) {
+                        window.__dashboardRequests += 1;
+                    }
+                    return originalFetch(input, options);
+                };
+            }"""
+        )
+        self.page.locator(".nav-item[data-tab='inventory']").click()
+        self.assertEqual(self.active_page(), "inventory")
+
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name)
+                VALUES ('CROSS-USER-UPDATE-1', 'CU1', 'Cross User Owner')
+                """
+            )
+            server._insert_user(
+                db, "cross-user-admin", "Cross User Admin", "654321", "admin"
+            )
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request(
+            "POST",
+            "/api/auth/login",
+            body=json.dumps({"username": "cross-user-admin", "pin": "654321"}),
+            headers={"Content-Type": "application/json"},
+        )
+        login_response = connection.getresponse()
+        login_response.read()
+        self.assertEqual(login_response.status, 200)
+        other_user_cookie = login_response.getheader("Set-Cookie").split(";", 1)[0]
+        connection.request(
+            "POST",
+            "/api/houses/plan",
+            body=json.dumps({"id": "CROSS-USER-UPDATE-1", "ready": True}),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": other_user_cookie,
+            },
+        )
+        update_response = connection.getresponse()
+        update_response.read()
+        connection.close()
+        self.assertEqual(update_response.status, 200)
+
+        self.page.evaluate("pollTrackerChanges()")
+        self.assertEqual(self.active_page(), "inventory")
+        self.assertEqual(self.page.locator("#stat-ready").inner_text(), ready_count)
+        self.assertEqual(
+            self.page.evaluate("window.__dashboardRequests"),
+            1,
+        )
+
+        self.page.locator(".nav-item[data-tab='overview']").click()
+        self.page.wait_for_function(
+            f"document.querySelector('#stat-ready').textContent !== {json.dumps(ready_count)}"
+        )
+        self.assertEqual(
+            self.page.evaluate("window.__dashboardRequests"),
+            1,
+        )
+        self.assertEqual(self.browser_errors, [])
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-manage-users").click()
+        self.page.locator("#users-dialog[open]").wait_for()
+        other_connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        other_connection.request(
+            "POST",
+            "/api/users",
+            body=json.dumps(
+                {
+                    "username": "cross-user-surveyor",
+                    "display_name": "Cross User Surveyor",
+                    "pin": "345678",
+                    "role": "surveyor",
+                }
+            ),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": other_user_cookie,
+            },
+        )
+        user_response = other_connection.getresponse()
+        user_response.read()
+        other_connection.close()
+        self.assertEqual(user_response.status, 201)
+        self.page.evaluate("pollTrackerChanges()")
+        self.page.get_by_text("cross-user-surveyor", exact=True).wait_for()
+
+    def test_surveyor_gets_a_focused_assigned_houses_dashboard(self):
+        with server.connect_db() as db:
+            surveyor_id = server._insert_user(
+                db, "dashboard-surveyor", "Dashboard Surveyor", "345678", "surveyor"
+            )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, address, owner_name, ready_for_start)
+                VALUES ('DASHBOARD-1', 'T1', '1 Elm Road', 'Survey Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments(house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('DASHBOARD-1', 'surveyor', ?, 'Test Admin', '2026-10-29T10:00:00')
+                """,
+                (surveyor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, address, owner_name, ready_for_start)
+                VALUES ('DASHBOARD-2', 'T2', '2 Oak Road', 'Second Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments(house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('DASHBOARD-2', 'surveyor', ?, 'Test Admin', '2026-10-29T10:00:00')
+                """,
+                (surveyor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('DASHBOARD-2', ?, '', 'Dashboard Surveyor', '2026-10-29T10:30:00')
+                """,
+                (json.dumps({"windows": [], "doors": [], "house_corners": []}),),
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("dashboard-surveyor")
+        self.page.locator("#auth-pin").fill("345678")
+        self.page.locator("#auth-submit").click()
+
+        self.page.get_by_role("heading", name="My survey dashboard").wait_for()
+        self.page.locator("#surveyor-dashboard-summary").wait_for(state="visible")
+        logo = self.page.locator(".surveyor-brand img")
+        self.assertTrue(logo.is_visible())
+        self.assertGreater(logo.evaluate("(image) => image.naturalWidth"), 0)
+        self.assertEqual(self.page.locator(".surveyor-brand .surveyor-cat-eye").count(), 2)
+        mouse = self.page.locator(".surveyor-brand .surveyor-logo-mouse")
+        self.assertEqual(mouse.get_attribute("aria-hidden"), "true")
+        self.assertFalse(self.page.locator(".surveyor-brand").evaluate(
+            "(link) => link.classList.contains('has-new-information')"
+        ))
+        animation_names = self.page.locator(".surveyor-brand").evaluate(
+            """link => ({
+              eyes: getComputedStyle(link.querySelector(".surveyor-cat-eye")).animationName,
+              mouse: getComputedStyle(link.querySelector(".surveyor-logo-mouse")).animationName,
+              mouseIterationCount: getComputedStyle(link.querySelector(".surveyor-logo-mouse")).animationIterationCount,
+              mouseFontSize: getComputedStyle(link.querySelector(".surveyor-logo-mouse")).fontSize,
+              mouseBackground: getComputedStyle(link.querySelector(".surveyor-logo-mouse")).backgroundColor
+            })"""
+        )
+        self.assertEqual(animation_names["eyes"], "none")
+        self.assertEqual(animation_names["mouse"], "none")
+        self.assertEqual(animation_names["mouseFontSize"], "19px")
+        self.assertEqual(animation_names["mouseBackground"], "rgb(255, 255, 255)")
+        self.assertIn("Welcome, Dashboard Surveyor", self.page.locator("#surveyor-dashboard-greeting").inner_text())
+        self.assertEqual(self.page.locator("#surveyor-stat-assigned").inner_text(), "2")
+        self.assertEqual(self.page.locator("#surveyor-stat-needed").inner_text(), "1")
+        self.assertEqual(self.page.locator("#surveyor-stat-complete").inner_text(), "1")
+        self.assertTrue(self.page.locator(".nav-item[data-tab='overview']").is_hidden())
+        self.page.evaluate(
+            """() => {
+              window.surveyorMouseAnimationStarts = 0;
+              document.querySelector(".surveyor-brand .surveyor-logo-mouse")
+                .addEventListener("animationstart", () => window.surveyorMouseAnimationStarts += 1);
+            }"""
+        )
+        self.page.evaluate("loadSurveyorHouses()")
+        self.assertFalse(self.page.locator(".surveyor-brand").evaluate(
+            "(link) => link.classList.contains('has-new-information')"
+        ))
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_surveys SET data = ? WHERE house_id = 'DASHBOARD-2'",
+                (json.dumps({"windows": [{"w": 1.2, "h": 1.1, "qty": 2}], "doors": [], "house_corners": []}),),
+            )
+        self.page.evaluate("loadSurveyorHouses()")
+        self.assertTrue(self.page.locator(".surveyor-brand").evaluate(
+            "(link) => link.classList.contains('has-new-information')"
+        ))
+        triggered_animation = self.page.locator(".surveyor-brand").evaluate(
+            """link => ({
+              eyes: getComputedStyle(link.querySelector(".surveyor-cat-eye")).animationName,
+              mouse: getComputedStyle(link.querySelector(".surveyor-logo-mouse")).animationName,
+              iterations: getComputedStyle(link.querySelector(".surveyor-logo-mouse")).animationIterationCount
+            })"""
+        )
+        self.assertEqual(triggered_animation["eyes"], "surveyor-cat-look")
+        self.assertEqual(triggered_animation["mouse"], "surveyor-mouse-run")
+        self.assertEqual(triggered_animation["iterations"], "1")
+        self.page.wait_for_function("window.surveyorMouseAnimationStarts === 1")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_surveys SET data = ? WHERE house_id = 'DASHBOARD-2'",
+                (json.dumps({"windows": [{"w": 1.6, "h": 1.5, "qty": 1}], "doors": [], "house_corners": []}),),
+            )
+        self.page.evaluate("loadSurveyorHouses()")
+        self.page.wait_for_function("window.surveyorMouseAnimationStarts === 2")
+        self.assertEqual(
+            self.page.locator(".surveyor-brand .surveyor-logo-mouse").evaluate(
+                "(mouse) => getComputedStyle(mouse).animationIterationCount"
+            ),
+            "1",
+        )
+        self.page.reload()
+        self.page.get_by_role("heading", name="My survey dashboard").wait_for()
+        self.page.locator("#houses-list article[data-house-id='DASHBOARD-1']").wait_for()
+        self.assertFalse(self.page.locator(".surveyor-brand").evaluate(
+            "(link) => link.classList.contains('has-new-information')"
+        ))
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_surveys SET data = ? WHERE house_id = 'DASHBOARD-2'",
+                (json.dumps({"windows": [{"w": 1.4, "h": 1.3, "qty": 1}], "doors": [], "house_corners": []}),),
+            )
+        self.page.reload()
+        self.page.get_by_role("heading", name="My survey dashboard").wait_for()
+        self.page.locator("#houses-list article[data-house-id='DASHBOARD-1']").wait_for()
+        self.assertTrue(self.page.locator(".surveyor-brand").evaluate(
+            "(link) => link.classList.contains('has-new-information')"
+        ))
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        card = self.page.locator("#houses-list article[data-house-id='DASHBOARD-1']")
+        self.assertTrue(card.is_visible())
+        insulation = card.locator(".house-insulation-summary")
+        self.assertTrue(insulation.is_visible())
+        self.assertIn("Sample insulation details", insulation.inner_text())
+        self.assertIn("DEMO SAMPLE", insulation.inner_text())
+        self.assertEqual(insulation.locator(".house-insulation-row").count(), 4)
+        self.assertEqual(
+            " ".join(card.locator(".surveyor-house-action").inner_text().split()),
+            "Start survey →",
+        )
+        self.assertEqual(
+            card.locator(".surveyor-house-action").get_attribute("aria-label"),
+            "Open Surveyor room for DASHBOARD-1",
+        )
+        button_layout = card.evaluate(
+            """element => {
+              const button = element.querySelector(".surveyor-house-action").getBoundingClientRect();
+              const bounds = element.getBoundingClientRect();
+              const details = element.querySelector(".house-insulation-summary").getBoundingClientRect();
+              return {
+                buttonWidth: button.width,
+                buttonBottom: button.bottom,
+                cardBottom: bounds.bottom,
+                detailsTop: details.top,
+                viewportHeight: window.innerHeight
+              };
+            }"""
+        )
+        self.assertGreater(button_layout["buttonWidth"], 0)
+        self.assertLessEqual(button_layout["buttonBottom"], button_layout["cardBottom"])
+        self.assertLess(button_layout["buttonBottom"], button_layout["viewportHeight"])
+        self.assertLess(button_layout["buttonBottom"], button_layout["detailsTop"])
+        self.assertEqual(
+            " ".join(self.page.locator("#houses-list article[data-house-id='DASHBOARD-2'] .surveyor-house-action").inner_text().split()),
+            "Review survey →",
+        )
+        completed_card = self.page.locator("#houses-list article[data-house-id='DASHBOARD-2']")
+        self.assertTrue(completed_card.evaluate("(element) => element.classList.contains('is-surveyed')"))
+        completed_badge = completed_card.locator(".status-pill.survey-complete")
+        self.assertEqual(completed_badge.inner_text(), "Survey completed · 29 Oct 2026")
+        self.assertIn("Survey saved by Dashboard Surveyor", completed_card.locator(".surveyor-house-update").inner_text())
+        light_badge_colors = completed_badge.evaluate(
+            """badge => ({
+              background: getComputedStyle(badge).backgroundColor,
+              color: getComputedStyle(badge).color
+            })"""
+        )
+        self.assertEqual(light_badge_colors["background"], "rgb(231, 246, 236)")
+        self.assertEqual(light_badge_colors["color"], "rgb(23, 107, 58)")
+        self.page.locator("#theme-toggle").click()
+        completed_colors = completed_card.evaluate(
+            """card => ({
+              cardBorder: getComputedStyle(card).borderTopColor,
+              badgeBackground: getComputedStyle(card.querySelector(".status-pill.survey-complete")).backgroundColor,
+              badgeColor: getComputedStyle(card.querySelector(".status-pill.survey-complete")).color,
+              updateColor: getComputedStyle(card.querySelector(".surveyor-house-update")).color
+            })"""
+        )
+        self.assertEqual(completed_colors["badgeBackground"], "rgb(32, 61, 42)")
+        self.assertEqual(completed_colors["badgeColor"], "rgb(185, 239, 198)")
+        self.page.locator("[data-surveyor-filter='completed']").click()
+        self.assertTrue(self.page.locator("#houses-list article[data-house-id='DASHBOARD-2']").is_visible())
+        self.assertFalse(card.is_visible())
+        self.page.locator("[data-surveyor-filter='all']").click()
+        requests = []
+        self.page.on("request", lambda request: requests.append(request.url))
+        self.page.evaluate("loadSurveyorHouses()")
+        card.wait_for(state="visible")
+        self.assertTrue(any("/api/calculator/houses?status=ready" in url for url in requests))
+        self.assertFalse(any("/api/dashboard" in url or "/api/movements" in url for url in requests))
+        self.assertNotIn("Live stock refresh failed", self.page.locator("#toast").inner_text())
+        self.page.locator("#refresh-surveyor-houses").click()
+        card.wait_for(state="visible")
+        self.page.locator(".surveyor-house-action").first.click()
+        self.page.locator("#surveyor-room:not(.hidden)").wait_for()
+        self.assertTrue(self.page.locator(".survey-room-nav a[href='#survey-room-work-plan']").is_visible())
+        self.assertTrue(self.page.locator("#surveyor-work-plan-form").is_visible())
+        self.assertTrue(self.page.locator("#house-survey-form").is_visible())
+        self.assertTrue(self.page.locator("#go-overview").is_hidden())
+        dark_styles = self.page.locator("#surveyor-room").evaluate(
+            """root => Object.fromEntries([
+              ['nav', '.survey-room-nav'],
+              ['navLink', '.survey-room-nav a'],
+              ['houseFact', '.survey-room-summary > div'],
+              ['workPlanRow', '.work-plan-row'],
+              ['upload', '.survey-document-upload'],
+              ['measurementHint', '.survey-room-form > .helper-text']
+            ].map(([key, selector]) => {
+              const style = getComputedStyle(root.querySelector(selector));
+              return [key, {background: style.backgroundColor, color: style.color}];
+            }))"""
+        )
+        self.assertEqual(dark_styles["navLink"]["background"], "rgb(38, 53, 47)")
+        self.assertEqual(dark_styles["houseFact"]["background"], "rgb(25, 38, 34)")
+        self.assertEqual(dark_styles["workPlanRow"]["background"], "rgb(25, 38, 34)")
+        self.assertEqual(dark_styles["upload"]["background"], "rgb(25, 38, 34)")
+        self.assertEqual(dark_styles["measurementHint"]["background"], "rgb(25, 42, 32)")
+        room_buttons = self.page.locator("#surveyor-room").evaluate(
+            """root => Object.fromEntries([
+              ['addRow', '.survey-add-row'],
+              ['saveNotes', '#surveyor-house-notes-form .survey-room-notes-actions > .button'],
+              ['saveSurvey', '.survey-room-form .dialog-actions > .button-primary']
+            ].map(([key, selector]) => {
+              const button = root.querySelector(selector);
+              const style = getComputedStyle(button);
+              return [key, {
+                height: button.getBoundingClientRect().height,
+                background: style.backgroundColor,
+                color: style.color
+              }];
+            }))"""
+        )
+        self.assertGreaterEqual(room_buttons["addRow"]["height"], 40)
+        self.assertGreaterEqual(room_buttons["saveNotes"]["height"], 44)
+        self.assertGreaterEqual(room_buttons["saveSurvey"]["height"], 44)
+        self.assertEqual(room_buttons["addRow"]["background"], "rgb(32, 55, 42)")
+        self.assertEqual(room_buttons["saveSurvey"]["background"], "rgb(35, 133, 91)")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        room_layout = self.page.locator("#surveyor-room").evaluate(
+            """root => {
+              const nav = getComputedStyle(root.querySelector(".survey-room-nav"));
+              const summary = getComputedStyle(root.querySelector(".survey-room-summary"));
+              const topbar = getComputedStyle(document.querySelector("body.surveyor-mode .topbar"));
+              const link = root.querySelector(".survey-room-nav a").getBoundingClientRect();
+              return {
+                navWrap: nav.flexWrap,
+                navOverflow: nav.overflowX,
+                navLinkHeight: link.height,
+                summaryColumns: summary.gridTemplateColumns,
+                topbarPadding: topbar.paddingTop,
+                topbarHeight: topbar.height
+              };
+            }"""
+        )
+        self.assertEqual(room_layout["navWrap"], "nowrap")
+        self.assertEqual(room_layout["navOverflow"], "auto")
+        self.assertGreaterEqual(room_layout["navLinkHeight"], 40)
+        self.assertEqual(len(room_layout["summaryColumns"].split()), 2)
+        self.assertEqual(room_layout["topbarPadding"], "8px")
+        self.assertEqual(room_layout["topbarHeight"], "64px")
+        self.assertLessEqual(
+            self.page.locator("body").evaluate("(element) => element.scrollWidth"),
+            self.page.evaluate("window.innerWidth"),
+        )
+        self.assertFalse(self.browser_errors, self.browser_errors)
+
     def test_assign_user_sees_house_dashboard_and_status_filters(self):
         with server.connect_db() as db:
             db.execute(
@@ -190,6 +580,13 @@ class NavigationBrowserTests(unittest.TestCase):
             ).get_attribute("aria-pressed"),
             "true",
         )
+        active_card = self.page.locator("#houses-list .house-active").filter(
+            has=self.page.locator("h2", has_text="ACTIVE-ASSIGN")
+        )
+        active_card.wait_for()
+        self.assertEqual(active_card.locator(".stage-switch").count(), 0)
+        self.assertEqual(active_card.locator(".house-note-open").count(), 0)
+        self.assertEqual(active_card.locator(".house-snags-open").count(), 0)
 
         self.assertTrue(
             self.page.locator("#assign-stat-seai").locator("..").locator(
@@ -327,6 +724,24 @@ class NavigationBrowserTests(unittest.TestCase):
             "materials",
             self.page.locator("#page-houses").inner_text().lower(),
         )
+        pending_card.locator(
+            '.plan-ready-toggle[data-ready="true"]'
+        ).click()
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        ready_card = self.page.locator(
+            "#houses-list article.house-card[data-house-id='PENDING-ASSIGN']"
+        )
+        ready_card.locator(".status-pill.ready").wait_for()
+        self.assertNotIn(
+            "Back to not started",
+            ready_card.inner_text(),
+        )
+        self.assertEqual(ready_card.locator(".house-card-actions .text-button").count(), 2)
+        self.assertTrue(ready_card.locator(".assign-house-activate").is_disabled())
+        self.assertEqual(
+            ready_card.locator(".assign-house-team").inner_text(),
+            "Assign Surveyor",
+        )
         self.page.evaluate("window.__logoClickToken = 'assign-dashboard'")
         self.page.locator(".sidebar .brand").click()
         self.assertEqual(
@@ -334,6 +749,513 @@ class NavigationBrowserTests(unittest.TestCase):
             "assign-dashboard",
         )
         self.assertTrue(self.page.locator("#go-overview").is_hidden())
+        self.page.set_viewport_size({"width": 357, "height": 480})
+        mobile_nav_item = self.page.locator(".main-nav .nav-item:not(.hidden)")
+        mobile_nav_item.wait_for()
+        nav_layout = mobile_nav_item.evaluate(
+            """item => ({
+              direction: getComputedStyle(item).flexDirection,
+              width: item.getBoundingClientRect().width,
+              whiteSpace: getComputedStyle(item).whiteSpace,
+              scrollWidth: item.scrollWidth,
+              clientWidth: item.clientWidth,
+              navWidth: item.parentElement.getBoundingClientRect().width,
+              navTop: item.closest('.sidebar').getBoundingClientRect().top,
+              viewportHeight: window.innerHeight
+            })"""
+        )
+        self.assertEqual(nav_layout["direction"], "row")
+        self.assertEqual(nav_layout["whiteSpace"], "nowrap")
+        self.assertLessEqual(nav_layout["scrollWidth"], nav_layout["clientWidth"])
+        self.assertGreater(nav_layout["width"], 240)
+        self.assertLess(nav_layout["width"], nav_layout["navWidth"])
+        self.assertGreaterEqual(
+            nav_layout["navTop"],
+            nav_layout["viewportHeight"] - 61,
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_assign_dashboard_shows_surveyor_workload(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name)
+                VALUES ('WORKLOAD-PENDING', 'T1', 'Pending Owner'),
+                       ('WORKLOAD-COMPLETE', 'T2', 'Completed Owner')
+                """
+            )
+            server._insert_user(db, "workload-assign", "Cathy", "234567", "assign")
+            busy_surveyor_id = server._insert_user(
+                db, "workload-busy", "House Surveyor", "345678", "surveyor"
+            )
+            server._insert_user(
+                db, "workload-available", "Available Surveyor", "456789", "surveyor"
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('WORKLOAD-PENDING', 'surveyor', ?, 'Cathy', '2026-10-29T10:00:00'),
+                       ('WORKLOAD-COMPLETE', 'surveyor', ?, 'Cathy', '2026-10-29T10:00:00')
+                """,
+                (busy_surveyor_id, busy_surveyor_id),
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, updated_by, updated_at)
+                VALUES ('WORKLOAD-COMPLETE', '{}', 'House Surveyor', '2026-10-29T12:00:00')
+                """
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("workload-assign")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+
+        workload = self.page.locator("#assign-surveyor-workload")
+        workload.wait_for(state="visible")
+        busy_surveyor = self.page.locator(
+            "#assign-surveyor-workload-list .assign-surveyor-row"
+        ).filter(has_text="House Surveyor")
+        self.assertIn("Busy", busy_surveyor.inner_text())
+        self.assertIn("1 pending · 1 completed", busy_surveyor.inner_text())
+        self.assertIn("WORKLOAD-PENDING", busy_surveyor.inner_text())
+        available_surveyor = self.page.locator(
+            "#assign-surveyor-workload-list .assign-surveyor-row"
+        ).filter(has_text="Available Surveyor")
+        self.assertIn("Available", available_surveyor.inner_text())
+        self.assertIn("0 pending · 0 completed", available_surveyor.inner_text())
+
+        self.page.locator("#theme-toggle").click()
+        self.assertEqual(
+            workload.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(27, 39, 34)",
+        )
+        self.page.set_viewport_size({"width": 375, "height": 800})
+        self.assertLessEqual(
+            workload.evaluate("(element) => element.scrollWidth"),
+            workload.evaluate("(element) => element.clientWidth"),
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_assign_user_not_started_card_hides_surveyor_information(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name)
+                VALUES ('TEAM-PREASSIGN-1', 'T2', 'Pending Owner')
+                """
+            )
+            server._insert_user(
+                db, "preassign-assign", "Preassign Assign", "234567", "assign"
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("preassign-assign")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='not_started']").click()
+        card = self.page.locator(
+            "#houses-list article[data-house-id='TEAM-PREASSIGN-1']"
+        )
+        for width, expected_columns in (
+            (1280, 2),
+            (1024, 1),
+            (768, 1),
+            (390, 1),
+        ):
+            self.page.set_viewport_size({"width": width, "height": 900})
+            self.assertEqual(
+                self.page.locator("#houses-list").evaluate(
+                    "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+                ),
+                expected_columns,
+                f"Unexpected Not-started card columns at {width}px",
+            )
+            self.assertLessEqual(
+                card.evaluate("(element) => element.scrollWidth"),
+                card.evaluate("(element) => element.clientWidth"),
+                f"Not-started card overflows horizontally at {width}px",
+            )
+        self.assertFalse(card.locator(".house-assignment-summary").count())
+        self.assertNotIn("Surveyor", card.inner_text())
+        self.assertNotIn("Assigned by", card.inner_text())
+        ready_button = card.locator(".plan-ready-toggle[data-ready='true']")
+        self.assertEqual(card.locator(".house-card-actions button").count(), 1)
+        self.assertEqual(ready_button.inner_text(), "Mark ready for start")
+        self.assertFalse(card.locator(".assign-house-team").count())
+
+    def test_admin_not_started_card_has_only_mark_ready_action(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name)
+                VALUES ('ADMIN-PREASSIGN-1', 'T3', 'Admin Pending Owner')
+                """
+            )
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="not_started"]').click()
+        card = self.page.locator(
+            "#houses-list article[data-house-id='ADMIN-PREASSIGN-1']"
+        )
+        self.assertFalse(card.locator(".house-assignment-summary").count())
+        self.assertNotIn("Surveyor", card.inner_text())
+        self.assertEqual(card.locator(".house-card-actions button").count(), 1)
+        self.assertEqual(
+            card.locator(".plan-ready-toggle").inner_text(),
+            "Mark ready for start",
+        )
+        self.assertFalse(card.locator(".assign-house-team").count())
+        self.assertNotIn("Assigned by", card.inner_text())
+
+    def test_assign_user_selects_supervisor_from_account_cards(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES ('SUPERVISOR-PICKER-TEST', 'T1', 'Picker Owner', 1)
+                """
+            )
+            surveyor_id = server._insert_user(
+                db, "picker-surveyor", "Picker Surveyor", "345678", "surveyor"
+            )
+            supervisor_id = server._insert_user(
+                db, "picker-supervisor", "Picker Supervisor", "456789", "supervisor"
+            )
+            server._insert_user(db, "picker-assign", "Cathy", "234567", "assign")
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('SUPERVISOR-PICKER-TEST', 'surveyor', ?, 'Test Admin', '2026-10-29T10:00:00')
+                """,
+                (surveyor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (
+                    'SUPERVISOR-PICKER-TEST',
+                    '{"windows":[],"doors":[],"house_corners":[],"perimeter_m":42,"notes":""}',
+                    '', 'Picker Surveyor', '2026-10-29T10:30:00'
+                )
+                """
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("picker-assign")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        self.page.locator(
+            "#houses-list [data-house-id='SUPERVISOR-PICKER-TEST'] .assign-house-activate"
+        ).click()
+
+        dialog = self.page.locator("#assign-supervisor-dialog")
+        dialog.wait_for(state="visible")
+        self.page.set_viewport_size({"width": 390, "height": 740})
+        option = self.page.locator(
+            f'#activate-house-supervisor-options input[value="{supervisor_id}"]'
+        )
+        self.assertTrue(option.is_visible())
+        account_card = option.locator("..")
+        self.assertEqual(
+            account_card.locator(".supervisor-account-identity strong").inner_text(),
+            "Picker Supervisor",
+        )
+        self.assertEqual(
+            account_card.locator(".supervisor-account-identity small").inner_text(),
+            "@picker-supervisor",
+        )
+        self.assertEqual(
+            account_card.locator(".supervisor-account-avatar").inner_text(),
+            "PS",
+        )
+        self.assertLessEqual(
+            dialog.evaluate("(element) => element.scrollWidth"),
+            dialog.evaluate("(element) => element.clientWidth"),
+        )
+        self.assertFalse(self.page.locator("#confirm-house-activation").is_enabled())
+        option.check()
+        self.assertTrue(account_card.evaluate("(element) => element.classList.contains('selected')"))
+        self.assertEqual(
+            account_card.locator(".supervisor-account-status").inner_text(),
+            "Selected",
+        )
+        confirm = self.page.locator("#confirm-house-activation")
+        self.assertTrue(confirm.is_enabled())
+        self.assertGreaterEqual(confirm.bounding_box()["height"], 44)
+        confirm.click()
+        dialog.wait_for(state="hidden")
+        with server.connect_db() as db:
+            house = db.execute(
+                "SELECT employee_name FROM houses WHERE id = 'SUPERVISOR-PICKER-TEST'"
+            ).fetchone()
+        self.assertEqual(house["employee_name"], "Picker Supervisor")
+        self.assertEqual(self.browser_errors, [])
+
+    def test_cathy_assigns_house_to_surveyor_and_surveyor_completes_it(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES ('TEAM-ASSIGN-1', 'T1', 'Team Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+                VALUES ('TEAM-ASSIGN-1', 'ready', 'Cathy', '2026-10-29T11:00:00')
+                """
+            )
+            surveyor_id = server._insert_user(
+                db, "test-surveyor-one", "Surveyor One", "345678", "surveyor"
+            )
+            supervisor_id = server._insert_user(
+                db, "browser-supervisor", "Browser Supervisor", "456789", "supervisor"
+            )
+            server._insert_user(
+                db, "cathy-assign", "Cathy", "234567", "assign"
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("cathy-assign")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        card = self.page.locator(
+            "#houses-list article[data-house-id='TEAM-ASSIGN-1']"
+        )
+        self.assertEqual(
+            card.locator(".house-status-stack").inner_text(),
+            "Ready for start\nNot surveyed yet",
+        )
+        activate = card.locator(".assign-house-activate")
+        self.assertTrue(activate.is_disabled())
+        self.assertIn("Assign a Surveyor first", activate.get_attribute("title"))
+        self.assertEqual(card.locator(".assign-house-team").inner_text(), "Assign Surveyor")
+
+        card.locator(".assign-house-team").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
+        surveyor_option = self.page.locator(
+            f'#house-assignment-surveyor input[name="surveyor_user_id"][value="{surveyor_id}"]'
+        )
+        surveyor_option.check()
+        self.assertTrue(
+            self.page.get_by_text("Surveyor One", exact=True).is_visible()
+        )
+        self.assertTrue(self.page.get_by_text("@test-surveyor-one", exact=True).is_visible())
+        self.assertTrue(surveyor_option.is_checked())
+        self.assertEqual(
+            self.page.locator("#house-assignment-surveyor .selected").count(), 1
+        )
+        save = self.page.locator("#save-house-assignments")
+        self.assertTrue(save.is_enabled())
+        save.click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="hidden")
+        self.assertEqual(
+            self.page.locator(
+                "#assign-houses-dashboard [data-assign-house-filter='ready']"
+            ).get_attribute("aria-pressed"),
+            "true",
+        )
+        activate = self.page.locator(
+            "#houses-list [data-house-id='TEAM-ASSIGN-1'] .assign-house-activate"
+        )
+        self.page.wait_for_function(
+            """() => {
+              const button = document.querySelector(
+                "#houses-list [data-house-id='TEAM-ASSIGN-1'] .assign-house-activate"
+              );
+              return button && button.disabled
+                && button.title.includes("Waiting for the assigned Surveyor");
+            }"""
+        )
+        self.assertTrue(activate.is_disabled())
+        self.assertIn("Waiting for the assigned Surveyor", activate.get_attribute("title"))
+        assignment_audit = self.page.locator(
+            "#houses-list [data-house-id='TEAM-ASSIGN-1'] .house-audit-ready .house-audit-summary"
+        )
+        assignment_audit.get_by_text("Surveyor One", exact=True).wait_for()
+        audit_text = assignment_audit.inner_text().casefold()
+        self.assertIn("marked ready to start", audit_text)
+        self.assertIn("assigned surveyor", audit_text)
+        self.assertIn("Surveyor One", assignment_audit.inner_text())
+        assigned_surveyor_field = assignment_audit.locator(
+            ".house-audit-summary-field"
+        ).nth(1)
+        self.assertTrue(
+            assigned_surveyor_field.locator("small").inner_text().strip()
+        )
+        self.assertTrue(
+            assigned_surveyor_field.locator("small").inner_text().startswith("Assigned ")
+        )
+        ready_field_box = assignment_audit.locator(
+            ".house-audit-summary-field"
+        ).first.bounding_box()
+        assigned_field_box = assigned_surveyor_field.bounding_box()
+        self.assertLess(abs(ready_field_box["y"] - assigned_field_box["y"]), 10)
+        self.assertGreater(assigned_field_box["x"], ready_field_box["x"])
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        self.assertEqual(
+            assignment_audit.evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            2,
+        )
+        self.page.set_viewport_size({"width": 1024, "height": 768})
+        self.assertEqual(
+            self.page.locator("#houses-list").evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            1,
+        )
+        self.assertEqual(
+            assignment_audit.evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            2,
+        )
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertEqual(
+            assignment_audit.evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            1,
+        )
+        self.assertLessEqual(
+            assignment_audit.evaluate("(element) => element.scrollWidth"),
+            assignment_audit.evaluate("(element) => element.clientWidth"),
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
+        self.page.set_viewport_size({"width": 1024, "height": 768})
+        self.assertEqual(
+            self.page.locator("#houses-list").evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            1,
+        )
+        self.assertEqual(
+            assignment_audit.evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            2,
+        )
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertEqual(
+            assignment_audit.evaluate(
+                "(element) => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            1,
+        )
+        self.assertLessEqual(
+            assignment_audit.evaluate("(element) => element.scrollWidth"),
+            assignment_audit.evaluate("(element) => element.clientWidth"),
+        )
+        self.assertEqual(
+            self.page.locator(
+                "#houses-list [data-house-id='TEAM-ASSIGN-1'] .house-status-stack"
+            ).inner_text(),
+            "Ready for start\nNot surveyed yet",
+        )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("test-surveyor-one")
+        self.page.locator("#auth-pin").fill("345678")
+        self.page.locator("#auth-submit").click()
+        self.page.get_by_role("heading", name="My survey dashboard").wait_for()
+        surveyor_card = self.page.locator(
+            "#houses-list article[data-house-id='TEAM-ASSIGN-1']"
+        )
+        surveyor_card.wait_for()
+        surveyor_card.locator(".surveyor-house-action").click()
+        self.page.locator("#surveyor-room:not(.hidden)").wait_for()
+        self.page.locator("#survey-perimeter").fill("42.5")
+        self.page.locator("#house-survey-form button[type='submit']").click()
+        self.page.locator("#surveyor-room").wait_for(state="hidden")
+        with server.connect_db() as db:
+            survey = db.execute(
+                "SELECT updated_by, data FROM house_surveys WHERE house_id = ?",
+                ("TEAM-ASSIGN-1",),
+            ).fetchone()
+        self.assertEqual(survey["updated_by"], "Surveyor One")
+        self.assertEqual(json.loads(survey["data"])["perimeter_m"], 42.5)
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("cathy-assign")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        self.page.wait_for_function(
+            """() => {
+              const button = document.querySelector(
+                "#houses-list [data-house-id='TEAM-ASSIGN-1'] .assign-house-activate"
+              );
+              return button && !button.disabled;
+            }"""
+        )
+        self.assertTrue(
+            self.page.locator(
+                "#houses-list [data-house-id='TEAM-ASSIGN-1'] .status-pill.survey-complete"
+            ).inner_text().startswith("Survey completed")
+        )
+        self.page.locator(
+            "#houses-list [data-house-id='TEAM-ASSIGN-1'] .assign-house-activate"
+        ).click()
+        supervisor_dialog = self.page.locator("#assign-supervisor-dialog")
+        supervisor_dialog.wait_for(state="visible")
+        self.assertIn(
+            "TEAM-ASSIGN-1",
+            supervisor_dialog.locator("#assign-supervisor-house-label").inner_text(),
+        )
+        supervisor_option = self.page.locator(
+            f'#activate-house-supervisor-options input[value="{supervisor_id}"]'
+        )
+        self.assertTrue(supervisor_option.is_visible())
+        self.assertFalse(self.page.locator("#confirm-house-activation").is_enabled())
+        supervisor_option.check()
+        selected_supervisor = supervisor_option.locator("..")
+        self.assertTrue(selected_supervisor.evaluate("(option) => option.classList.contains('selected')"))
+        self.assertEqual(
+            selected_supervisor.locator(".supervisor-account-status").inner_text(),
+            "Selected",
+        )
+        self.assertTrue(self.page.locator("#confirm-house-activation").is_enabled())
+        self.page.locator("#confirm-house-activation").click()
+        self.page.locator(
+            "#houses-list article[data-house-id='TEAM-ASSIGN-1']"
+        ).wait_for(state="detached")
+        with server.connect_db() as db:
+            house = db.execute(
+                "SELECT employee_name FROM houses WHERE id = 'TEAM-ASSIGN-1'"
+            ).fetchone()
+        self.assertEqual(house["employee_name"], "Browser Supervisor")
+        self.assertEqual(
+            self.page.evaluate(
+                """async () => (await fetch('/api/movements')).status"""
+            ),
+            403,
+        )
+        self.assertNotIn(
+            "materials",
+            self.page.locator("#page-houses").inner_text().lower(),
+        )
         self.assertEqual(self.browser_errors, [])
 
     def test_navigation_tour_reaches_every_workspace_view_without_saving(self):
@@ -496,10 +1418,50 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         pending_card.wait_for()
         self.assertEqual(
+            pending_card.evaluate("(element) => getComputedStyle(element).backgroundImage"),
+            "linear-gradient(145deg, rgb(32, 45, 43) 0%, rgb(26, 37, 38) 100%)",
+        )
+        self.assertEqual(
+            pending_card.locator(".house-avatar").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(41, 58, 62)",
+        )
+        self.assertEqual(
+            pending_card.locator(".status-pill.pending").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(40, 58, 64)",
+        )
+        self.assertEqual(
+            pending_card.locator(".house-workflow").evaluate(
+                "(element) => getComputedStyle(element).backgroundImage"
+            ),
+            "linear-gradient(145deg, rgb(36, 51, 47), rgb(32, 46, 44))",
+        )
+        self.assertEqual(
             pending_card.locator(".house-workflow-heading strong").evaluate(
                 "(element) => getComputedStyle(element).color"
             ),
             "rgb(237, 245, 239)",
+        )
+        self.assertEqual(
+            pending_card.locator(".house-workflow-steps li.current > span").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(64, 93, 107)",
+        )
+        self.assertEqual(
+            pending_card.locator(".house-workflow-hint").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(175, 192, 187)",
+        )
+        self.assertEqual(
+            pending_card.locator(".plan-ready-toggle").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(242, 255, 246)",
         )
         self.page.locator("#house-detail").evaluate(
             "(element) => element.classList.remove('hidden')"
@@ -592,6 +1554,62 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(23, 33, 30)",
         )
 
+    def test_seai_original_and_annotated_pdfs_have_distinct_styles(self):
+        self.page.evaluate(
+            """() => {
+              const list = document.createElement("div");
+              list.innerHTML = `
+                <section class="seai-document-category">
+                  <div class="seai-document-entry is-original">
+                    <span class="seai-document-name">
+                      <span class="seai-document-status original">ORIGINAL PDF</span>
+                      plan.pdf
+                    </span>
+                  </div>
+                  <div class="seai-document-entry is-annotated">
+                    <span class="seai-document-name">
+                      <span class="seai-document-status annotated">ANNOTATED COPY</span>
+                      plan-annotated.pdf
+                    </span>
+                  </div>
+                </section>`;
+              document.querySelector(".app-shell").append(list);
+            }"""
+        )
+        original = self.page.locator(".seai-document-entry.is-original")
+        annotated = self.page.locator(".seai-document-entry.is-annotated")
+        self.assertEqual(original.locator(".seai-document-status").inner_text(), "ORIGINAL PDF")
+        self.assertEqual(annotated.locator(".seai-document-status").inner_text(), "ANNOTATED COPY")
+        light_colors = self.page.evaluate(
+            """() => Object.fromEntries(["original", "annotated"].map(kind => {
+              const row = document.querySelector(`.seai-document-entry.is-${kind}`);
+              const badge = row.querySelector(".seai-document-status");
+              return [kind, {
+                background: getComputedStyle(row).backgroundColor,
+                borderLeft: getComputedStyle(row).borderLeftColor,
+                badge: getComputedStyle(badge).backgroundColor
+              }];
+            }))"""
+        )
+        self.assertEqual(light_colors["original"]["background"], "rgb(241, 243, 245)")
+        self.assertEqual(light_colors["annotated"]["background"], "rgb(237, 245, 255)")
+        self.assertNotEqual(light_colors["original"]["borderLeft"], light_colors["annotated"]["borderLeft"])
+        self.assertEqual(light_colors["original"]["badge"], "rgb(71, 85, 105)")
+        self.assertEqual(light_colors["annotated"]["badge"], "rgb(37, 99, 235)")
+        self.page.evaluate('document.documentElement.dataset.theme = "dark"')
+        dark_colors = self.page.evaluate(
+            """() => Object.fromEntries(["original", "annotated"].map(kind => {
+              const row = document.querySelector(`.seai-document-entry.is-${kind}`);
+              return [kind, {
+                background: getComputedStyle(row).backgroundColor,
+                borderLeft: getComputedStyle(row).borderLeftColor
+              }];
+            }))"""
+        )
+        self.assertEqual(dark_colors["original"]["background"], "rgb(40, 50, 61)")
+        self.assertEqual(dark_colors["annotated"]["background"], "rgb(29, 53, 82)")
+        self.assertNotEqual(dark_colors["original"]["borderLeft"], dark_colors["annotated"]["borderLeft"])
+
     def test_dark_not_started_card_seai_insulation_summary_is_readable(self):
         self.page.evaluate(
             """() => {
@@ -619,7 +1637,6 @@ class NavigationBrowserTests(unittest.TestCase):
                         </div>
                         <div class="house-card-actions">
                             <button class="text-button plan-ready-toggle" data-ready="true">Mark ready for start</button>
-                            <button class="text-button house-survey-open survey-needed">View Surveyor room</button>
                         </div>
                     </article>`;
                 document.querySelector(".app-shell").append(list);
@@ -674,12 +1691,7 @@ class NavigationBrowserTests(unittest.TestCase):
             primary_action.evaluate("(el) => getComputedStyle(el).color"),
             "rgb(242, 255, 246)",
         )
-        self.assertEqual(
-            actions.locator(".house-survey-open").evaluate(
-                "(el) => getComputedStyle(el).backgroundColor"
-            ),
-            "rgb(34, 53, 68)",
-        )
+        self.assertEqual(actions.locator("button").count(), 1)
 
     def test_overview_shows_mayo_and_sligo_county_forecasts(self):
         status = self.page.locator("#weather-status")
@@ -847,11 +1859,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Ready Actor", card.inner_text())
         self.assertIn("Active Actor", card.inner_text())
         self.assertIn("Surveyor Name", card.inner_text())
-        self.assertTrue(
-            card.locator(".house-audit").evaluate(
-                "(audit) => Boolean(audit.compareDocumentPosition(audit.parentElement.querySelector('.house-property-details')) & Node.DOCUMENT_POSITION_FOLLOWING)"
-            )
-        )
+        self.assertEqual(card.locator(".house-property-details").count(), 0)
+        self.assertNotIn("Audit Test Address", card.inner_text())
         stage_one = card.locator('.stage-btn[data-stage="1"]')
         self.assertEqual(
             stage_one.evaluate("(element) => getComputedStyle(element).backgroundColor"),
@@ -1114,6 +2123,32 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
+    def test_house_team_filter_is_readable_in_dark_mode(self):
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator("#theme-toggle").click()
+        self.page.locator('[data-tab="houses"]').click()
+        filter_panel = self.page.locator("#house-team-filter")
+        filter_label = self.page.locator("#house-team-filter-label")
+        filter_panel.wait_for(state="visible")
+        self.assertEqual(
+            filter_panel.evaluate("(element) => getComputedStyle(element).backgroundImage"),
+            "linear-gradient(110deg, rgb(29, 43, 37), rgb(32, 46, 41))",
+        )
+        self.assertEqual(
+            filter_panel.evaluate("(element) => getComputedStyle(element).borderTopColor"),
+            "rgb(59, 85, 71)",
+        )
+        self.assertEqual(
+            filter_label.evaluate("(element) => getComputedStyle(element).color"),
+            "rgb(156, 224, 183)",
+        )
+        back_button = filter_panel.get_by_role("button", name="Back to houses & teams")
+        self.assertEqual(
+            back_button.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(37, 55, 47)",
+        )
+        self.assertEqual(self.browser_errors, [])
+
     def test_record_movement_prefills_assigned_employee_as_responsible_team(self):
         with server.connect_db() as db:
             server._upsert_house(
@@ -1212,6 +2247,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.reload(wait_until="domcontentloaded")
         self.page.locator('[data-house-view="ready"]').click()
         ready_card = self.page.locator('.house-card[data-house-id="MAP-READY"]')
+        ready_card.wait_for()
+        self.assertEqual(ready_card.locator(".house-property-details").count(), 0)
         ready_card.locator(".house-map-open").click()
         self.page.locator("#house-map-view").wait_for(state="visible")
         self.page.wait_for_function(
@@ -1339,7 +2376,7 @@ class NavigationBrowserTests(unittest.TestCase):
         audit = self.page.locator("#house-map-audit")
         audit_text = " ".join(audit.inner_text().split())
         self.assertIn("Marked ready to start Ready Actor", audit_text)
-        self.assertIn("Surveyor Survey Actor", audit_text)
+        self.assertNotIn("Surveyor Survey Actor", audit_text)
         self.assertIn("Activated by Activation Actor", audit_text)
         self.assertIn("Activation Actor", audit.inner_text())
         self.assertIn("Delivery handoff Latest Delivery Actor → Assigned Map Worker", audit_text)
@@ -1615,6 +2652,10 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(28, 41, 36)",
         )
         self.assertEqual(
+            card.evaluate("(element) => getComputedStyle(element).borderRadius"),
+            "12px",
+        )
+        self.assertEqual(
             workflow.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(36, 53, 45)",
         )
@@ -1630,6 +2671,119 @@ class NavigationBrowserTests(unittest.TestCase):
             active_step.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(38, 115, 79)",
         )
+        self.assertGreaterEqual(movement_button.bounding_box()["height"], 44)
+        self.assertEqual(
+            card.locator(".house-top").evaluate(
+                "(element) => getComputedStyle(element).borderBottomColor"
+            ),
+            "rgb(59, 80, 69)",
+        )
+        self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
+        self.assertEqual(self.browser_errors, [])
+
+    def test_ready_house_card_has_readable_dark_mode_surfaces_and_actions(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES ('READY-DARK-TEST', 'D01 TEST', 'Dark Ready Owner', 1)
+                """
+            )
+            server._record_house_status(
+                db, "READY-DARK-TEST", "ready", "Dark Ready Actor"
+            )
+        self.page.reload(wait_until="domcontentloaded")
+        if self.page.locator("html").get_attribute("data-theme") != "dark":
+            self.page.locator("#theme-toggle").click()
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="ready"]').click()
+        card = self.page.locator(
+            '#houses-list.house-grid-ready > .house-plan-ready:has(h2:text("READY-DARK-TEST"))'
+        )
+        card.wait_for()
+        workflow = card.locator(".house-workflow")
+        actions = card.locator(".house-card-actions")
+        audit_field = card.locator(".house-audit-summary-field").first
+        ready_status = card.locator(".status-pill.ready")
+        activate_button = actions.locator(".seai-activate")
+        self.assertEqual(
+            card.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(28, 41, 37)",
+        )
+        self.assertEqual(
+            workflow.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(32, 47, 41)",
+        )
+        self.assertEqual(
+            actions.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(23, 35, 31)",
+        )
+        self.assertEqual(
+            actions.evaluate("(element) => getComputedStyle(element).borderBottomLeftRadius"),
+            "14px",
+        )
+        self.assertEqual(
+            actions.evaluate("(element) => getComputedStyle(element).borderBottomRightRadius"),
+            "14px",
+        )
+        self.assertLess(card.bounding_box()["height"], 760)
+        self.assertEqual(
+            audit_field.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(36, 53, 43)",
+        )
+        self.assertEqual(
+            ready_status.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(32, 59, 44)",
+        )
+        self.assertEqual(
+            activate_button.evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(37, 52, 44)",
+        )
+        self.assertTrue(activate_button.is_disabled())
+        self.assertEqual(activate_button.inner_text(), "Survey required to activate")
+        self.assertAlmostEqual(
+            activate_button.bounding_box()["width"] / actions.bounding_box()["width"],
+            1,
+            delta=0.06,
+        )
+        self.assertLess(actions.bounding_box()["height"], 160)
+        card.hover()
+        self.page.wait_for_function(
+            """() => getComputedStyle(document.querySelector(
+              '#houses-list.house-grid-ready > .house-plan-ready'
+            )).borderTopColor === 'rgb(76, 130, 96)'"""
+        )
+        self.page.set_viewport_size({"width": 357, "height": 480})
+        self.page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        mobile_actions = card.locator(".house-card-actions").bounding_box()
+        mobile_actions_bottom = mobile_actions["y"] + mobile_actions["height"]
+        mobile_nav_top = self.page.locator(".sidebar").bounding_box()["y"]
+        self.assertLessEqual(mobile_actions_bottom, mobile_nav_top)
+        mobile_layout = card.evaluate(
+            """element => ({
+              headerDisplay: getComputedStyle(element.querySelector('.house-top')).display,
+              auditColumns: getComputedStyle(element.querySelector('.house-audit-summary')).gridTemplateColumns.split(' ').length,
+              statusColumn: getComputedStyle(element.querySelector('.house-status-stack')).gridColumn,
+              tableHeaderDisplay: getComputedStyle(element.querySelector('.house-insulation-header')).display,
+              measureColumns: getComputedStyle(element.querySelector('.house-insulation-row')).gridTemplateColumns.split(' ').length,
+              measureLabelColumn: getComputedStyle(element.querySelector('.house-insulation-row > strong')).gridColumn,
+              scrollWidth: element.scrollWidth,
+              clientWidth: element.clientWidth
+            })"""
+        )
+        self.assertEqual(mobile_layout["headerDisplay"], "grid")
+        self.assertEqual(mobile_layout["auditColumns"], 1)
+        self.assertEqual(mobile_layout["statusColumn"], "1 / -1")
+        self.assertEqual(mobile_layout["tableHeaderDisplay"], "none")
+        self.assertEqual(mobile_layout["measureColumns"], 2)
+        self.assertEqual(mobile_layout["measureLabelColumn"], "1 / -1")
+        self.assertLessEqual(mobile_layout["scrollWidth"], mobile_layout["clientWidth"])
+        self.page.set_viewport_size({"width": 320, "height": 640})
+        narrow_layout = card.evaluate(
+            "element => ({cardWidth: element.clientWidth, scrollWidth: element.scrollWidth, pageWidth: document.body.scrollWidth})"
+        )
+        self.assertLessEqual(narrow_layout["scrollWidth"], narrow_layout["cardWidth"])
+        self.assertLessEqual(narrow_layout["pageWidth"], 320)
         self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
         self.assertEqual(self.browser_errors, [])
 
@@ -2533,6 +3687,65 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#houses-overview").is_visible())
         self.assertEqual(self.browser_errors, [])
 
+    def test_surveyor_room_can_delete_pdfs_and_read_filenames_in_dark_mode(self):
+        house_id = "SURVEY-PDF-DELETE-TEST"
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, address, owner_name, "
+                "source, ready_for_start) VALUES (?, 'D01 TEST', '1 Test Road', "
+                "'Survey PDF Test', 'government', 1)",
+                (house_id,),
+            )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.locator('[data-house-view="ready"]').click()
+        self.page.locator(
+            f'.house-survey-open[data-house-id="{house_id}"]'
+        ).click()
+        self.page.locator("#survey-room-documents").wait_for(state="visible")
+
+        pdf_buffer = BytesIO()
+        pdf = canvas.Canvas(pdf_buffer)
+        pdf.drawString(72, 720, "PDF deletion test")
+        pdf.save()
+        self.page.locator("#house-document-file").set_input_files(
+            {
+                "name": "survey-delete-test.pdf",
+                "mimeType": "application/pdf",
+                "buffer": pdf_buffer.getvalue(),
+            }
+        )
+        self.page.locator("#house-document-form button[type='submit']").click()
+        document_link = self.page.get_by_role("link", name="survey-delete-test.pdf")
+        document_link.wait_for()
+        self.page.evaluate(
+            """() => {
+              if (document.documentElement.dataset.theme !== "dark") {
+                document.querySelector("#theme-toggle").click();
+              }
+            }"""
+        )
+        self.assertEqual(
+            document_link.locator(".house-document-copy strong").evaluate(
+                "element => getComputedStyle(element).color"
+            ),
+            "rgb(232, 240, 235)",
+        )
+
+        self.page.once("dialog", lambda dialog: dialog.accept())
+        self.page.locator(
+            '.house-document-delete[data-document-name="survey-delete-test.pdf"]'
+        ).click()
+        self.page.get_by_text("survey-delete-test.pdf deleted.").wait_for()
+        self.page.locator(".house-documents-empty").wait_for()
+        with server.connect_db() as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM house_documents WHERE house_id = ?",
+                (house_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+        self.assertEqual(self.browser_errors, [])
+
     def test_ready_card_only_shows_ready_and_survey_audit(self):
         with server.connect_db() as db:
             with db:
@@ -2574,6 +3787,156 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotIn("Active actor", audit_text)
         self.assertNotIn("Activated by", audit_text)
         self.assertNotIn("Not recorded", audit_text)
+        self.assertEqual(self.browser_errors, [])
+
+    def test_supervisor_sees_only_assigned_houses_and_saves_delivery_assignments(self):
+        with server.connect_db() as db:
+            with db:
+                supervisor_id = server._insert_user(
+                    db, "supervisor-one", "Supervisor One", "456789", "supervisor"
+                )
+                other_supervisor_id = server._insert_user(
+                    db, "supervisor-two", "Supervisor Two", "567890", "supervisor"
+                )
+                server._insert_user(
+                    db, "teamlead-one", "Team Lead One", "678901", "teamlead"
+                )
+                inactive_teamlead_id = server._insert_user(
+                    db,
+                    "teamlead-inactive",
+                    "Inactive Team Lead",
+                    "789012",
+                    "teamlead",
+                )
+                for house_id, owner in (
+                    ("SUPERVISOR-OWN", "Own House"),
+                    ("SUPERVISOR-OWN-2", "Second Own House"),
+                    ("SUPERVISOR-OTHER", "Other House"),
+                ):
+                    db.execute(
+                        """
+                        INSERT INTO provided_houses(id, owner_name, source)
+                        VALUES (?, ?, 'government')
+                        """,
+                        (house_id, owner),
+                    )
+                    server._upsert_house(db, house_id, owner_name=owner)
+                db.executemany(
+                    """
+                    INSERT INTO house_role_assignments
+                        (house_id, role, user_id, assigned_by, assigned_at)
+                    VALUES (?, 'supervisor', ?, 'Test Admin', '2026-10-29T10:00:00')
+                    """,
+                    (
+                        ("SUPERVISOR-OWN", supervisor_id),
+                        ("SUPERVISOR-OWN-2", supervisor_id),
+                        ("SUPERVISOR-OTHER", other_supervisor_id),
+                    ),
+                )
+                db.execute(
+                    """
+                    UPDATE houses
+                    SET delivery_person = 'Gary Lowther',
+                        delivery_team = 'Team Lead One'
+                    WHERE id = 'SUPERVISOR-OWN-2'
+                    """
+                )
+                db.execute(
+                    "UPDATE app_users SET is_active = 0 WHERE id = ?",
+                    (inactive_teamlead_id,),
+                )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("supervisor-one")
+        self.page.locator("#auth-pin").fill("456789")
+        self.page.locator("#auth-submit").click()
+        self.page.get_by_role("heading", name="My assigned houses").wait_for()
+
+        own_house = self.page.locator(
+            '#houses-list article[data-house-id="SUPERVISOR-OWN"]'
+        )
+        own_house.wait_for()
+        self.assertEqual(
+            self.page.locator(
+                '#houses-list article[data-house-id="SUPERVISOR-OTHER"]'
+            ).count(),
+            0,
+        )
+        self.assertFalse(self.page.locator('.nav-item[data-tab="inventory"]').is_visible())
+        self.assertEqual(
+            own_house.locator('select[name="delivery_person"] option').evaluate_all(
+                "(options) => options.map((option) => option.value).filter(Boolean)"
+            ),
+            ["Gary Lowther", "Karol", "Team Lead One"],
+        )
+        self.assertEqual(
+            own_house.locator('select[name="delivery_team"] option').evaluate_all(
+                "(options) => options.map((option) => option.value).filter(Boolean)"
+            ),
+            ["Team Lead One"],
+        )
+        own_house.locator('select[name="delivery_person"]').select_option("Karol")
+        own_house.locator('select[name="delivery_team"]').select_option("Team Lead One")
+        own_house.get_by_role("button", name="Save assignments").click()
+        self.page.get_by_text(
+            "Delivery assignments saved for SUPERVISOR-OWN."
+        ).wait_for()
+        self.assertEqual(
+            own_house.locator(".supervisor-assignment-status").inner_text(),
+            "Assigned",
+        )
+        self.assertEqual(
+            own_house.get_by_role("button", name="Saved").count(),
+            1,
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-stat-unassigned").inner_text(),
+            "0",
+        )
+        delivery_summary = self.page.locator("#supervisor-delivery-summary")
+        karol_summary = delivery_summary.locator(
+            ".supervisor-assignment-summary-row",
+            has_text="Karol",
+        )
+        self.assertIn("1 house", karol_summary.inner_text())
+        self.assertIn("SUPERVISOR-OWN", karol_summary.inner_text())
+        gary_summary = delivery_summary.locator(
+            ".supervisor-assignment-summary-row",
+            has_text="Gary Lowther",
+        )
+        self.assertIn("1 house", gary_summary.inner_text())
+        team_summary = self.page.locator("#supervisor-team-summary")
+        teamlead_summary = team_summary.locator(
+            ".supervisor-assignment-summary-row",
+            has_text="Team Lead One",
+        )
+        self.assertIn("2 houses", teamlead_summary.inner_text())
+        self.assertIn("SUPERVISOR-OWN-2", teamlead_summary.inner_text())
+        self.assertEqual(
+            team_summary.locator(".supervisor-assignment-summary-row").count(),
+            1,
+        )
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertLessEqual(
+            own_house.evaluate("(element) => element.scrollWidth"),
+            own_house.evaluate("(element) => element.clientWidth"),
+        )
+        self.assertLessEqual(
+            own_house.locator("select").evaluate_all(
+                "(elements) => Math.max(...elements.map((element) => element.scrollWidth - element.clientWidth))"
+            ),
+            0,
+        )
+
+        with server.connect_db() as db:
+            saved = db.execute(
+                "SELECT delivery_person, delivery_team FROM houses "
+                "WHERE id = 'SUPERVISOR-OWN'"
+            ).fetchone()
+        self.assertEqual(saved["delivery_person"], "Karol")
+        self.assertEqual(saved["delivery_team"], "Team Lead One")
         self.assertEqual(self.browser_errors, [])
 
 

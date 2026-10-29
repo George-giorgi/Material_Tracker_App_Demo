@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261029-0938">
+    <link rel="stylesheet" href="/app.css?v=20261029-1642">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -45,6 +45,7 @@
 
       <main class="main-content">
         <header class="topbar">
+          <a class="surveyor-brand" href="/" aria-label="BRUSNA Material Tracker home"><img src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat"><span class="surveyor-cat-eye surveyor-cat-eye-left" aria-hidden="true"></span><span class="surveyor-cat-eye surveyor-cat-eye-right" aria-hidden="true"></span><span class="surveyor-logo-mouse" aria-hidden="true">🐭</span></a>
           <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat"></a>
           <button class="button button-secondary overview-shortcut" id="go-overview" type="button" aria-label="Return to Overview">← Overview</button>
           <div class="topbar-spacer"></div>
@@ -116,7 +117,38 @@
 
         <section class="page" id="page-houses" data-page="houses">
           <div id="houses-overview">
-            <div class="page-heading"><div><div class="eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1 id="houses-page-title">Houses &amp; teams</h1><p class="page-subtitle" id="houses-page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div></div>
+            <div class="page-heading"><div><div class="eyebrow" id="houses-page-eyebrow">SITE ALLOCATION &amp; RESPONSIBILITY</div><h1 id="houses-page-title">Houses &amp; teams</h1><p class="page-subtitle" id="houses-page-subtitle">Search houses by ID, owner, employee or postcode, and see materials on site.</p></div></div>
+            <section id="surveyor-dashboard-summary" class="surveyor-dashboard-summary hidden" aria-label="Your survey workload">
+              <div class="surveyor-dashboard-message">
+                <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
+                <div><strong id="surveyor-dashboard-greeting">Your survey queue</strong><p>Only houses assigned to your account are shown here.</p></div>
+              </div>
+              <div class="surveyor-dashboard-stats" aria-live="polite" aria-atomic="true">
+                <div><strong id="surveyor-stat-assigned">0</strong><span>Assigned</span></div>
+                <div><strong id="surveyor-stat-needed">0</strong><span>Need a survey</span></div>
+                <div><strong id="surveyor-stat-complete">0</strong><span>Surveyed</span></div>
+              </div>
+            </section>
+            <section id="supervisor-dashboard-summary" class="surveyor-dashboard-summary hidden" aria-label="Your supervision workload">
+              <div class="surveyor-dashboard-message">
+                <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
+                <div><strong id="supervisor-dashboard-greeting">Your assigned houses</strong><p>Only houses assigned to your account appear here. Choose a delivery person and an active Teamlead for each house.</p></div>
+              </div>
+              <div class="surveyor-dashboard-stats" aria-live="polite" aria-atomic="true">
+                <div><strong id="supervisor-stat-assigned">0</strong><span>Assigned houses</span></div>
+                <div><strong id="supervisor-stat-unassigned">0</strong><span>Need delivery details</span></div>
+              </div>
+            </section>
+            <section id="supervisor-assignment-summary" class="supervisor-assignment-summary hidden" aria-label="House assignments by delivery person and Teamlead">
+              <article class="card supervisor-assignment-summary-group">
+                <div class="supervisor-assignment-summary-heading"><span class="supervisor-summary-icon" aria-hidden="true">↗</span><div><h2>Delivery people</h2><p>Houses assigned to each delivery person</p></div></div>
+                <div id="supervisor-delivery-summary" class="supervisor-assignment-summary-list"></div>
+              </article>
+              <article class="card supervisor-assignment-summary-group">
+                <div class="supervisor-assignment-summary-heading"><span class="supervisor-summary-icon" aria-hidden="true">⌂</span><div><h2>Assigned teams</h2><p>Houses assigned to each Teamlead</p></div></div>
+                <div id="supervisor-team-summary" class="supervisor-assignment-summary-list"></div>
+              </article>
+            </section>
             <div id="assign-houses-dashboard" class="kpi-row assign-house-kpis hidden" aria-label="House status dashboard">
               <button type="button" class="kpi seai" data-assign-house-filter="seai" aria-pressed="false"><span class="kpi-label"><svg class="assign-map-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 3v15m6-12v15" stroke="currentColor" stroke-width="1.5"/><path d="M12 7.2a2.1 2.1 0 0 0-2.1 2.1c0 1.5 2.1 3.8 2.1 3.8s2.1-2.3 2.1-3.8A2.1 2.1 0 0 0 12 7.2Z" fill="currentColor" stroke="white" stroke-width=".8"/></svg>From SEAI</span><span class="kpi-value" id="assign-stat-seai">0</span></button>
               <button type="button" class="kpi pending" data-assign-house-filter="not_started" aria-pressed="false"><span class="kpi-label">Not started</span><span class="kpi-value" id="assign-stat-not-started">0</span></button>
@@ -124,6 +156,13 @@
               <button type="button" class="kpi active" data-assign-house-filter="active" aria-pressed="true"><span class="kpi-label">Active houses</span><span class="kpi-value" id="assign-stat-active">0</span></button>
               <button type="button" class="kpi closed" data-assign-house-filter="closed" aria-pressed="false"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="assign-stat-closed">0</span></button>
             </div>
+            <section id="assign-surveyor-workload" class="assign-surveyor-workload hidden" aria-labelledby="assign-surveyor-workload-title">
+              <div class="assign-surveyor-workload-heading">
+                <div><h2 id="assign-surveyor-workload-title">Surveyor workload</h2><p>Busy means the surveyor has at least one assigned house without a saved survey.</p></div>
+                <span id="assign-surveyor-workload-count" aria-live="polite"></span>
+              </div>
+              <ul id="assign-surveyor-workload-list" class="assign-surveyor-workload-list"></ul>
+            </section>
             <div class="houses-teams-tabs" id="houses-teams-tabs" role="tablist" aria-label="Houses and teams views">
               <button class="houses-teams-tab active" id="houses-tab" type="button" role="tab" aria-selected="true" aria-controls="houses-section" tabindex="0">Houses</button>
               <button class="houses-teams-tab" id="teams-tab" type="button" role="tab" aria-selected="false" aria-controls="teams-section" tabindex="-1">Teams</button>
@@ -134,8 +173,14 @@
               <div><h2 id="houses-list-heading">Houses</h2></div>
               <div class="heading-actions">
                 <label class="search-box house-search-box"><span>⌕</span><input id="house-search" type="search" placeholder="Search houses" aria-label="Search houses"></label>
+                <button class="button button-secondary hidden" id="refresh-surveyor-houses" type="button" aria-label="Refresh assigned houses">↻ <span>Refresh</span></button>
                 <button class="button button-primary" id="open-house">＋ Active house</button>
               </div>
+            </div>
+            <div id="surveyor-house-filters" class="surveyor-house-filters hidden" role="group" aria-label="Filter assigned houses">
+              <button type="button" class="surveyor-house-filter active" data-surveyor-filter="all" aria-pressed="true">All <span id="surveyor-filter-all-count">0</span></button>
+              <button type="button" class="surveyor-house-filter" data-surveyor-filter="needed" aria-pressed="false">Needs survey <span id="surveyor-filter-needed-count">0</span></button>
+              <button type="button" class="surveyor-house-filter" data-surveyor-filter="completed" aria-pressed="false">Surveyed <span id="surveyor-filter-completed-count">0</span></button>
             </div>
             <div id="houses-list" class="house-grid"></div>
             <div class="empty-state card hidden" id="houses-no-results"><strong>No matching houses</strong><p>Try another house ID, owner, employee or postcode.</p></div>
@@ -222,6 +267,40 @@
               </form>
             </article>
           </section>
+          <section id="house-assignment-dashboard" class="hidden" aria-labelledby="house-assignment-title">
+            <button class="text-button back-button" id="back-from-house-assignments" type="button">← Back to houses</button>
+            <div class="page-heading house-detail-heading">
+              <div class="house-detail-title-group">
+                <div class="eyebrow">HOUSE TEAM</div>
+                <h1 id="house-assignment-title">Assign Surveyor</h1>
+                <p class="page-subtitle" id="house-assignment-subtitle"></p>
+              </div>
+            </div>
+            <form id="house-assignment-form" class="house-assignment-form">
+              <article class="card house-assignment-card">
+                <div class="house-assignment-role-icon" aria-hidden="true">S</div>
+                <div class="house-assignment-role-copy"><h2>Choose a Surveyor</h2><p>Select who will inspect this house. Their name will be shown on the house record.</p></div>
+                <fieldset class="surveyor-account-fieldset">
+                  <legend>Available Surveyors</legend>
+                  <div id="house-assignment-surveyor" class="surveyor-account-list" role="radiogroup" aria-label="Choose a Surveyor"></div>
+                </fieldset>
+              </article>
+              <p id="house-assignment-prerequisites" class="house-assignment-prerequisites" aria-live="polite"></p>
+              <div class="dialog-actions house-assignment-actions"><button class="button button-primary" id="save-house-assignments" type="submit" disabled>Save Surveyor</button></div>
+            </form>
+          </section>
+          <dialog id="assign-supervisor-dialog" class="dialog house-assignment-dialog">
+            <form id="activate-assigned-house-form">
+              <div class="dialog-heading"><div><div class="eyebrow">HOUSE ACTIVATION</div><h2>Assign a Supervisor</h2><p id="assign-supervisor-house-label">Choose the Supervisor responsible for this active house.</p></div><button class="icon-button close-dialog" type="button" aria-label="Close dialog">&times;</button></div>
+              <fieldset class="supervisor-picker">
+                <legend>Choose a Supervisor</legend>
+                <p class="supervisor-picker-hint">This person will be responsible for the active house.</p>
+                <div id="activate-house-supervisor-options" class="supervisor-account-list" role="radiogroup" aria-label="Choose a Supervisor"></div>
+              </fieldset>
+              <p class="helper-text">The selected Supervisor will be recorded on the house record.</p>
+              <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" id="confirm-house-activation" type="submit" disabled>Assign &amp; activate house</button></div>
+            </form>
+          </dialog>
           <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
             <div class="page-heading houses-list-toolbar">
               <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Explore houses with saved coordinates, or select a house to open its Eircode location in Google Maps.</p><div id="house-map-summary" class="house-map-summary" aria-live="polite"></div></div>
@@ -607,6 +686,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js" defer></script>
+    <script src="/app.js?v=20261029-1642" defer></script>
   </body>
 </html>

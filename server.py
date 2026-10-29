@@ -63,6 +63,42 @@ MET_EIREANN_WEATHER_CACHE_SECONDS = 15 * 60
 _met_eireann_weather_cache = None
 _met_eireann_weather_cache_expiry = 0
 _met_eireann_weather_lock = Lock()
+_change_revision_lock = Lock()
+_change_revisions = {
+    "dashboard": 0,
+    "documents": 0,
+    "movements": 0,
+    "users": 0,
+}
+
+
+def _record_change(path):
+    if path in {"/api/house-documents", "/api/seai-documents"} or re.fullmatch(
+        r"/api/(?:house|seai)-documents/\d+/annotations", path
+    ):
+        domain = "documents"
+    elif path in {"/api/seai-documents/share"} or re.fullmatch(
+        r"/api/house-documents/\d+/share|/api/seai-documents/\d+/share", path
+    ):
+        return
+    elif path == "/api/auth/setup":
+        domain = "users"
+    elif path == "/api/users":
+        domain = "users"
+    elif path.startswith("/api/auth/"):
+        return
+    else:
+        domain = "dashboard"
+
+    with _change_revision_lock:
+        _change_revisions[domain] += 1
+        if path in {"/api/movements", "/api/movements/batch"}:
+            _change_revisions["movements"] += 1
+
+
+def _change_revision_snapshot():
+    with _change_revision_lock:
+        return dict(_change_revisions)
 
 
 class ApiError(Exception):
@@ -625,6 +661,8 @@ def initialize_db():
                 postcode TEXT NOT NULL DEFAULT '',
                 owner_name TEXT NOT NULL DEFAULT '',
                 employee_name TEXT NOT NULL DEFAULT '',
+                delivery_person TEXT NOT NULL DEFAULT '',
+                delivery_team TEXT NOT NULL DEFAULT '',
                 is_finished INTEGER NOT NULL DEFAULT 0,
                 status_changed_at REAL NOT NULL DEFAULT 0
             );
@@ -853,6 +891,14 @@ def initialize_db():
             db.execute(
                 "ALTER TABLE houses ADD COLUMN employee_name TEXT NOT NULL DEFAULT ''"
             )
+        if "delivery_person" not in house_columns:
+            db.execute(
+                "ALTER TABLE houses ADD COLUMN delivery_person TEXT NOT NULL DEFAULT ''"
+            )
+        if "delivery_team" not in house_columns:
+            db.execute(
+                "ALTER TABLE houses ADD COLUMN delivery_team TEXT NOT NULL DEFAULT ''"
+            )
         if "stage" not in house_columns:
             db.execute("ALTER TABLE houses ADD COLUMN stage INTEGER NOT NULL DEFAULT 1")
         db.execute("UPDATE houses SET stage = 1 WHERE stage NOT IN (1, 2)")
@@ -866,6 +912,18 @@ def initialize_db():
                 area_m2 REAL,
                 perimeter_m REAL,
                 source TEXT NOT NULL DEFAULT 'tracker'
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_role_assignments (
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK (role IN ('surveyor', 'supervisor')),
+                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                assigned_by TEXT NOT NULL DEFAULT '',
+                assigned_at TEXT NOT NULL,
+                PRIMARY KEY (house_id, role)
             )
             """
         )
@@ -2138,7 +2196,8 @@ def _dashboard(db):
                 """
                 SELECT h.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
                        COALESCE(NULLIF(p.owner_name, ''), h.owner_name) AS owner_name,
-                       h.employee_name, p.address, p.source, p.area_m2, p.perimeter_m,
+                       h.employee_name, h.delivery_person, h.delivery_team,
+                       p.address, p.source, p.area_m2, p.perimeter_m,
                        p.latitude, p.longitude, h.is_finished,
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
                        COALESCE(hs.updated_by, '') AS survey_updated_by,
@@ -2160,6 +2219,45 @@ def _dashboard(db):
         ],
         "locations": sorted(known_locations(db)),
     }
+
+
+def _surveyor_workload_summary(db):
+    surveyors = {}
+    rows = db.execute(
+        """
+        SELECT u.id AS user_id, u.display_name, p.id AS house_id,
+               hs.house_id AS completed_house_id
+        FROM app_users u
+        LEFT JOIN house_role_assignments assignment
+          ON assignment.user_id = u.id AND assignment.role = 'surveyor'
+        LEFT JOIN provided_houses p ON p.id = assignment.house_id
+        LEFT JOIN house_surveys hs ON hs.house_id = p.id
+        WHERE u.role = 'surveyor' AND u.is_active = 1
+        ORDER BY u.display_name COLLATE NOCASE, p.id COLLATE NOCASE
+        """
+    )
+    for row in rows:
+        surveyor = surveyors.setdefault(
+            row["user_id"],
+            {
+                "user_id": row["user_id"],
+                "name": row["display_name"],
+                "pending_house_ids": [],
+                "completed_count": 0,
+            },
+        )
+        if row["house_id"] is None:
+            continue
+        if row["completed_house_id"] is None:
+            surveyor["pending_house_ids"].append(row["house_id"])
+        else:
+            surveyor["completed_count"] += 1
+    result = []
+    for surveyor in surveyors.values():
+        surveyor["pending_count"] = len(surveyor["pending_house_ids"])
+        surveyor["busy"] = surveyor["pending_count"] > 0
+        result.append(surveyor)
+    return result
 
 
 def _import_house_locations_csv(db, contents):
@@ -2455,6 +2553,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         print("%s - %s" % (self.address_string(), format_string % args), file=sys.stderr)
 
     def _send_json(self, status, payload, headers=()):
+        path = urlparse(self.path).path
+        if (
+            self.command == "POST"
+            and status < 400
+            and path.startswith("/api/")
+        ):
+            _record_change(path)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -2572,7 +2677,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             allowed = allowed or (
                 self.command == "GET"
                 and (
-                    urlparse(self.path).path == "/api/house-documents"
+                    urlparse(self.path).path == "/api/updates"
+                    or urlparse(self.path).path == "/api/house-documents"
                     or urlparse(self.path).path.startswith("/api/house-documents/")
                     or urlparse(self.path).path == "/api/seai-documents"
                     or urlparse(self.path).path.startswith("/api/seai-documents/")
@@ -2599,6 +2705,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.command == "POST"
                 and re.fullmatch(
                     r"/api/house-documents/\d+/annotations",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/house-documents/\d+/delete",
                     urlparse(self.path).path,
                 )
                 is not None
@@ -2772,6 +2886,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 """
             else:
                 ordering = "(h.is_finished = 1), p.id COLLATE NOCASE"
+            surveyor_assignment_filter = ""
+            if user["role"] == "surveyor":
+                surveyor_assignment_filter = """
+                    AND EXISTS (
+                        SELECT 1 FROM house_role_assignments surveyor_scope
+                        WHERE surveyor_scope.house_id = p.id
+                          AND surveyor_scope.role = 'surveyor'
+                          AND surveyor_scope.user_id = ?
+                    )
+                """
             like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             with connect_db() as db:
                 rows = db.execute(
@@ -2786,6 +2910,25 @@ class RequestHandler(BaseHTTPRequestHandler):
                            p.plan_plumber_required, p.plan_plumber_notes,
                            hs.data AS survey_data, hs.notes AS survey_notes,
                            hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
+                           assigned_surveyor.display_name AS assigned_surveyor_name,
+                           assigned_surveyor.is_active AS assigned_surveyor_is_active,
+                           surveyor_assignment.assigned_at AS surveyor_assigned_at,
+                           EXISTS (
+                               SELECT 1 FROM house_role_assignments assignment
+                               JOIN app_users assigned_user ON assigned_user.id = assignment.user_id
+                               WHERE assignment.house_id = p.id
+                                 AND assignment.role = 'surveyor'
+                                 AND assigned_user.is_active = 1
+                                 AND assigned_user.role = 'surveyor'
+                           ) AS has_assigned_surveyor,
+                           EXISTS (
+                               SELECT 1 FROM house_role_assignments assignment
+                               JOIN app_users assigned_user ON assigned_user.id = assignment.user_id
+                               WHERE assignment.house_id = p.id
+                                 AND assignment.role = 'supervisor'
+                                 AND assigned_user.is_active = 1
+                                 AND assigned_user.role = 'supervisor'
+                           ) AS has_assigned_supervisor,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
                                 WHEN h.is_finished = 1 THEN 'closed'
@@ -2793,9 +2936,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
+                    LEFT JOIN house_role_assignments surveyor_assignment
+                      ON surveyor_assignment.house_id = p.id
+                     AND surveyor_assignment.role = 'surveyor'
+                    LEFT JOIN app_users assigned_surveyor
+                      ON assigned_surveyor.id = surveyor_assignment.user_id
                     WHERE (p.id LIKE ? ESCAPE '\\' OR p.postcode LIKE ? ESCAPE '\\'
                        OR p.owner_name LIKE ? ESCAPE '\\' OR p.address LIKE ? ESCAPE '\\')
                       AND ({wanted or "1 = 1"})
+                      {surveyor_assignment_filter}
                     ORDER BY {ordering}
                     LIMIT ?
                     """,
@@ -2804,6 +2953,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         like,
                         like,
                         like,
+                        *([user["id"]] if user["role"] == "surveyor" else []),
                         500 if status_filter in {"all", "map"} or wanted else 20,
                     ),
                 ).fetchall()
@@ -2836,6 +2986,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raw_survey = house.pop("survey_data", None)
                 if user["role"] == "assign":
                     house["survey"] = bool(raw_survey)
+                    survey_data = json.loads(raw_survey) if raw_survey else {}
+                    try:
+                        survey_perimeter = float(survey_data.get("perimeter_m"))
+                    except (AttributeError, TypeError, ValueError, OverflowError):
+                        survey_perimeter = 0
+                    house["has_surveyed_perimeter"] = (
+                        math.isfinite(survey_perimeter)
+                        and 0 < survey_perimeter <= 10000
+                    )
                 else:
                     house["survey"] = json.loads(raw_survey) if raw_survey else None
                 house["snags"] = snags.get(row["id"], [])
@@ -2853,6 +3012,94 @@ class RequestHandler(BaseHTTPRequestHandler):
                     ]
                 houses.append(house)
             self._send_json(200, {"houses": houses})
+        elif path == "/api/house-assignments":
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "assign"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or Assign access is required to manage house assignments."},
+                )
+                return
+            house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
+            if not house_id:
+                self._send_json(400, {"error": "A house ID is required."})
+                return
+            with connect_db() as db:
+                house = db.execute(
+                    """
+                    SELECT p.id, p.address, p.postcode, p.owner_name, hs.data AS survey_data
+                    FROM provided_houses p
+                    LEFT JOIN houses h ON h.id = p.id
+                    LEFT JOIN house_surveys hs ON hs.house_id = p.id
+                    WHERE p.id = ? AND h.id IS NULL
+                    """,
+                    (house_id,),
+                ).fetchone()
+                if not house:
+                    self._send_json(404, {"error": "Available house was not found."})
+                    return
+                users = {
+                    role: [
+                        dict(row)
+                        for row in db.execute(
+                            """
+                            SELECT id, username, display_name
+                            FROM app_users
+                            WHERE role = ? AND is_active = 1
+                            ORDER BY display_name COLLATE NOCASE, username COLLATE NOCASE
+                            """,
+                            (role,),
+                        )
+                    ]
+                    for role in ("surveyor", "supervisor")
+                }
+                assignments = [
+                    dict(row)
+                    for row in db.execute(
+                        """
+                        SELECT assignment.role, user.id AS user_id, user.username,
+                               user.display_name, user.is_active, user.role AS account_role
+                        FROM house_role_assignments assignment
+                        JOIN app_users user ON user.id = assignment.user_id
+                        WHERE assignment.house_id = ?
+                        """,
+                        (house_id,),
+                    )
+                ]
+                raw_survey = house["survey_data"]
+                try:
+                    survey_data = json.loads(raw_survey) if raw_survey else {}
+                except (TypeError, json.JSONDecodeError):
+                    self._send_json(500, {"error": "Stored house survey data is invalid."})
+                    return
+            try:
+                perimeter = float(survey_data.get("perimeter_m"))
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                perimeter = 0
+            self._send_json(
+                200,
+                {
+                    "house": {
+                        key: house[key]
+                        for key in ("id", "address", "postcode", "owner_name")
+                    },
+                    "users": users,
+                    "assignments": assignments,
+                    "requirements": {
+                        "has_survey": bool(raw_survey),
+                        "has_surveyed_perimeter": math.isfinite(perimeter)
+                        and 0 < perimeter <= 10000,
+                        "has_assigned_surveyor": any(
+                            assignment["role"] == "surveyor"
+                            and assignment["is_active"]
+                            and assignment["account_role"] == "surveyor"
+                            for assignment in assignments
+                        ),
+                    },
+                },
+            )
         elif path == "/api/house-documents":
             user = self._login_required()
             if user is None:
@@ -3143,6 +3390,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "user": _public_user(user) if user else None,
                 },
             )
+        elif path == "/api/updates":
+            if self._login_required() is None:
+                return
+            self._send_json(200, {"revisions": _change_revision_snapshot()})
         elif path == "/api/dashboard":
             user = self._login_required()
             if user is None:
@@ -3150,6 +3401,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             with connect_db() as db:
                 db.execute("BEGIN")
                 dashboard = _dashboard(db)
+                if user["role"] == "assign":
+                    dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
             if user["role"] == "assign":
                 dashboard["materials"] = []
                 dashboard["movements"] = []
@@ -3166,6 +3419,63 @@ class RequestHandler(BaseHTTPRequestHandler):
                         for entry in house.get("activity_history", [])
                         if entry.get("type") not in {"movement", "material_request"}
                     ]
+            elif user["role"] == "supervisor":
+                with connect_db() as db:
+                    assigned_house_ids = {
+                        row["house_id"]
+                        for row in db.execute(
+                            """
+                            SELECT assignment.house_id
+                            FROM house_role_assignments assignment
+                            JOIN app_users assigned_user
+                              ON assigned_user.id = assignment.user_id
+                            WHERE assignment.role = 'supervisor'
+                              AND assignment.user_id = ?
+                              AND assigned_user.is_active = 1
+                              AND assigned_user.role = 'supervisor'
+                            """,
+                            (user["id"],),
+                        )
+                    }
+                    teamlead_names = [
+                        row["display_name"]
+                        for row in db.execute(
+                            """
+                            SELECT display_name FROM app_users
+                            WHERE role = 'teamlead' AND is_active = 1
+                            ORDER BY display_name COLLATE NOCASE
+                            """
+                        )
+                    ]
+                dashboard["house_list"] = [
+                    house
+                    for house in dashboard["house_list"]
+                    if house["id"] in assigned_house_ids
+                ]
+                active_houses = sum(
+                    not house["is_finished"] for house in dashboard["house_list"]
+                )
+                closed_houses = len(dashboard["house_list"]) - active_houses
+                dashboard["houses"] = active_houses
+                dashboard["house_summary"] = {
+                    "provided": len(dashboard["house_list"]),
+                    "active": active_houses,
+                    "closed": closed_houses,
+                    "ready": 0,
+                    "not_started": 0,
+                }
+                dashboard["materials"] = []
+                dashboard["movements"] = []
+                dashboard["teams"] = []
+                dashboard["team_house_counts"] = {}
+                dashboard["locations"] = []
+                dashboard["supervisor_assignment_options"] = {
+                    "delivery_people": sorted(
+                        {"Karol", "Gary Lowther", *teamlead_names},
+                        key=str.casefold,
+                    ),
+                    "teams": teamlead_names,
+                }
             self._send_json(200, dashboard)
         elif path == "/api/weather":
             user = self._login_required()
@@ -3487,6 +3797,49 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             user = self._login_required()
             if user is None:
+                return
+            house_document_delete_match = re.fullmatch(
+                r"/api/house-documents/(\d+)/delete", path
+            )
+            if house_document_delete_match:
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to delete house PDFs.",
+                    )
+                document_id = int(house_document_delete_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        document = db.execute(
+                            """
+                            SELECT d.filename
+                            FROM house_documents d
+                            JOIN provided_houses p ON p.id = d.house_id
+                            LEFT JOIN houses h ON h.id = p.id
+                            WHERE d.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (document_id,),
+                        ).fetchone()
+                        if document is None:
+                            exists = db.execute(
+                                "SELECT 1 FROM house_documents WHERE id = ?",
+                                (document_id,),
+                            ).fetchone()
+                            if exists is None:
+                                raise ApiError(404, "House PDF was not found.")
+                            raise ApiError(
+                                409,
+                                "House PDFs can only be deleted while the house is Ready for start and inactive.",
+                            )
+                        db.execute(
+                            "DELETE FROM house_documents WHERE id = ?",
+                            (document_id,),
+                        )
+                self._send_json(
+                    200,
+                    {"ok": True, "filename": document["filename"]},
+                )
                 return
             seai_share_match = re.fullmatch(r"/api/seai-documents/(\d+)/share", path)
             if seai_share_match:
@@ -3856,6 +4209,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 400,
                                 "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
                             )
+                        updated_at = datetime.now().isoformat(timespec="seconds")
                         db.execute("""
                             INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
                             VALUES (?, ?, ?, ?, ?)
@@ -3863,8 +4217,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                                 notes = excluded.notes, updated_by = excluded.updated_by,
                                 updated_at = excluded.updated_at
                         """, (house_id, json.dumps(survey, ensure_ascii=False), survey["notes"],
-                                  user["display_name"], datetime.now().isoformat(timespec="seconds")))
-                self._send_json(200, {"house_id": house_id, "saved": True, "survey": survey})
+                                  user["display_name"], updated_at))
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "saved": True,
+                        "survey": survey,
+                        "updated_at": updated_at,
+                    },
+                )
                 return
             if path == "/api/house-notes":
                 if user["role"] not in {"admin", "surveyor"}:
@@ -4052,7 +4414,27 @@ class RequestHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
-            if path not in {
+            if path == "/api/houses/plan":
+                if user["role"] not in {"admin", "assign"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or Assign access is required to update house readiness.",
+                    )
+            elif path == "/api/supervisor/house-assignment":
+                if user["role"] != "supervisor":
+                    raise ApiError(
+                        403,
+                        "Supervisor access is required to assign a delivery person and team.",
+                    )
+            elif path == "/api/house-assignments":
+                if user["role"] not in {"admin", "assign"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or Assign access is required to manage house assignments.",
+                    )
+            elif path == "/api/houses" and user["role"] == "assign":
+                pass
+            elif path not in {
                 "/api/movements",
                 "/api/movements/batch",
                 "/api/house-checklist",
@@ -4078,6 +4460,126 @@ class RequestHandler(BaseHTTPRequestHandler):
                             (user_id,),
                         ).fetchone()
                 self._send_json(201, {"user": _public_user(created)})
+            elif path == "/api/supervisor/house-assignment":
+                payload = self._json_body()
+                if not isinstance(payload, dict) or set(payload) != {
+                    "house_id",
+                    "delivery_person",
+                    "delivery_team",
+                }:
+                    raise ApiError(
+                        400,
+                        "House ID, delivery person, and team are required.",
+                    )
+                if not isinstance(payload["house_id"], str):
+                    raise ApiError(400, "Enter a valid house ID.")
+                house_id = payload["house_id"].strip()
+                if not house_id or len(house_id) > 120:
+                    raise ApiError(400, "Enter a valid house ID.")
+                delivery_person = payload["delivery_person"]
+                delivery_team = payload["delivery_team"]
+                if not isinstance(delivery_person, str) or not isinstance(
+                    delivery_team, str
+                ):
+                    raise ApiError(
+                        400, "Delivery person and team must be text."
+                    )
+                delivery_person = delivery_person.strip()
+                delivery_team = delivery_team.strip()
+                if len(delivery_person) > 120 or len(delivery_team) > 120:
+                    raise ApiError(
+                        400,
+                        "Delivery person and team must be 120 characters or fewer.",
+                    )
+                with connect_db() as db:
+                    with db:
+                        assigned = db.execute(
+                            """
+                            SELECT 1
+                            FROM house_role_assignments assignment
+                            JOIN houses house ON house.id = assignment.house_id
+                            WHERE assignment.house_id = ?
+                              AND assignment.role = 'supervisor'
+                              AND assignment.user_id = ?
+                            """,
+                            (house_id, user["id"]),
+                        ).fetchone()
+                        if not assigned:
+                            raise ApiError(
+                                404,
+                                "That house is not assigned to your Supervisor account.",
+                            )
+                        db.execute(
+                            """
+                            UPDATE houses
+                            SET delivery_person = ?, delivery_team = ?
+                            WHERE id = ?
+                            """,
+                            (delivery_person, delivery_team, house_id),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "delivery_person": delivery_person,
+                        "delivery_team": delivery_team,
+                    },
+                )
+            elif path == "/api/house-assignments":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "House assignments must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if set(payload) != {"house_id", "surveyor_user_id"}:
+                    raise ApiError(400, "Choose one active Surveyor account.")
+                try:
+                    if isinstance(payload["surveyor_user_id"], bool):
+                        raise ValueError
+                    surveyor_user_id = int(payload["surveyor_user_id"])
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ApiError(400, "Choose a valid Surveyor account.") from exc
+                now = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        available = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p
+                            LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND h.id IS NULL
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not available:
+                            raise ApiError(409, "Assignments can only be changed for houses that are not active.")
+                        assigned_user = db.execute(
+                            """
+                            SELECT id FROM app_users
+                            WHERE id = ? AND role = 'surveyor' AND is_active = 1
+                            """,
+                            (surveyor_user_id,),
+                        ).fetchone()
+                        if not assigned_user:
+                            raise ApiError(400, "Choose an active Surveyor account.")
+                        db.execute(
+                            """
+                            INSERT INTO house_role_assignments
+                                (house_id, role, user_id, assigned_by, assigned_at)
+                            VALUES (?, 'surveyor', ?, ?, ?)
+                            ON CONFLICT(house_id, role) DO UPDATE SET
+                                user_id = excluded.user_id,
+                                assigned_by = excluded.assigned_by,
+                                assigned_at = excluded.assigned_at
+                            """,
+                            (
+                                house_id,
+                                surveyor_user_id,
+                                user["display_name"],
+                                now,
+                            ),
+                        )
+                self._send_json(200, {"house_id": house_id, "saved": True})
             elif path in {"/api/movements", "/api/movements/batch"}:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -4424,6 +4926,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House details must be a JSON object.")
+                if user["role"] == "assign" and (
+                    set(payload) != {"id", "ready"} or payload.get("ready") is not True
+                ):
+                    raise ApiError(
+                        403,
+                        "Assign accounts can only mark houses ready for start.",
+                    )
                 house_id = str(payload.get("id") or "").strip()
                 with connect_db() as db:
                     with db:
@@ -4570,6 +5079,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                 house_id = str(payload.get("id") or "").strip()
                 if len(house_id) > 120:
                     raise ApiError(400, "House ID must be 120 characters or fewer.")
+                supervisor_user_id = None
+                if user["role"] == "assign":
+                    if set(payload) != {"id", "supervisor_user_id"}:
+                        raise ApiError(
+                            403,
+                            "Choose an active Supervisor to activate this house.",
+                        )
+                    try:
+                        if isinstance(payload["supervisor_user_id"], bool):
+                            raise ValueError
+                        supervisor_user_id = int(payload["supervisor_user_id"])
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        raise ApiError(400, "Choose a valid Supervisor account.") from exc
                 postcode = str(payload.get("postcode") or "").strip()
                 owner_name = str(payload.get("owner_name") or "").strip()
                 employee_name = str(payload.get("employee_name") or "").strip()
@@ -4578,6 +5100,96 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with connect_db() as db:
                     with db:
                         _require_ready_to_activate(db, house_id)
+                        if user["role"] == "assign":
+                            ready_house = db.execute(
+                                """
+                                SELECT 1 FROM provided_houses p
+                                LEFT JOIN houses h ON h.id = p.id
+                                WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                                """,
+                                (house_id,),
+                            ).fetchone()
+                            if not ready_house:
+                                raise ApiError(
+                                    409,
+                                    "Assign users can activate only houses marked Ready for start.",
+                                )
+                            surveyor = db.execute(
+                                """
+                                SELECT assigned_user.id
+                                FROM house_role_assignments assignment
+                                JOIN app_users assigned_user ON assigned_user.id = assignment.user_id
+                                WHERE assignment.house_id = ? AND assignment.role = 'surveyor'
+                                  AND assigned_user.is_active = 1
+                                  AND assigned_user.role = 'surveyor'
+                                """,
+                                (house_id,),
+                            ).fetchone()
+                            if not surveyor:
+                                raise ApiError(
+                                    409,
+                                    "Assign an active Surveyor before activating this house.",
+                                )
+                            supervisor = db.execute(
+                                """
+                                SELECT id, display_name FROM app_users
+                                WHERE id = ? AND role = 'supervisor' AND is_active = 1
+                                """,
+                                (supervisor_user_id,),
+                            ).fetchone()
+                            if not supervisor:
+                                raise ApiError(400, "Choose an active Supervisor account.")
+                            survey_row = db.execute(
+                                "SELECT data FROM house_surveys WHERE house_id = ?",
+                                (house_id,),
+                            ).fetchone()
+                            if not survey_row:
+                                raise ApiError(
+                                    409,
+                                    "Surveyor review is required before activation. Record the house survey first.",
+                                )
+                            try:
+                                survey_data = json.loads(survey_row["data"])
+                                perimeter = float(survey_data.get("perimeter_m"))
+                            except (
+                                AttributeError,
+                                TypeError,
+                                ValueError,
+                                OverflowError,
+                                json.JSONDecodeError,
+                            ):
+                                raise ApiError(
+                                    409,
+                                    "A valid surveyed perimeter is required before activation.",
+                                )
+                            if (
+                                not isinstance(survey_data, dict)
+                                or not math.isfinite(perimeter)
+                                or not (0 < perimeter <= 10000)
+                            ):
+                                raise ApiError(
+                                    409,
+                                    "A valid surveyed perimeter is required before activation.",
+                                )
+                            employee_name = supervisor["display_name"]
+                            payload["perimeter_m"] = perimeter
+                            db.execute(
+                                """
+                                INSERT INTO house_role_assignments
+                                    (house_id, role, user_id, assigned_by, assigned_at)
+                                VALUES (?, 'supervisor', ?, ?, ?)
+                                ON CONFLICT(house_id, role) DO UPDATE SET
+                                    user_id = excluded.user_id,
+                                    assigned_by = excluded.assigned_by,
+                                    assigned_at = excluded.assigned_at
+                                """,
+                                (
+                                    house_id,
+                                    supervisor["id"],
+                                    user["display_name"],
+                                    datetime.now().isoformat(timespec="seconds"),
+                                ),
+                            )
                         if not employee_name:
                             raise ApiError(
                                 400,
@@ -4605,17 +5217,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                             raise ApiError(500, "Stored house survey data is invalid.")
                         if not isinstance(survey_data, dict):
                             raise ApiError(500, "Stored house survey data is invalid.")
-                        survey_data["perimeter_m"] = perimeter
-                        db.execute(
-                            "UPDATE house_surveys SET data = ?, updated_by = ?, "
-                            "updated_at = ? WHERE house_id = ?",
-                            (
-                                json.dumps(survey_data, ensure_ascii=False),
-                                user["display_name"],
-                                datetime.now().isoformat(timespec="seconds"),
-                                house_id,
-                            ),
-                        )
+                        if user["role"] != "assign":
+                            survey_data["perimeter_m"] = perimeter
+                            db.execute(
+                                "UPDATE house_surveys SET data = ?, updated_by = ?, "
+                                "updated_at = ? WHERE house_id = ?",
+                                (
+                                    json.dumps(survey_data, ensure_ascii=False),
+                                    user["display_name"],
+                                    datetime.now().isoformat(timespec="seconds"),
+                                    house_id,
+                                ),
+                            )
                         was_active = db.execute(
                             "SELECT 1 FROM houses WHERE id = ?", (house_id,)
                         ).fetchone() is not None
