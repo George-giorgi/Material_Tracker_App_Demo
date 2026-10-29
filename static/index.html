@@ -537,7 +537,7 @@
         <div class="dialog-heading"><div><div class="eyebrow">SIGNED-IN ACCOUNT</div><h2 id="account-name"></h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
         <p id="account-details" class="dialog-intro"></p>
         <div class="account-actions">
-          <button class="button button-secondary hidden" id="account-manage-users" type="button">Manage employees</button>
+          <button class="button button-secondary hidden" id="account-manage-users" type="button">Manage accounts</button>
           <button class="button button-secondary" id="account-change-pin" type="button">Change PIN</button>
           <button class="button button-primary" id="account-sign-out" type="button">Sign out</button>
         </div>
@@ -546,18 +546,18 @@
 
     <dialog id="users-dialog" class="dialog">
       <div class="dialog-content">
-        <div class="dialog-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Manage employees</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Manage accounts</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
         <div id="user-list" class="user-list"></div>
         <form id="user-form">
-          <h3>Add employee account</h3>
+          <h3>Add account</h3>
           <div class="form-grid">
             <label class="field">Display name<input name="display_name" maxlength="120" required autocomplete="name"></label>
             <label class="field">Username<input name="username" maxlength="64" required autocomplete="off"></label>
-            <label class="field">Account role<select name="role"><option value="employee">Employee</option><option value="surveyor">Surveyor</option></select></label>
+            <label class="field">Account role<select name="role"><option value="admin">Admin</option><option value="assign">Assign</option><option value="boss">Boss</option><option value="surveyor">Surveyor</option><option value="warehouse">Warehouse</option><option value="delivery">Delivery</option><option value="supervisor">Supervisor</option><option value="teamlead">Teamlead</option><option value="employee">Employee (legacy)</option></select></label>
             <label class="field">6-digit PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
             <label class="field">Confirm PIN<input name="pin_confirm" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
           </div>
-          <div class="dialog-actions"><button class="button button-primary" type="submit">Create employee</button></div>
+          <div class="dialog-actions"><button class="button button-primary" type="submit">Create account</button></div>
         </form>
       </div>
     </dialog>

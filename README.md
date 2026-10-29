@@ -20,7 +20,9 @@ py server.py
 
 Open [http://127.0.0.1:8001](http://127.0.0.1:8001). On the first launch,
 create the administrator account with a username and unique 6-digit PIN. The
-administrator can create employee accounts from **Account → Manage employees**.
+administrator can create Admin, Assign, Boss, Surveyor, Warehouse, Delivery,
+Supervisor, and Teamlead accounts from **Account → Manage accounts**. Employee
+accounts remain available for compatibility.
 Give each person their own username and PIN; do not share PINs. Users can
 change their PIN from **Account**; sessions expire after 12 hours. Five
 incorrect PIN attempts lock that username for 15 minutes. A short PIN is less
@@ -28,6 +30,13 @@ secure than a password, so only use this sign-in over HTTPS on a trusted
 network. If a tracker database already contains an older password-based
 account, its existing password still works in the PIN field; change it to a
 6-digit PIN after signing in.
+
+The database maintains a role catalog for Admin, Assign, Boss, Surveyor,
+Warehouse, Delivery, Supervisor, and Teamlead, plus the existing Employee role
+for compatibility. Admin is assigned the `*` permission, meaning all
+application features and operations. Other roles have no permissions assigned
+until their access rules are defined. Creating those accounts does not yet
+change the app's existing authorization behavior.
 
 ## Run the separate SEAI Red dataset
 

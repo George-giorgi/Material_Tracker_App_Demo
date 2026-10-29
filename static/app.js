@@ -4257,12 +4257,23 @@ async function submitAuthentication(event) {
 
 async function loadUsers() {
   const result = await request("/api/users");
+  const roleNames = {
+    admin: "Admin",
+    assign: "Assign",
+    boss: "Boss",
+    surveyor: "Surveyor",
+    warehouse: "Warehouse",
+    delivery: "Delivery",
+    supervisor: "Supervisor",
+    teamlead: "Teamlead",
+    employee: "Employee (legacy)",
+  };
   $("#user-list").innerHTML = result.users
     .map(
       (user) => `
         <div class="user-row">
           <span><strong>${escapeHtml(user.display_name)}</strong><small>${escapeHtml(user.username)}</small></span>
-          <span>${({ admin: "Administrator", employee: "Employee", surveyor: "Surveyor" })[user.role] || "Employee"}${user.is_active ? "" : " (Disabled)"}</span>
+          <span>${escapeHtml(roleNames[user.role] || user.role)}${user.is_active ? "" : " (Disabled)"}</span>
         </div>`,
     )
     .join("");
@@ -4287,7 +4298,7 @@ async function submitEmployee(event) {
     });
     formElement.reset();
     await loadUsers();
-    showToast(values.role === "surveyor" ? "Surveyor account created." : "Employee account created.");
+    showToast(`${values.role[0].toUpperCase()}${values.role.slice(1)} account created.`);
   } catch (error) {
     showToast(error.message, true);
   } finally {

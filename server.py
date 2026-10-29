@@ -677,11 +677,31 @@ def initialize_db():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS app_roles (
+                role_key TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL UNIQUE,
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
+            );
+            CREATE TABLE IF NOT EXISTS app_permissions (
+                permission_key TEXT PRIMARY KEY,
+                description TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS app_role_permissions (
+                role_key TEXT NOT NULL REFERENCES app_roles(role_key) ON DELETE CASCADE,
+                permission_key TEXT NOT NULL REFERENCES app_permissions(permission_key) ON DELETE CASCADE,
+                is_allowed INTEGER NOT NULL DEFAULT 1 CHECK (is_allowed IN (0, 1)),
+                PRIMARY KEY (role_key, permission_key)
+            );
             CREATE TABLE IF NOT EXISTS app_users (
                 id INTEGER PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 display_name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'surveyor')),
+                role TEXT NOT NULL CHECK (
+                    role IN (
+                        'admin', 'assign', 'boss', 'surveyor', 'warehouse',
+                        'delivery', 'supervisor', 'teamlead', 'employee'
+                    )
+                ),
                 password_salt BLOB NOT NULL,
                 password_hash BLOB NOT NULL,
                 password_iterations INTEGER NOT NULL,
@@ -701,6 +721,33 @@ def initialize_db():
                 window_started_at INTEGER NOT NULL,
                 locked_until INTEGER NOT NULL DEFAULT 0
             );
+            """
+        )
+        db.executemany(
+            "INSERT OR IGNORE INTO app_roles(role_key, display_name) VALUES (?, ?)",
+            (
+                ("admin", "Admin"),
+                ("assign", "Assign"),
+                ("boss", "Boss"),
+                ("surveyor", "Surveyor"),
+                ("warehouse", "Warehouse"),
+                ("delivery", "Delivery"),
+                ("supervisor", "Supervisor"),
+                ("teamlead", "Teamlead"),
+                ("employee", "Employee"),
+            ),
+        )
+        db.execute(
+            """
+            INSERT OR IGNORE INTO app_permissions(permission_key, description)
+            VALUES ('*', 'All application features and operations')
+            """
+        )
+        db.execute(
+            """
+            INSERT OR IGNORE INTO app_role_permissions
+                (role_key, permission_key, is_allowed)
+            VALUES ('admin', '*', 1)
             """
         )
         if db.execute(
@@ -964,15 +1011,21 @@ def initialize_db():
             db.execute(
                 "ALTER TABLE app_users ADD COLUMN credential_type TEXT NOT NULL DEFAULT 'password'"
             )
-    _migrate_surveyor_role()
+    _migrate_user_roles()
 
 
-def _migrate_surveyor_role():
+def _migrate_user_roles():
     with connect_db() as db:
         schema = db.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'app_users'"
         ).fetchone()[0]
-        if 'surveyor' in schema:
+        if all(
+            f"'{role}'" in schema
+            for role in (
+                "admin", "assign", "boss", "surveyor", "warehouse",
+                "delivery", "supervisor", "teamlead", "employee",
+            )
+        ):
             return
         db.execute("PRAGMA foreign_keys = OFF")
         db.execute("BEGIN IMMEDIATE")
@@ -982,7 +1035,12 @@ def _migrate_surveyor_role():
                     id INTEGER PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                     display_name TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'surveyor')),
+                    role TEXT NOT NULL CHECK (
+                        role IN (
+                            'admin', 'assign', 'boss', 'surveyor', 'warehouse',
+                            'delivery', 'supervisor', 'teamlead', 'employee'
+                        )
+                    ),
                     password_salt BLOB NOT NULL,
                     password_hash BLOB NOT NULL,
                     password_iterations INTEGER NOT NULL,
@@ -1036,7 +1094,17 @@ def _credential_digest(credential, salt, iterations=CREDENTIAL_ITERATIONS):
 
 def _insert_user(db, username, display_name, pin, role):
     username, display_name = _validate_user_details(username, display_name)
-    if not isinstance(role, str) or role not in {"admin", "employee", "surveyor"}:
+    if not isinstance(role, str) or role not in {
+        "admin",
+        "assign",
+        "boss",
+        "surveyor",
+        "warehouse",
+        "delivery",
+        "supervisor",
+        "teamlead",
+        "employee",
+    }:
         raise ApiError(400, "Choose a valid account role.")
     pin = _validate_pin(pin)
     salt = secrets.token_bytes(16)

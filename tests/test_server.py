@@ -51,6 +51,113 @@ class TrackerTests(unittest.TestCase):
         with server.connect_db() as db:
             return server.balances_for(db, material_id)
 
+    def test_role_catalog_and_permission_tables_are_initialized_idempotently(self):
+        expected_roles = {
+            "admin": "Admin",
+            "assign": "Assign",
+            "boss": "Boss",
+            "surveyor": "Surveyor",
+            "warehouse": "Warehouse",
+            "delivery": "Delivery",
+            "supervisor": "Supervisor",
+            "teamlead": "Teamlead",
+            "employee": "Employee",
+        }
+        with server.connect_db() as db:
+            roles = {
+                row["role_key"]: row["display_name"]
+                for row in db.execute(
+                    "SELECT role_key, display_name FROM app_roles"
+                )
+            }
+            self.assertEqual(roles, expected_roles)
+            self.assertEqual(
+                [
+                    tuple(row)
+                    for row in db.execute(
+                        "SELECT permission_key, description FROM app_permissions"
+                    )
+                ],
+                [("*", "All application features and operations")],
+            )
+            self.assertEqual(
+                [
+                    tuple(row)
+                    for row in db.execute(
+                        "SELECT role_key, permission_key, is_allowed "
+                        "FROM app_role_permissions"
+                    )
+                ],
+                [("admin", "*", 1)],
+            )
+
+        server.initialize_db()
+
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM app_roles").fetchone()[0],
+                len(expected_roles),
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM app_role_permissions").fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                db.execute("PRAGMA foreign_key_check").fetchall(),
+                [],
+            )
+
+    def test_admin_can_create_accounts_for_every_configured_role(self):
+        roles = (
+            "admin",
+            "assign",
+            "boss",
+            "surveyor",
+            "warehouse",
+            "delivery",
+            "supervisor",
+            "teamlead",
+        )
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "role-admin",
+                    "display_name": "Role Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+
+            for role in roles:
+                status, result, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/users",
+                    {
+                        "username": f"user-{role}",
+                        "display_name": f"{role.title()} User",
+                        "pin": "234567",
+                        "role": role,
+                    },
+                    admin_cookie,
+                )
+                self.assertEqual(status, 201, role)
+                self.assertEqual(result["user"]["role"], role)
+
+            with server.connect_db() as db:
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) FROM app_users").fetchone()[0],
+                    len(roles) + 1,
+                )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def start_test_server(self):
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RequestHandler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -1571,7 +1678,7 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
-    def test_surveyor_role_migration_preserves_users_and_sessions(self):
+    def test_user_role_migration_preserves_users_and_sessions(self):
         legacy_path = Path(self.temp_dir.name) / "legacy.sqlite3"
         with sqlite3.connect(legacy_path) as db:
             db.executescript("""
@@ -1599,7 +1706,11 @@ class TrackerTests(unittest.TestCase):
             with server.connect_db() as db:
                 self.assertEqual(db.execute("SELECT role FROM app_users WHERE id = 1").fetchone()[0], "admin")
                 self.assertEqual(db.execute("SELECT user_id FROM app_sessions WHERE token_hash = 'session-hash'").fetchone()[0], 1)
-                db.execute("UPDATE app_users SET role = 'surveyor' WHERE id = 1")
+                for role in (
+                    "assign", "boss", "surveyor", "warehouse", "delivery",
+                    "supervisor", "teamlead", "employee",
+                ):
+                    db.execute("UPDATE app_users SET role = ? WHERE id = 1", (role,))
         finally:
             server.DB_PATH = original_path
 
