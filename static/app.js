@@ -607,6 +607,10 @@ function showWorkspace(user) {
   const isSurveyor = user.role === "surveyor";
   const isSupervisor = user.role === "supervisor";
   const isAssign = user.role === "assign";
+  $("#house-plans-nav").classList.toggle(
+    "hidden",
+    !["admin", "surveyor"].includes(user.role),
+  );
   $("#house-map-activity").classList.toggle("hidden", isAssign);
   document.body.classList.toggle("surveyor-mode", isSurveyor);
   document.body.classList.toggle("supervisor-mode", isSupervisor);

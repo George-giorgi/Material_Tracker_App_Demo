@@ -254,6 +254,54 @@ demonstration only. Their pins are explicitly labeled approximate and do not
 represent the real locations of their Eircodes. Import approved
 latitude/longitude coordinates to place these houses accurately on the map.
 
+## House plan generator — stages 1–3
+
+Administrators and surveyors can open **House plan generator** from the
+sidebar to upload a floor-plan PDF (maximum 8 MB and 25 pages). PDF analysis
+stores uploads separately from house survey and material records, checks for
+embedded vector drawings and scanned page images, extracts searchable PDF
+text, and lists unverified dimension and label candidates. Uploaded drawings
+and their analysis are private to the uploading surveyor and administrators.
+
+OpenCV is used to inspect image-based pages. Scanned-page OCR runs when the
+Tesseract executable is installed and available on the server; `pytesseract`
+alone does not install that executable. Without Tesseract, the analysis
+explicitly reports that OCR was unavailable. Extracted labels and dimensions
+are not confirmed measurements. The workspace renders the source PDF pages for
+tracing. Users calibrate a page against a known printed dimension, then draw
+wall segments directly over the plan; saved measurements, wall heights,
+thicknesses, exterior/partition labels, and source pages remain explicitly
+user-confirmed. Coordinate entry in metres is also available for advanced use.
+An authenticated endpoint generates a self-contained GLB from saved geometry;
+a Three.js GLTFLoader/OrbitControls viewer provides mouse orbit, zoom, pan,
+preset views, wireframe, and cutaway controls. The top view follows the source
+plan orientation, and each wall has a color picker whose saved marking appears
+in the viewer and exported GLB. The app serves its vendored
+Three.js 0.186.1 modules locally under their included MIT license, with no
+external browser CDN dependency.
+
+The tracing workspace also supports labeled point notes (for example, a vent)
+anchored to a page and an OpenCV-based suggested closed exterior outline. The
+outline is only a visual, unconfirmed candidate; review it against the PDF,
+calibrate the page, and confirm wall height and thickness before adding its
+segments as draft exterior walls. Remove incorrect segments before saving.
+Automatic outline suggestions are heuristic and may be unavailable or wrong
+for some drawings; manual tracing remains available. Point notes are saved
+with their source-page positions and do not create 3D geometry.
+Once a model exists, users can also place titled, optional-detail callouts by
+clicking its visible surfaces. These notes stay anchored as the model rotates
+and are saved with the plan; they are viewer annotations and are not embedded
+in the downloaded GLB.
+
+The GLB contains only traced walls and a floor when the traced exterior
+centerlines form one closed loop. Its wood floor finish is illustrative, not
+extracted from the PDF. It does not infer a scale, recognize walls
+automatically, or create verified room shapes, doors, windows, furniture,
+ceilings, or roofs. Roof view remains unavailable. Verify calibration and each
+traced segment against the original drawing before relying on model dimensions.
+Scanned PDFs can also be traced manually; automatic OCR requires the Tesseract
+executable.
+
 ## House surveys and calculator measurements
 
 Administrators can add employee or surveyor accounts in **Account ? Manage employees**. Surveyors start at a focused dashboard showing only houses assigned to their account that are marked **Ready for start**, with workload counts, search, filters for surveys needed or completed, and refresh; **Start survey** or **Review survey** opens the Surveyor room for that house. House cards show SEAI insulation quantities when recorded and clearly labeled sample quantities when details are unavailable. The dashboard includes the BRUSNA logo and refreshes assigned houses without requesting restricted stock or movement data. Signed-in tabs check lightweight change revisions and reload only the currently relevant view; updates to other views are kept pending until those views are opened, and polling pauses while the browser tab is hidden. The Surveyor room has section shortcuts and a dark-mode layout for house details, notes, work planning, documents, and measurements. Surveyors can add survey notes, window and door sizes with quantities, house-corner lengths, and a pre-start work plan. The work plan records whether scaffolding, ESB work, or plumber work is required, with optional details for each. House notes and survey notes are edited and saved separately; survey notes appear on the appended page when sharing a PDF. Window corner lengths are calculated automatically from each window's width and two sides. Survey entries are saved per provided house. Employees cannot edit surveys.

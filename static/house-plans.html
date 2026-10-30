@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#142237">
+    <title>House plan analysis | BRUSNA</title>
+    <link rel="stylesheet" href="/house-plans.css">
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="/house-plans.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Return to BRUSNA Material Tracker">
+        <img src="/brusna-curious-cat-logo.png" alt="BRUSNA">
+      </a>
+      <div>
+        <p class="eyebrow">HOUSE MODEL GENERATOR · STAGES 1–3</p>
+        <h1>Floor-plan to 3D model</h1>
+      </div>
+      <a class="back-link" href="/">← Material Tracker</a>
+    </header>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">SOURCE-FIRST WORKFLOW</p>
+        <h2>Start with the original plan</h2>
+        <p>Upload an architectural PDF, calibrate a known printed dimension, and trace the walls directly over the drawing. Save your confirmed traces to generate a real, rotatable 3D GLB model.</p>
+      </section>
+      <section class="upload card">
+        <form id="plan-upload-form">
+          <label for="plan-file">Architectural PDF</label>
+          <input id="plan-file" name="file" type="file" accept=".pdf,application/pdf" required>
+          <small>PDF only · Maximum 8 MB · Up to 25 pages</small>
+          <button id="upload-button" type="submit">Upload and analyse</button>
+        </form>
+        <p id="plan-status" role="status" aria-live="polite"></p>
+      </section>
+      <section class="results" aria-labelledby="results-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">PRIVATE TO YOUR ACCOUNT</p>
+            <h2 id="results-title">Analysed plans</h2>
+          </div>
+          <button id="refresh-plans" class="secondary" type="button">Refresh</button>
+        </div>
+        <div id="plan-list" class="plan-list" aria-live="polite"></div>
+      </section>
+      <p class="notice">The plan is the source of the geometry. You must calibrate a dimension printed on the drawing and trace the walls; unconfirmed measurements are never guessed. The illustrative wood finish is not a measured material. Doors, windows, room labels, furniture, ceilings, and roofs are not inferred.</p>
+    </main>
+  </body>
+</html>

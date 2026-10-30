@@ -17,6 +17,8 @@ import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime
 from http.cookies import CookieError, SimpleCookie
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from io import BytesIO, StringIO
 from xml.etree.ElementTree import ParseError, fromstring
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,6 +39,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import reportlab
 
+import house_plans
+import house_model
+
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
@@ -53,6 +58,7 @@ HOUSE_DOCUMENT_MAX_COUNT = 25
 HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
+HOUSE_PLAN_MAX_BYTES = 8_000_000
 SEAI_DOCUMENT_MAX_BYTES = 20_000_000
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
@@ -73,6 +79,8 @@ _change_revisions = {
 
 
 def _record_change(path):
+    if path == "/api/house-plans":
+        return
     if path in {"/api/house-documents", "/api/seai-documents"} or re.fullmatch(
         r"/api/(?:house|seai)-documents/\d+/annotations", path
     ):
@@ -959,6 +967,31 @@ def initialize_db():
                 size_bytes INTEGER NOT NULL,
                 uploaded_by TEXT NOT NULL DEFAULT '',
                 uploaded_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_plan_documents (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                uploaded_by_user_id INTEGER NOT NULL REFERENCES app_users(id),
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                uploaded_at TEXT NOT NULL,
+                analysis_json TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_plan_geometry (
+                document_id INTEGER PRIMARY KEY REFERENCES house_plan_documents(id)
+                    ON DELETE CASCADE,
+                owner_user_id INTEGER NOT NULL REFERENCES app_users(id),
+                geometry_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
@@ -2608,6 +2641,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_glb(self, body, document_id, floor_generated):
+        self.send_response(200)
+        self.send_header("Content-Type", "model/gltf-binary")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-BRUSNA-Floor-Generated", str(floor_generated).lower())
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="house-plan-{document_id}.glb"',
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
     def _body(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -2673,11 +2720,19 @@ class RequestHandler(BaseHTTPRequestHandler):
             )
             return None
         if user["role"] == "surveyor":
-            allowed = self.command == "GET" and self.path.split("?", 1)[0] == "/api/calculator/houses"
+            allowed = self.command == "GET" and self.path.split("?", 1)[0] in {
+                "/api/calculator/houses",
+                "/house-plans",
+            }
             allowed = allowed or (
                 self.command == "GET"
                 and (
                     urlparse(self.path).path == "/api/updates"
+                    or urlparse(self.path).path == "/api/house-plans"
+                    or re.fullmatch(
+                        r"/api/house-plans/\d+/(?:file|geometry|model\.glb|page/\d+\.png)",
+                        urlparse(self.path).path,
+                    )
                     or urlparse(self.path).path == "/api/house-documents"
                     or urlparse(self.path).path.startswith("/api/house-documents/")
                     or urlparse(self.path).path == "/api/seai-documents"
@@ -2696,6 +2751,17 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "/api/seai-documents/share",
                     "/api/auth/pin",
                 }
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and (
+                    urlparse(self.path).path == "/api/house-plans"
+                    or re.fullmatch(
+                        r"/api/house-plans/\d+/geometry",
+                        urlparse(self.path).path,
+                    )
+                    is not None
+                )
             )
             allowed = allowed or (
                 self.command == "POST"
@@ -2776,6 +2842,34 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_file(
                 STATIC_DIR / "oldest-house-test.html", "text/html; charset=utf-8"
             )
+        elif path == "/house-plans":
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            self._send_file(
+                STATIC_DIR / "house-plans.html", "text/html; charset=utf-8"
+            )
+        elif path == "/house-plans.css":
+            self._send_file(STATIC_DIR / "house-plans.css", "text/css; charset=utf-8")
+        elif path == "/house-plans.js":
+            self._send_file(STATIC_DIR / "house-plans.js", "text/javascript; charset=utf-8")
+        elif re.fullmatch(
+            r"/vendor/three/(?:build/three\.(?:module|core)\.js|examples/jsm/(?:loaders/GLTFLoader\.js|controls/OrbitControls\.js|utils/(?:BufferGeometryUtils|SkeletonUtils)\.js))",
+            path,
+        ):
+            vendor_file = (
+                STATIC_DIR
+                / "vendor"
+                / "three"
+                / Path(path.removeprefix("/vendor/three/"))
+            )
+            self._send_file(vendor_file, "text/javascript; charset=utf-8")
         elif path.startswith("/oldest-house-test/photos/"):
             user = self._login_required()
             if user is None:
@@ -3390,6 +3484,284 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "user": _public_user(user) if user else None,
                 },
             )
+        elif path == "/api/house-plans":
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            with connect_db() as db:
+                if user["role"] == "admin":
+                    rows = db.execute(
+                        """
+                        SELECT id, filename, size_bytes, uploaded_by, uploaded_at,
+                               analysis_json
+                        FROM house_plan_documents
+                        ORDER BY uploaded_at DESC, id DESC
+                        """
+                    ).fetchall()
+                else:
+                    rows = db.execute(
+                        """
+                        SELECT id, filename, size_bytes, uploaded_by, uploaded_at,
+                               analysis_json
+                        FROM house_plan_documents
+                        WHERE uploaded_by_user_id = ?
+                        ORDER BY uploaded_at DESC, id DESC
+                        """,
+                        (user["id"],),
+                    ).fetchall()
+            plans = []
+            for row in rows:
+                try:
+                    analysis = json.loads(row["analysis_json"])
+                except (TypeError, json.JSONDecodeError):
+                    self._send_json(500, {"error": "Stored house-plan analysis is invalid."})
+                    return
+                plans.append(
+                    {
+                        "id": row["id"],
+                        "filename": row["filename"],
+                        "size_bytes": row["size_bytes"],
+                        "uploaded_by": row["uploaded_by"],
+                        "uploaded_at": row["uploaded_at"],
+                        "analysis": analysis,
+                    }
+                )
+            self._send_json(200, {"plans": plans})
+        elif re.fullmatch(r"/api/house-plans/\d+/file", path):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            document_id = int(path.split("/")[3])
+            with connect_db() as db:
+                if user["role"] == "admin":
+                    row = db.execute(
+                        "SELECT filename, content FROM house_plan_documents WHERE id = ?",
+                        (document_id,),
+                    ).fetchone()
+                else:
+                    row = db.execute(
+                        """
+                        SELECT filename, content FROM house_plan_documents
+                        WHERE id = ? AND uploaded_by_user_id = ?
+                        """,
+                        (document_id, user["id"]),
+                    ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "House plan was not found."})
+                return
+            self._send_pdf(row["filename"], row["content"])
+        elif re.fullmatch(r"/api/house-plans/\d+/suggestions/exterior/\d+", path):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            match = re.fullmatch(
+                r"/api/house-plans/(\d+)/suggestions/exterior/(\d+)", path
+            )
+            document_id, page_number = map(int, match.groups())
+            with connect_db() as db:
+                if user["role"] == "admin":
+                    row = db.execute(
+                        "SELECT content FROM house_plan_documents WHERE id = ?",
+                        (document_id,),
+                    ).fetchone()
+                else:
+                    row = db.execute(
+                        """
+                        SELECT content FROM house_plan_documents
+                        WHERE id = ? AND uploaded_by_user_id = ?
+                        """,
+                        (document_id, user["id"]),
+                    ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "House plan was not found."})
+                return
+            try:
+                suggestion = house_plans.suggest_exterior_outline(
+                    row["content"], page_number
+                )
+            except house_plans.PdfAnalysisError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_json(
+                200,
+                {
+                    **suggestion,
+                    "status": "unconfirmed",
+                    "message": (
+                        "Possible exterior outline only. Compare every segment "
+                        "with the PDF before adding it as a wall."
+                        if suggestion["points"]
+                        else "No reliable closed exterior outline was detected."
+                    ),
+                },
+            )
+        elif re.fullmatch(r"/api/house-plans/\d+/page/\d+\.png", path):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            match = re.fullmatch(
+                r"/api/house-plans/(\d+)/page/(\d+)\.png", path
+            )
+            document_id, page_number = map(int, match.groups())
+            with connect_db() as db:
+                if user["role"] == "admin":
+                    row = db.execute(
+                        "SELECT content FROM house_plan_documents WHERE id = ?",
+                        (document_id,),
+                    ).fetchone()
+                else:
+                    row = db.execute(
+                        """
+                        SELECT content FROM house_plan_documents
+                        WHERE id = ? AND uploaded_by_user_id = ?
+                        """,
+                        (document_id, user["id"]),
+                    ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "House plan was not found."})
+                return
+            try:
+                preview = house_plans.render_page_png(row["content"], page_number)
+            except house_plans.PdfAnalysisError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_png(preview)
+        elif re.fullmatch(r"/api/house-plans/\d+/model\.glb", path):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            document_id = int(path.split("/")[3])
+            with connect_db() as db:
+                if user["role"] == "admin":
+                    row = db.execute(
+                        """
+                        SELECT d.uploaded_by_user_id, g.geometry_json
+                        FROM house_plan_documents d
+                        LEFT JOIN house_plan_geometry g ON g.document_id = d.id
+                        WHERE d.id = ?
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                else:
+                    row = db.execute(
+                        """
+                        SELECT d.uploaded_by_user_id, g.geometry_json
+                        FROM house_plan_documents d
+                        LEFT JOIN house_plan_geometry g ON g.document_id = d.id
+                        WHERE d.id = ? AND d.uploaded_by_user_id = ?
+                        """,
+                        (document_id, user["id"]),
+                    ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "House plan was not found."})
+                return
+            if row["geometry_json"] is None:
+                self._send_json(
+                    409,
+                    {"error": "Trace and save at least one wall before building a 3D model."},
+                )
+                return
+            try:
+                geometry = json.loads(row["geometry_json"])
+            except (TypeError, json.JSONDecodeError):
+                self._send_json(500, {"error": "Stored house geometry is invalid."})
+                return
+            walls = geometry.get("walls") if isinstance(geometry, dict) else None
+            if not isinstance(walls, list):
+                self._send_json(500, {"error": "Stored house geometry is invalid."})
+                return
+            if not walls:
+                self._send_json(
+                    409,
+                    {"error": "Trace and save at least one wall before building a 3D model."},
+                )
+                return
+            try:
+                model, floor_generated = house_model.create_house_glb(walls)
+            except (TypeError, KeyError, ValueError, OverflowError) as exc:
+                self._send_json(500, {"error": f"Could not build the 3D model: {exc}"})
+                return
+            self._send_glb(model, document_id, floor_generated)
+        elif re.fullmatch(r"/api/house-plans/\d+/geometry", path):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] not in {"admin", "surveyor"}:
+                self._send_json(
+                    403,
+                    {"error": "Administrator or surveyor access is required."},
+                )
+                return
+            document_id = int(path.split("/")[3])
+            with connect_db() as db:
+                document = db.execute(
+                    "SELECT uploaded_by_user_id FROM house_plan_documents WHERE id = ?",
+                    (document_id,),
+                ).fetchone()
+                if document is None:
+                    self._send_json(404, {"error": "House plan was not found."})
+                    return
+                if user["role"] != "admin" and document["uploaded_by_user_id"] != user["id"]:
+                    self._send_json(404, {"error": "House plan was not found."})
+                    return
+                row = db.execute(
+                    "SELECT geometry_json, updated_at FROM house_plan_geometry "
+                    "WHERE document_id = ?",
+                    (document_id,),
+                ).fetchone()
+            if row:
+                try:
+                    geometry = json.loads(row["geometry_json"])
+                except (TypeError, json.JSONDecodeError):
+                    self._send_json(500, {"error": "Stored house geometry is invalid."})
+                    return
+                updated_at = row["updated_at"]
+            else:
+                geometry = {
+                    "walls": [],
+                    "annotations": [],
+                    "model_annotations": [],
+                    "calibration": {},
+                }
+                updated_at = None
+            self._send_json(
+                200,
+                {
+                    "document_id": document_id,
+                    "geometry": geometry,
+                    "updated_at": updated_at,
+                },
+            )
         elif path == "/api/updates":
             if self._login_required() is None:
                 return
@@ -3797,6 +4169,372 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             user = self._login_required()
             if user is None:
+                return
+            geometry_match = re.fullmatch(
+                r"/api/house-plans/(\d+)/geometry", path
+            )
+            if geometry_match:
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required.",
+                    )
+                payload = self._json_body()
+                walls = payload.get("walls") if isinstance(payload, dict) else None
+                calibration = (
+                    payload.get("calibration", {}) if isinstance(payload, dict) else None
+                )
+                annotations = (
+                    payload.get("annotations", []) if isinstance(payload, dict) else None
+                )
+                model_annotations = (
+                    payload.get("model_annotations", [])
+                    if isinstance(payload, dict)
+                    else None
+                )
+                if not isinstance(walls, list) or len(walls) > 250:
+                    raise ApiError(400, "Provide between 0 and 250 wall segments.")
+                if not isinstance(calibration, dict) or len(calibration) > house_plans.MAX_PAGES:
+                    raise ApiError(400, "Provide a valid page-scale calibration map.")
+                if not isinstance(annotations, list) or len(annotations) > 250:
+                    raise ApiError(400, "Provide between 0 and 250 plan notes.")
+                if not isinstance(model_annotations, list) or len(model_annotations) > 250:
+                    raise ApiError(400, "Provide between 0 and 250 3D model notes.")
+                clean_walls = []
+                seen_ids = set()
+                for wall in walls:
+                    if not isinstance(wall, dict):
+                        raise ApiError(400, "Each wall must be an object.")
+                    wall_id = wall.get("id")
+                    label = wall.get("label")
+                    if (
+                        not isinstance(wall_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", wall_id)
+                        or wall_id in seen_ids
+                    ):
+                        raise ApiError(400, "Each wall needs a unique valid ID.")
+                    seen_ids.add(wall_id)
+                    if not isinstance(label, str) or not label.strip() or len(label) > 80:
+                        raise ApiError(400, "Each wall needs a label of at most 80 characters.")
+                    measurements = []
+                    for field in ("x1", "y1", "x2", "y2", "height", "thickness"):
+                        value = wall.get(field)
+                        if isinstance(value, bool):
+                            raise ApiError(400, "Wall measurements must be numbers.")
+                        try:
+                            number = float(value)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise ApiError(
+                                400, "Enter every wall measurement in metres."
+                            ) from exc
+                        if not math.isfinite(number) or abs(number) > 10000:
+                            raise ApiError(400, "Wall measurements must be finite metres.")
+                        measurements.append(number)
+                    x1, y1, x2, y2, height, thickness = measurements
+                    length = math.hypot(x2 - x1, y2 - y1)
+                    if (
+                        length < 0.1
+                        or length > 10000
+                        or not (1 <= height <= 10)
+                        or not (0.03 <= thickness <= 1)
+                    ):
+                        raise ApiError(
+                            400,
+                            "Walls must be 0.1–10,000 m long, 1–10 m high, "
+                            "and 0.03–1 m thick.",
+                        )
+                    exterior = wall.get("exterior", False)
+                    if not isinstance(exterior, bool):
+                        raise ApiError(400, "Choose whether each wall is exterior.")
+                    color = wall.get("color")
+                    if color is not None and (
+                        not isinstance(color, str)
+                        or not re.fullmatch(r"#[0-9a-fA-F]{6}", color)
+                    ):
+                        raise ApiError(
+                            400, "Each wall color must be a six-digit hex color."
+                        )
+                    page_number = wall.get("page", 1)
+                    if (
+                        isinstance(page_number, bool)
+                        or not isinstance(page_number, int)
+                        or not 1 <= page_number <= house_plans.MAX_PAGES
+                    ):
+                        raise ApiError(
+                            400,
+                            f"Choose a source page from 1 to {house_plans.MAX_PAGES}.",
+                        )
+                    clean_walls.append(
+                        {
+                            "id": wall_id,
+                            "label": label.strip(),
+                            "x1": x1,
+                            "y1": y1,
+                            "x2": x2,
+                            "y2": y2,
+                            "height": height,
+                            "thickness": thickness,
+                            "exterior": exterior,
+                            "page": page_number,
+                            **({"color": color.lower()} if color is not None else {}),
+                        }
+                    )
+                clean_annotations = []
+                seen_annotation_ids = set()
+                for annotation in annotations:
+                    if not isinstance(annotation, dict):
+                        raise ApiError(400, "Each plan note must be an object.")
+                    annotation_id = annotation.get("id")
+                    label = annotation.get("label")
+                    if (
+                        not isinstance(annotation_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", annotation_id)
+                        or annotation_id in seen_annotation_ids
+                    ):
+                        raise ApiError(400, "Each plan note needs a unique valid ID.")
+                    seen_annotation_ids.add(annotation_id)
+                    if not isinstance(label, str) or not label.strip() or len(label) > 80:
+                        raise ApiError(400, "Each plan note needs a label of at most 80 characters.")
+                    coordinates = []
+                    for field in ("x", "y"):
+                        value = annotation.get(field)
+                        if isinstance(value, bool):
+                            raise ApiError(400, "Plan note positions must be numbers.")
+                        try:
+                            coordinate = float(value)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise ApiError(400, "Plan note positions must be numbers.") from exc
+                        if not math.isfinite(coordinate) or not 0 <= coordinate <= 1:
+                            raise ApiError(
+                                400, "Plan note positions must be normalized to the PDF page."
+                            )
+                        coordinates.append(coordinate)
+                    page_number = annotation.get("page", 1)
+                    if (
+                        isinstance(page_number, bool)
+                        or not isinstance(page_number, int)
+                        or not 1 <= page_number <= house_plans.MAX_PAGES
+                    ):
+                        raise ApiError(400, "Choose a valid source page for each plan note.")
+                    clean_annotations.append(
+                        {
+                            "id": annotation_id,
+                            "label": label.strip(),
+                            "x": coordinates[0],
+                            "y": coordinates[1],
+                            "page": page_number,
+                        }
+                    )
+                clean_model_annotations = []
+                seen_model_annotation_ids = set()
+                for annotation in model_annotations:
+                    if not isinstance(annotation, dict):
+                        raise ApiError(400, "Each 3D model note must be an object.")
+                    annotation_id = annotation.get("id")
+                    title = annotation.get("title")
+                    note = annotation.get("note", "")
+                    if (
+                        not isinstance(annotation_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", annotation_id)
+                        or annotation_id in seen_model_annotation_ids
+                    ):
+                        raise ApiError(400, "Each 3D model note needs a unique valid ID.")
+                    seen_model_annotation_ids.add(annotation_id)
+                    if not isinstance(title, str) or not title.strip() or len(title) > 80:
+                        raise ApiError(400, "Each 3D model note needs a title of at most 80 characters.")
+                    if not isinstance(note, str) or len(note) > 250:
+                        raise ApiError(400, "3D model notes must be 250 characters or fewer.")
+                    position = []
+                    for field in ("x", "y", "z"):
+                        value = annotation.get(field)
+                        if isinstance(value, bool):
+                            raise ApiError(400, "3D model note positions must be numbers.")
+                        try:
+                            coordinate = float(value)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise ApiError(400, "3D model note positions must be numbers.") from exc
+                        if not math.isfinite(coordinate) or abs(coordinate) > 10000:
+                            raise ApiError(400, "3D model note positions must be finite metres.")
+                        position.append(coordinate)
+                    clean_model_annotations.append(
+                        {
+                            "id": annotation_id,
+                            "title": title.strip(),
+                            "note": note.strip(),
+                            "x": position[0],
+                            "y": position[1],
+                            "z": position[2],
+                        }
+                    )
+                clean_calibration = {}
+                for page, metres_per_point in calibration.items():
+                    if not isinstance(page, str) or not re.fullmatch(r"[1-9]\d{0,1}", page):
+                        raise ApiError(400, "Each calibrated page must have a valid page number.")
+                    if isinstance(metres_per_point, bool) or not isinstance(
+                        metres_per_point, (int, float)
+                    ):
+                        raise ApiError(400, "Calibrated page scales must be positive finite values.")
+                    try:
+                        scale = float(metres_per_point)
+                    except (OverflowError, ValueError) as exc:
+                        raise ApiError(
+                            400, "Calibrated page scales must be positive finite values."
+                        ) from exc
+                    if not math.isfinite(scale) or not 0 < scale <= 10000:
+                        raise ApiError(400, "Calibrated page scales must be positive finite values.")
+                    clean_calibration[page] = scale
+                document_id = int(geometry_match.group(1))
+                updated_at = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        document = db.execute(
+                            "SELECT uploaded_by_user_id, analysis_json "
+                            "FROM house_plan_documents "
+                            "WHERE id = ?",
+                            (document_id,),
+                        ).fetchone()
+                        if document is None or (
+                            user["role"] != "admin"
+                            and document["uploaded_by_user_id"] != user["id"]
+                        ):
+                            raise ApiError(404, "House plan was not found.")
+                        try:
+                            analysis = json.loads(document["analysis_json"])
+                        except (TypeError, json.JSONDecodeError) as exc:
+                            raise ApiError(
+                                500, "Stored house-plan analysis is invalid."
+                            ) from exc
+                        page_count = analysis.get("page_count")
+                        if (
+                            not isinstance(page_count, int)
+                            or any(wall["page"] > page_count for wall in clean_walls)
+                            or any(note["page"] > page_count for note in clean_annotations)
+                            or any(int(page) > page_count for page in clean_calibration)
+                        ):
+                            raise ApiError(
+                                400,
+                                "Geometry refers to a page that is not in this PDF.",
+                            )
+                        db.execute(
+                            """
+                            INSERT INTO house_plan_geometry
+                                (document_id, owner_user_id, geometry_json, updated_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(document_id) DO UPDATE SET
+                                owner_user_id = excluded.owner_user_id,
+                                geometry_json = excluded.geometry_json,
+                                updated_at = excluded.updated_at
+                            """,
+                            (
+                                document_id,
+                                document["uploaded_by_user_id"],
+                                json.dumps(
+                                    {
+                                        "walls": clean_walls,
+                                        "annotations": clean_annotations,
+                                        "model_annotations": clean_model_annotations,
+                                        "calibration": clean_calibration,
+                                    }
+                                ),
+                                updated_at,
+                            ),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "document_id": document_id,
+                        "geometry": {
+                            "walls": clean_walls,
+                            "annotations": clean_annotations,
+                            "model_annotations": clean_model_annotations,
+                            "calibration": clean_calibration,
+                        },
+                        "updated_at": updated_at,
+                    },
+                )
+                return
+            if path == "/api/house-plans":
+                if user["role"] not in {"admin", "surveyor"}:
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required.",
+                    )
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.lower().startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload a PDF using the file picker.")
+                body = self._body()
+                try:
+                    content_type_bytes = content_type.encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ApiError(400, "Invalid PDF upload content type.") from exc
+                message = BytesParser(policy=email_policy).parsebytes(
+                    b"Content-Type: "
+                    + content_type_bytes
+                    + b"\r\nMIME-Version: 1.0\r\n\r\n"
+                    + body
+                )
+                if not message.is_multipart():
+                    raise ApiError(400, "Invalid PDF upload.")
+                filename = ""
+                file_data = None
+                for part in message.iter_parts():
+                    if part.get_content_disposition() != "form-data":
+                        continue
+                    if part.get_param("name", header="content-disposition") != "file":
+                        continue
+                    raw_filename = part.get_filename() or ""
+                    filename = Path(raw_filename.replace("\\", "/")).name.strip()
+                    file_data = part.get_payload(decode=True)
+                    break
+                if (
+                    not filename
+                    or len(filename) > 180
+                    or any(ord(char) < 32 for char in filename)
+                    or not filename.lower().endswith(".pdf")
+                ):
+                    raise ApiError(400, "Choose a PDF file with a valid filename.")
+                if not file_data:
+                    raise ApiError(400, "Choose a PDF file to upload.")
+                if len(file_data) > HOUSE_PLAN_MAX_BYTES:
+                    raise ApiError(400, "PDF files must be 8 MB or smaller.")
+                if not file_data.startswith(b"%PDF-"):
+                    raise ApiError(400, "The selected file is not a valid PDF.")
+                try:
+                    analysis = house_plans.analyze_pdf(file_data)
+                except house_plans.PdfAnalysisError as exc:
+                    raise ApiError(400, str(exc)) from exc
+                uploaded_at = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_plan_documents
+                                (filename, content, size_bytes, uploaded_by_user_id,
+                                 uploaded_by, uploaded_at, analysis_json)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                filename,
+                                file_data,
+                                len(file_data),
+                                user["id"],
+                                user["display_name"],
+                                uploaded_at,
+                                json.dumps(analysis, ensure_ascii=False),
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "filename": filename,
+                        "size_bytes": len(file_data),
+                        "uploaded_by": user["display_name"],
+                        "uploaded_at": uploaded_at,
+                        "analysis": analysis,
+                    },
+                )
                 return
             house_document_delete_match = re.fullmatch(
                 r"/api/house-documents/(\d+)/delete", path
