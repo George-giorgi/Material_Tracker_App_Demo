@@ -605,6 +605,7 @@ function showWorkspace(user) {
     supervisor: "Supervisor",
     surveyor: "Surveyor",
     teamlead: "Teamlead",
+    plumber: "Plumber",
     warehouse: "Warehouse",
   };
   $("#account-details").textContent = `${user.username} - ${roleNames[user.role] || "Employee"}`;
@@ -3569,7 +3570,7 @@ function renderHouses() {
   }
   const data = state.dashboard;
   const canManageHouses = state.user?.role === "admin";
-  const canEditHouseChecklist = ["admin", "employee"].includes(state.user?.role);
+  const canEditHouseChecklist = ["admin", "employee", "plumber"].includes(state.user?.role);
   const canViewMaterials = state.user?.role !== "assign";
   const isAssign = state.user?.role === "assign";
   $("#assign-houses-dashboard").classList.toggle("hidden", !isAssign);
@@ -4948,9 +4949,9 @@ function updateMovementFields() {
   $("#house-hint").textContent = ["pickup", "return"].includes(kind)
     ? "Required for this movement. Search matches house, owner and assigned employee."
     : "Optional for this movement. Search matches house, owner and assigned employee.";
-  if (state.user?.role === "employee") {
+  if (["employee", "plumber"].includes(state.user?.role)) {
     $("#house-hint").textContent =
-      "Employees can record movements only for existing houses.";
+      "This account can record movements only for existing houses.";
   }
   $$(".location-kind").forEach((select) =>
     select.dispatchEvent(new Event("change")),
@@ -5460,6 +5461,7 @@ async function loadUsers() {
     delivery: "Delivery",
     supervisor: "Supervisor",
     teamlead: "Teamlead",
+    plumber: "Plumber",
     employee: "Employee (legacy)",
   };
   $("#user-list").innerHTML = result.users

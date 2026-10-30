@@ -4406,6 +4406,12 @@ console.log(JSON.stringify([blankValid,blankMessage,assignedValid,employee.value
         self.assertIn("Each length is considered separately when reusing 2.5 m pieces.", loader)
         self.assertIn('className="survey-note"', loader)
 
+    def test_plumber_role_is_available_with_employee_style_checklist_access(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<option value="plumber">Plumber</option>', html)
+        self.assertIn('"admin", "employee", "plumber"', APP_JS)
+        self.assertIn('plumber: "Plumber"', APP_JS)
+
     def test_auto_calculator_uses_seai_ewi_area_and_survey_perimeter(self):
         helpers = CALC_HTML[
             CALC_HTML.index("function calculatorArea"):

@@ -740,7 +740,7 @@ def initialize_db():
                 role TEXT NOT NULL CHECK (
                     role IN (
                         'admin', 'assign', 'boss', 'surveyor', 'warehouse',
-                        'delivery', 'supervisor', 'teamlead', 'employee'
+                        'delivery', 'supervisor', 'teamlead', 'plumber', 'employee'
                     )
                 ),
                 password_salt BLOB NOT NULL,
@@ -775,6 +775,7 @@ def initialize_db():
                 ("delivery", "Delivery"),
                 ("supervisor", "Supervisor"),
                 ("teamlead", "Teamlead"),
+                ("plumber", "Plumber"),
                 ("employee", "Employee"),
             ),
         )
@@ -1084,7 +1085,7 @@ def _migrate_user_roles():
             f"'{role}'" in schema
             for role in (
                 "admin", "assign", "boss", "surveyor", "warehouse",
-                "delivery", "supervisor", "teamlead", "employee",
+                "delivery", "supervisor", "teamlead", "plumber", "employee",
             )
         ):
             return
@@ -1099,7 +1100,7 @@ def _migrate_user_roles():
                     role TEXT NOT NULL CHECK (
                         role IN (
                             'admin', 'assign', 'boss', 'surveyor', 'warehouse',
-                            'delivery', 'supervisor', 'teamlead', 'employee'
+                            'delivery', 'supervisor', 'teamlead', 'plumber', 'employee'
                         )
                     ),
                     password_salt BLOB NOT NULL,
@@ -1164,6 +1165,7 @@ def _insert_user(db, username, display_name, pin, role):
         "delivery",
         "supervisor",
         "teamlead",
+        "plumber",
         "employee",
     }:
         raise ApiError(400, "Choose a valid account role.")
@@ -4687,7 +4689,7 @@ class LegacyRouteHandlers:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House checklist must be a JSON object.")
-                if user["role"] not in {"admin", "employee"}:
+                if user["role"] not in {"admin", "employee", "plumber"}:
                     raise ApiError(403, "Administrator or employee access is required.")
                 house_id = str(payload.get("house_id") or "").strip()
                 if not house_id:

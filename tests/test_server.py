@@ -61,6 +61,7 @@ class TrackerTests(unittest.TestCase):
             "delivery": "Delivery",
             "supervisor": "Supervisor",
             "teamlead": "Teamlead",
+            "plumber": "Plumber",
             "employee": "Employee",
         }
         with server.connect_db() as db:
@@ -117,6 +118,7 @@ class TrackerTests(unittest.TestCase):
             "delivery",
             "supervisor",
             "teamlead",
+            "plumber",
         )
         httpd, thread = self.start_test_server()
         try:
@@ -1126,6 +1128,60 @@ class TrackerTests(unittest.TestCase):
                 cookie=employee_cookie,
             )
             self.assertEqual(status, 404)
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "plumber1",
+                    "display_name": "Tracker Plumber",
+                    "pin": "456789",
+                    "role": "plumber",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, plumber_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "plumber1", "pin": "456789"},
+            )
+            self.assertEqual(status, 200)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-checklist",
+                {
+                    "house_id": "H-CHECKLIST",
+                    "plumber_status": "done",
+                },
+                plumber_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(result["saved"])
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/houses/plan",
+                {"id": "H-CHECKLIST", "ready": True},
+                plumber_cookie,
+            )
+            self.assertEqual(status, 403)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "plumber2",
+                    "display_name": "Another Plumber",
+                    "pin": "456789",
+                    "role": "plumber",
+                },
+                plumber_cookie,
+            )
+            self.assertEqual(status, 403)
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -1848,7 +1904,7 @@ class TrackerTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT user_id FROM app_sessions WHERE token_hash = 'session-hash'").fetchone()[0], 1)
                 for role in (
                     "assign", "boss", "surveyor", "warehouse", "delivery",
-                    "supervisor", "teamlead", "employee",
+                    "supervisor", "teamlead", "plumber", "employee",
                 ):
                     db.execute("UPDATE app_users SET role = ? WHERE id = 1", (role,))
         finally:

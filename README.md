@@ -23,7 +23,9 @@ py server.py
 Open [http://127.0.0.1:8001](http://127.0.0.1:8001). On the first launch,
 create the administrator account with a username and unique 6-digit PIN. The
 administrator can create Admin, Assign, Boss, Surveyor, Warehouse, Delivery,
-Supervisor, and Teamlead accounts from **Account → Manage accounts**. Employee
+Supervisor, Teamlead, and Plumber accounts from **Account → Manage accounts**.
+Plumber accounts have employee-style access, including editing active-house
+checklists, but cannot administer accounts or change house status. Employee
 accounts remain available for compatibility.
 Supervisors see only houses assigned to their account and can set each house's
 delivery person and team from their dashboard.
@@ -36,11 +38,11 @@ account, its existing password still works in the PIN field; change it to a
 6-digit PIN after signing in.
 
 The database maintains a role catalog for Admin, Assign, Boss, Surveyor,
-Warehouse, Delivery, Supervisor, and Teamlead, plus the existing Employee role
-for compatibility. Admin is assigned the `*` permission, meaning all
-application features and operations. Other roles have no permissions assigned
-until their access rules are defined. Creating those accounts does not yet
-change the app's existing authorization behavior.
+Warehouse, Delivery, Supervisor, Teamlead, and Plumber, plus the existing
+Employee role for compatibility. Admin is assigned the `*` permission, meaning
+all application features and operations. The role-permission tables are
+catalog metadata; application access is enforced by the existing role-specific
+rules.
 
 ## Run the separate SEAI Red dataset
 
@@ -92,7 +94,7 @@ Employees can view tracker records and record material movements against
 existing houses. They cannot add materials, count or adjust stock, import
 workbooks, create houses, or finish/reopen houses. These restrictions are
 enforced by the server, not only by hiding buttons in the interface.
-Admins and employees can update scaffolding, ESB-work, and plumber-work
+Admins, employees, and Plumbers can update scaffolding, ESB-work, and plumber-work
 completion directly on Active house cards: tick an item to mark it done (green),
 or untick it to return it to not done. Work marked not required by the surveyor
 is shown as not necessary. Ready-for-start cards keep notes and checklist
