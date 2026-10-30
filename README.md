@@ -2,7 +2,9 @@
 
 This is an isolated demo copy of the tracker. It has its own SQLite database
 at `instance/ewi.sqlite3`, uses port `8001`, and does not read or modify the
-live project database.
+live project database. Its HTTP API and static-file routes run on FastAPI via
+Uvicorn; `server.py` remains the supported launcher and applies the same host,
+database, and HTTPS environment settings.
 
 The demo contains the material names and codes from the Excel stock list,
 fictional warehouse quantities, and fictional houses, employees, and movements.

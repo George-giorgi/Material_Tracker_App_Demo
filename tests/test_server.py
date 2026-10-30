@@ -2,7 +2,6 @@ import http.client
 import json
 import sqlite3
 import tempfile
-import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -14,6 +13,7 @@ from openpyxl import Workbook
 
 import server
 import seed_demo
+from tests.support import UvicornTestServer
 
 
 class TrackerTests(unittest.TestCase):
@@ -281,9 +281,8 @@ class TrackerTests(unittest.TestCase):
             thread.join(timeout=5)
 
     def start_test_server(self):
-        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RequestHandler)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-        thread.start()
+        httpd = UvicornTestServer()
+        thread = httpd.start()
         return httpd, thread
 
     def test_brusna_curious_cat_logo_is_served_for_app_branding(self):
@@ -1175,6 +1174,16 @@ class TrackerTests(unittest.TestCase):
                 {"username": "surveyor1", "pin": "345678"},
             )
             self.assertEqual(status, 200)
+            with server.connect_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO house_role_assignments
+                        (house_id, role, user_id, assigned_by, assigned_at)
+                    SELECT 'H-WORKPLAN', 'surveyor', id, 'Tracker Admin',
+                           '2026-10-30T12:00:00'
+                    FROM app_users WHERE username = 'surveyor1'
+                    """
+                )
             status, result, _ = self.http_request(
                 httpd,
                 "POST",
@@ -1676,6 +1685,15 @@ class TrackerTests(unittest.TestCase):
                     db.executemany(
                         "INSERT INTO provided_houses(id, ready_for_start, source) VALUES (?, ?, 'tracker')",
                         [("H-READY", 1), ("H-PENDING", 0)],
+                    )
+                    db.execute(
+                        """
+                        INSERT INTO house_role_assignments
+                            (house_id, role, user_id, assigned_by, assigned_at)
+                        SELECT 'H-READY', 'surveyor', id, 'Admin',
+                               '2026-10-30T12:00:00'
+                        FROM app_users WHERE username = 'survey1'
+                        """
                     )
             status, result, _ = self.http_request(
                 httpd, "GET", "/api/calculator/houses?status=not_started", cookie=survey_cookie

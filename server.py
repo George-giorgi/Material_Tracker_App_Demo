@@ -8,21 +8,24 @@ import re
 import secrets
 import sqlite3
 import ssl
-import sys
 import time
 from threading import Lock
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 import zipfile
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime
 from http.cookies import CookieError, SimpleCookie
 from io import BytesIO, StringIO
 from xml.etree.ElementTree import ParseError, fromstring
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.sax.saxutils import escape
+
+import uvicorn
+from fastapi import FastAPI, Request as FastAPIRequest
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 
 import pymupdf as fitz
 from pypdf.errors import PdfReadError
@@ -187,7 +190,7 @@ def _met_eireann_county_forecast():
         ):
             return _met_eireann_weather_cache
 
-        request = Request(
+        request = UrlRequest(
             MET_EIREANN_COUNTY_FORECAST_URL,
             headers={"User-Agent": "MaterialTracker/1.0"},
         )
@@ -2546,12 +2549,7 @@ def _import_workbook_contents(db, workbook):
     }
 
 
-class RequestHandler(BaseHTTPRequestHandler):
-    server_version = "EWITracker/1.0"
-
-    def log_message(self, format_string, *args):
-        print("%s - %s" % (self.address_string(), format_string % args), file=sys.stderr)
-
+class LegacyRouteHandlers:
     def _send_json(self, status, payload, headers=()):
         path = urlparse(self.path).path
         if (
@@ -5475,8 +5473,121 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": f"Could not save the record: {exc}"})
 
 
+class FastAPIRequestContext(LegacyRouteHandlers):
+    def __init__(self, method, path, headers, body, client_address):
+        self.command = method
+        self.path = path
+        self.headers = headers
+        self.rfile = BytesIO(body)
+        self.wfile = BytesIO()
+        self.client_address = client_address
+        self.status = 200
+        self.response_headers = []
+
+    def send_response(self, status, message=None):
+        self.status = status
+
+    def send_header(self, name, value):
+        self.response_headers.append((name, value))
+
+    def end_headers(self):
+        pass
+
+    def address_string(self):
+        return self.client_address[0] if self.client_address else ""
+
+    def response(self):
+        response = Response(
+            content=self.wfile.getvalue(),
+            status_code=self.status,
+        )
+        response.raw_headers = [
+            (name.encode("latin-1"), value.encode("latin-1"))
+            for name, value in self.response_headers
+        ]
+        return response
+
+
+@asynccontextmanager
+async def _app_lifespan(application):
+    if getattr(application.state, "initialized_db_path", None) != DB_PATH:
+        await run_in_threadpool(initialize_db)
+        application.state.initialized_db_path = DB_PATH
+    yield
+
+
+app = FastAPI(
+    title="Material Tracker API",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=_app_lifespan,
+)
+
+
+def _run_legacy_request(method, path, headers, body, client_address):
+    context = FastAPIRequestContext(
+        method,
+        path,
+        headers,
+        body,
+        client_address,
+    )
+    try:
+        if method == "GET":
+            context.do_GET()
+        else:
+            context.do_POST()
+    except ApiError as exc:
+        context._send_json(exc.status, {"error": str(exc)})
+    return context.response()
+
+
+async def _dispatch_fastapi_request(request):
+    body = bytearray()
+    if request.method == "POST":
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 10_000_000:
+                context = FastAPIRequestContext(
+                    request.method,
+                    request.url.path,
+                    request.headers,
+                    b"",
+                    request.client,
+                )
+                context._send_json(400, {"error": "Request body is empty or too large."})
+                return context.response()
+
+    raw_path = request.scope.get("raw_path", request.url.path.encode("ascii"))
+    path = raw_path.decode("ascii")
+    query = request.scope.get("query_string", b"")
+    if query:
+        path += "?" + query.decode("ascii")
+    client_address = (
+        (request.client.host, request.client.port)
+        if request.client
+        else None
+    )
+    return await run_in_threadpool(
+        _run_legacy_request,
+        request.method,
+        path,
+        request.headers,
+        bytes(body),
+        client_address,
+    )
+
+
+@app.api_route("/", methods=["GET", "POST"])
+@app.api_route("/{path:path}", methods=["GET", "POST"])
+async def dispatch_request(request: FastAPIRequest):
+    return await _dispatch_fastapi_request(request)
+
+
 def run():
     initialize_db()
+    app.state.initialized_db_path = DB_PATH
     if bool(TLS_CERT) != bool(TLS_KEY):
         raise RuntimeError("Set both EWI_TLS_CERT and EWI_TLS_KEY to enable HTTPS.")
     if HOST not in {"127.0.0.1", "localhost", "::1"} and not COOKIE_SECURE:
@@ -5488,20 +5599,19 @@ def run():
             raise RuntimeError(
                 "Create the first administrator on localhost before enabling network access."
             )
-    server = ThreadingHTTPServer((HOST, PORT), RequestHandler)
     scheme = "https" if COOKIE_SECURE else "http"
-    if COOKIE_SECURE:
-        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        tls_context.load_cert_chain(TLS_CERT, TLS_KEY)
-        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
     print(f"EWI Tracker running at {scheme}://{HOST}:{PORT}")
     try:
-        server.serve_forever()
+        uvicorn.run(
+            app,
+            host=HOST,
+            port=PORT,
+            ssl_certfile=TLS_CERT or None,
+            ssl_keyfile=TLS_KEY or None,
+            ssl_version=ssl.PROTOCOL_TLS_SERVER,
+        )
     except KeyboardInterrupt:
         print("\nStopping EWI Tracker.")
-    finally:
-        server.server_close()
 
 
 if __name__ == "__main__":

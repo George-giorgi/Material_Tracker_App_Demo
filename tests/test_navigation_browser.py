@@ -9,6 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 import server
+from tests.support import UvicornTestServer
 from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
@@ -28,9 +29,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp_dir.name) / "navigation-test.sqlite3"
         server.initialize_db()
-        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RequestHandler)
-        self.server_thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
-        self.server_thread.start()
+        self.httpd = UvicornTestServer()
+        self.server_thread = self.httpd.start()
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch()
         self.page = self.browser.new_page()

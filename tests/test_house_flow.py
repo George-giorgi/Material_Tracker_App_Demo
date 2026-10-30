@@ -6,7 +6,6 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-import threading
 import unittest
 from io import BytesIO
 from datetime import date
@@ -16,6 +15,7 @@ from unittest.mock import patch
 import seed_houses
 import server
 import pymupdf as fitz
+from tests.support import UvicornTestServer
 from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
@@ -82,9 +82,8 @@ class FlowBase(unittest.TestCase):
 class HttpBase(FlowBase):
     def setUp(self):
         super().setUp()
-        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RequestHandler)
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
-        self.thread.start()
+        self.httpd = UvicornTestServer()
+        self.thread = self.httpd.start()
         self.cookie = ""
         _, _, self.cookie = self.call(
             "POST", "/api/auth/setup",
