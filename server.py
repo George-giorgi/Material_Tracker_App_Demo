@@ -3545,6 +3545,70 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "plumber_status": checklist["plumber_status"] if checklist else None,
                 },
             )
+        elif path.startswith("/api/assign/seai-record/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if user["role"] != "assign":
+                self._send_json(403, {"error": "Assign role access is required."})
+                return
+            raw_house_id = path[len("/api/assign/seai-record/"):]
+            if not raw_house_id or "/" in raw_house_id:
+                self._send_json(404, {"error": "House was not found."})
+                return
+            house_id = unquote(raw_house_id).strip()
+            if not house_id:
+                self._send_json(404, {"error": "House was not found."})
+                return
+            with connect_db() as db:
+                house = db.execute(
+                    """
+                    SELECT p.ready_for_start,
+                           EXISTS(SELECT 1 FROM houses h WHERE h.id = p.id) AS is_active
+                    FROM provided_houses p
+                    WHERE p.id = ?
+                    """,
+                    (house_id,),
+                ).fetchone()
+                if house is None:
+                    house = db.execute(
+                        "SELECT 0 AS ready_for_start, 1 AS is_active "
+                        "FROM houses WHERE id = ?",
+                        (house_id,),
+                    ).fetchone()
+                    if house is None:
+                        self._send_json(404, {"error": "House was not found."})
+                        return
+                application_table = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'seai_applications'"
+                ).fetchone()
+                application = (
+                    db.execute(
+                        "SELECT detail_data_json FROM seai_applications "
+                        "WHERE application_id = ?",
+                        (house_id,),
+                    ).fetchone()
+                    if application_table
+                    else None
+                )
+                details = None
+                if application:
+                    try:
+                        details = json.loads(application["detail_data_json"])
+                    except (TypeError, json.JSONDecodeError):
+                        raise ApiError(500, "Stored SEAI application details are invalid.")
+                    if not isinstance(details, dict):
+                        raise ApiError(500, "Stored SEAI application details are invalid.")
+            self._send_json(
+                200,
+                {
+                    "house_id": house_id,
+                    "seai_details": details,
+                    "ready_for_start": bool(house["ready_for_start"]),
+                    "is_active": bool(house["is_active"]),
+                },
+            )
         elif path.startswith("/api/houses/"):
             user = self._login_required()
             if user is None:

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261029-1642">
+    <link rel="stylesheet" href="/app.css?v=20261030-1205">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -34,7 +34,7 @@
         <nav class="main-nav" aria-label="Main navigation">
           <button class="nav-item active" data-tab="overview" aria-current="page"><span class="nav-icon">◫</span>Overview</button>
           <button class="nav-item" data-tab="inventory"><span class="nav-icon">▤</span>Inventory</button>
-          <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span>Houses &amp; teams</button>
+          <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span><span class="nav-label">Houses &amp; teams</span></button>
           <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
         </nav>
         <div class="sidebar-bottom">
@@ -156,13 +156,28 @@
               <button type="button" class="kpi active" data-assign-house-filter="active" aria-pressed="true"><span class="kpi-label">Active houses</span><span class="kpi-value" id="assign-stat-active">0</span></button>
               <button type="button" class="kpi closed" data-assign-house-filter="closed" aria-pressed="false"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="assign-stat-closed">0</span></button>
             </div>
-            <section id="assign-surveyor-workload" class="assign-surveyor-workload hidden" aria-labelledby="assign-surveyor-workload-title">
-              <div class="assign-surveyor-workload-heading">
-                <div><h2 id="assign-surveyor-workload-title">Surveyor workload</h2><p>Busy means the surveyor has at least one assigned house without a saved survey.</p></div>
+            <details id="assign-surveyor-workload" class="assign-surveyor-workload hidden">
+              <summary class="assign-surveyor-workload-summary">
+                <h2>Surveyors</h2>
                 <span id="assign-surveyor-workload-count" aria-live="polite"></span>
-              </div>
+              </summary>
+              <p class="assign-surveyor-workload-hint">Busy surveyors have at least one assigned survey to complete.</p>
               <ul id="assign-surveyor-workload-list" class="assign-surveyor-workload-list"></ul>
-            </section>
+            </details>
+            <details id="assign-weather-panel" class="weather-panel card hidden">
+              <summary class="assign-weather-summary">
+                <div class="assign-weather-title">
+                  <span class="eyebrow">COUNTY FORECAST</span>
+                  <h2>Mayo &amp; Sligo</h2>
+                </div>
+                <p class="weather-status" id="assign-weather-status" role="status" aria-live="polite">Forecast loads when you sign in.</p>
+              </summary>
+              <div class="assign-weather-content">
+                <button class="icon-button weather-refresh" id="assign-weather-refresh" type="button" aria-label="Refresh weather forecast" title="Refresh forecast">↻</button>
+                <div class="weather-areas" id="assign-weather-areas"></div>
+                <p class="weather-attribution">County-level daily forecast from <a href="https://www.met.ie/" target="_blank" rel="noreferrer">Met Éireann</a>.</p>
+              </div>
+            </details>
             <div class="houses-teams-tabs" id="houses-teams-tabs" role="tablist" aria-label="Houses and teams views">
               <button class="houses-teams-tab active" id="houses-tab" type="button" role="tab" aria-selected="true" aria-controls="houses-section" tabindex="0">Houses</button>
               <button class="houses-teams-tab" id="teams-tab" type="button" role="tab" aria-selected="false" aria-controls="teams-section" tabindex="-1">Teams</button>
@@ -388,6 +403,26 @@
               <div class="table-wrap"><table><thead><tr><th>Movement date / recorded time</th><th>Movement</th><th>Material</th><th>Quantity</th><th>From</th><th>To</th><th>Responsible</th><th>Notes</th></tr></thead><tbody id="house-movement-history"></tbody></table></div>
               <div id="house-history-empty" class="empty-state hidden"><div class="empty-symbol">↔</div><strong>No movements recorded yet</strong><p>This house's delivery, return, use, and transfer history will appear here.</p></div>
             </article>
+          </section>
+          <section id="assign-seai-house-detail" class="assign-seai-house-detail hidden" aria-labelledby="assign-seai-house-detail-title">
+            <button class="text-button back-button house-back" id="assign-seai-house-back" type="button">← Back to dashboard</button>
+            <div class="page-heading house-detail-heading">
+              <div class="house-detail-title-group">
+                <div class="eyebrow">IMPORTED SEAI APPLICATION</div>
+                <h1 id="assign-seai-house-detail-title"></h1>
+                <p class="page-subtitle">Read-only information saved from the SEAI portal.</p>
+              </div>
+            </div>
+            <div class="assign-seai-house-actions">
+              <button class="button button-primary hidden" id="assign-seai-house-ready" type="button">Mark ready for start</button>
+              <span class="status-pill ready hidden" id="assign-seai-house-status"></span>
+            </div>
+            <div id="assign-seai-house-record" class="survey-room-seai-content"></div>
+            <div id="assign-seai-house-empty" class="empty-state card hidden">
+              <div class="empty-symbol">⌂</div>
+              <strong>SEAI details are not available yet</strong>
+              <p>No imported SEAI application information has been saved for this house.</p>
+            </div>
           </section>
         </section>
 
@@ -686,6 +721,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261029-1642" defer></script>
+    <script src="/app.js?v=20261030-1205" defer></script>
   </body>
 </html>

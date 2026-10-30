@@ -536,6 +536,36 @@ class NavigationBrowserTests(unittest.TestCase):
                 VALUES ('CLOSED-ASSIGN', 'Closed Owner', 'Assign Browser', 1)
                 """
             )
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                """
+                INSERT INTO seai_applications(application_id, detail_data_json)
+                VALUES (?, ?)
+                """,
+                (
+                    "ACTIVE-ASSIGN",
+                    json.dumps(
+                        {
+                            "Application": [
+                                {
+                                    "Application ID": "ACTIVE-ASSIGN",
+                                    "Portal owner": "SEAI Owner",
+                                }
+                            ],
+                            "Measures": [
+                                {
+                                    "Name": "External Wall Insulation",
+                                    "Survey Quantity": "120",
+                                    "Survey Qty including Variation": "135",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
 
         result = self.page.evaluate(
             """async () => {
@@ -553,6 +583,12 @@ class NavigationBrowserTests(unittest.TestCase):
             }"""
         )
         self.assertEqual(result["status"], 201, result)
+        admin_record_access = self.page.evaluate(
+            """async () => (await fetch(
+              '/api/assign/seai-record/ACTIVE-ASSIGN'
+            )).status"""
+        )
+        self.assertEqual(admin_record_access, 403)
         self.page.locator("#account-button").click()
         self.page.locator("#account-sign-out").click()
         self.page.locator("#auth-screen:not(.hidden)").wait_for()
@@ -562,6 +598,49 @@ class NavigationBrowserTests(unittest.TestCase):
 
         dashboard = self.page.locator("#assign-houses-dashboard")
         dashboard.wait_for(state="visible")
+        self.assertEqual(
+            self.page.locator('[data-tab="houses"] .nav-label').inner_text(),
+            "Dashboard",
+        )
+        self.assertTrue(self.page.locator("#houses-teams-tabs").is_hidden())
+        self.assertTrue(self.page.locator("#teams-section").is_hidden())
+        self.assertTrue(self.page.locator("#houses-section").is_visible())
+        self.assertTrue(self.page.locator("#house-team-filter").is_hidden())
+        heading_style = self.page.locator("#houses-list-heading").evaluate(
+            """element => ({
+              family: getComputedStyle(element).fontFamily,
+              size: getComputedStyle(element).fontSize,
+              weight: getComputedStyle(element).fontWeight,
+              color: getComputedStyle(element).color,
+              statusColor: getComputedStyle(
+                document.querySelector("[data-assign-house-filter='active']")
+              ).borderLeftColor
+            })"""
+        )
+        self.assertIn("Manrope", heading_style["family"])
+        self.assertEqual(heading_style["size"], "19px")
+        self.assertEqual(heading_style["weight"], "750")
+        self.assertEqual(heading_style["color"], heading_style["statusColor"])
+        assign_weather = self.page.locator("#assign-weather-panel")
+        assign_weather.wait_for(state="visible")
+        self.page.wait_for_function(
+            "() => document.querySelector('#assign-weather-status')?.textContent.includes('1-day forecast')"
+        )
+        self.assertFalse(assign_weather.evaluate("(element) => element.open"))
+        self.assertIn("Mayo & Sligo", assign_weather.locator("summary").inner_text())
+        assign_weather.locator("summary").click()
+        assign_weather_areas = self.page.locator("#assign-weather-areas .weather-area")
+        self.assertEqual(assign_weather_areas.count(), 2)
+        self.assertEqual(assign_weather_areas.nth(0).locator("h3").inner_text(), "County Mayo")
+        self.assertEqual(assign_weather_areas.nth(1).locator("h3").inner_text(), "County Sligo")
+        assign_weather.locator("#assign-weather-refresh").click()
+        self.assertTrue(assign_weather.locator("#assign-weather-refresh").is_visible())
+        self.page.set_viewport_size({"width": 375, "height": 800})
+        self.assertLessEqual(
+            assign_weather.evaluate("(element) => element.scrollWidth"),
+            assign_weather.evaluate("(element) => element.clientWidth"),
+        )
+        self.page.set_viewport_size({"width": 1280, "height": 720})
         self.assertEqual(self.active_page(), "houses")
         self.assertEqual(
             self.page.locator("#houses-page-title").inner_text(),
@@ -573,6 +652,10 @@ class NavigationBrowserTests(unittest.TestCase):
                 for key in ("seai", "active", "closed", "ready", "not-started")
             ],
             ["4", "1", "1", "1", "1"],
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "active",
         )
         self.assertEqual(
             self.page.locator(
@@ -587,6 +670,40 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(active_card.locator(".stage-switch").count(), 0)
         self.assertEqual(active_card.locator(".house-note-open").count(), 0)
         self.assertEqual(active_card.locator(".house-snags-open").count(), 0)
+        active_card.locator(".assign-seai-details").click()
+        self.page.locator("#assign-seai-house-detail").wait_for(state="visible")
+        self.assertEqual(
+            self.page.locator("#assign-seai-house-detail-title").inner_text(),
+            "ACTIVE-ASSIGN",
+        )
+        self.page.wait_for_function(
+            """() => document.querySelector('#assign-seai-house-record')
+              ?.textContent.includes('External Wall Insulation')"""
+        )
+        self.assertTrue(
+            self.page.locator("#assign-seai-house-ready").is_hidden()
+        )
+        self.assertEqual(
+            self.page.locator("#assign-seai-house-status").inner_text(),
+            "Active",
+        )
+        self.page.locator("#assign-seai-house-record .survey-room-seai-section").filter(
+            has_text="Application",
+        ).locator("summary").click()
+        self.assertIn(
+            "SEAI Owner",
+            self.page.locator("#assign-seai-house-record").inner_text(),
+        )
+        self.assertIn(
+            "External Wall Insulation",
+            self.page.locator("#assign-seai-house-record").inner_text(),
+        )
+        self.assertEqual(
+            self.page.locator("#assign-seai-house-record .seai-variation-edit").count(),
+            0,
+        )
+        self.page.locator("#assign-seai-house-back").click()
+        active_card.wait_for(state="visible")
 
         self.assertTrue(
             self.page.locator("#assign-stat-seai").locator("..").locator(
@@ -692,12 +809,49 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator("#house-map-list-view").click()
         self.assertTrue(self.page.locator("#assign-houses-dashboard").is_visible())
         self.page.locator("[data-assign-house-filter='ready']").click()
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "ready",
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            self.page.locator(
+                "[data-assign-house-filter='ready']"
+            ).evaluate("(element) => getComputedStyle(element).borderLeftColor"),
+        )
         self.page.get_by_role("heading", name="READY-ASSIGN").wait_for()
         self.page.locator("[data-assign-house-filter='closed']").click()
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "closed",
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            self.page.locator(
+                "[data-assign-house-filter='closed']"
+            ).evaluate("(element) => getComputedStyle(element).borderLeftColor"),
+        )
         self.page.get_by_role("heading", name="CLOSED-ASSIGN").wait_for()
         self.page.locator("[data-assign-house-filter='not_started']").click()
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "not_started",
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            self.page.locator(
+                "[data-assign-house-filter='not_started']"
+            ).evaluate("(element) => getComputedStyle(element).borderLeftColor"),
+        )
+        self.assertTrue(self.page.locator("#house-team-filter").is_hidden())
         pending_card = self.page.locator(
-            "#houses-list [data-house-id='PENDING-ASSIGN']"
+            "#houses-list article[data-house-id='PENDING-ASSIGN']"
         )
         pending_card.locator(".house-insulation-summary").wait_for()
         self.assertEqual(
@@ -720,23 +874,81 @@ class NavigationBrowserTests(unittest.TestCase):
             pending_card.locator(".house-insulation-demo-note").inner_text(),
         )
         self.assertIn("m²", pending_card.locator(".house-insulation-summary").inner_text())
+        pending_action_rows = pending_card.evaluate(
+            """card => {
+              const details = card.querySelector('.assign-seai-details').getBoundingClientRect();
+              const ready = card.querySelector('.plan-ready-toggle[data-ready="true"]').getBoundingClientRect();
+              return {details: details.top, ready: ready.top};
+            }"""
+        )
+        self.assertAlmostEqual(
+            pending_action_rows["details"],
+            pending_action_rows["ready"],
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        dark_pending_action_rows = pending_card.evaluate(
+            """card => {
+              const details = card.querySelector('.assign-seai-details').getBoundingClientRect();
+              const ready = card.querySelector('.plan-ready-toggle[data-ready="true"]').getBoundingClientRect();
+              return {details: details.top, ready: ready.top};
+            }"""
+        )
+        self.assertAlmostEqual(
+            dark_pending_action_rows["details"],
+            dark_pending_action_rows["ready"],
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
+        pending_card.locator(".assign-seai-details").click()
+        self.page.locator("#assign-seai-house-empty").wait_for(state="visible")
+        ready_button = self.page.locator("#assign-seai-house-ready")
+        self.assertTrue(ready_button.is_visible())
+        ready_button.click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector('#houses-list-heading')
+              ?.dataset.status === 'ready'"""
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "ready",
+        )
+        self.assertTrue(self.page.locator("#assign-seai-house-detail").is_hidden())
+        self.assertTrue(ready_button.is_hidden())
+        self.assertTrue(pending_card.locator(".status-pill.ready").is_visible())
         self.assertNotIn(
             "materials",
             self.page.locator("#page-houses").inner_text().lower(),
         )
-        pending_card.locator(
-            '.plan-ready-toggle[data-ready="true"]'
-        ).click()
-        self.page.locator("[data-assign-house-filter='ready']").click()
         ready_card = self.page.locator(
             "#houses-list article.house-card[data-house-id='PENDING-ASSIGN']"
         )
         ready_card.locator(".status-pill.ready").wait_for()
+        self.assertIn("assign-ready-arrival", ready_card.get_attribute("class"))
+        self.assertEqual(
+            ready_card.evaluate("(card) => getComputedStyle(card).animationName"),
+            "assign-ready-arrival",
+        )
         self.assertNotIn(
             "Back to not started",
             ready_card.inner_text(),
         )
-        self.assertEqual(ready_card.locator(".house-card-actions .text-button").count(), 2)
+        self.assertEqual(ready_card.locator(".house-card-actions .text-button").count(), 3)
+        self.assertTrue(ready_card.locator(".assign-seai-details").is_visible())
+        action_rows = ready_card.evaluate(
+            """card => {
+              const rect = selector => {
+                const {top, height} = card.querySelector(selector).getBoundingClientRect();
+                return {top, height};
+              };
+              return {
+                activate: rect('.assign-house-activate'),
+                assign: rect('.assign-house-team'),
+                details: rect('.assign-seai-details')
+              };
+            }"""
+        )
+        self.assertAlmostEqual(action_rows["activate"]["top"], action_rows["assign"]["top"])
+        self.assertAlmostEqual(action_rows["details"]["top"], action_rows["assign"]["top"])
         self.assertTrue(ready_card.locator(".assign-house-activate").is_disabled())
         self.assertEqual(
             ready_card.locator(".assign-house-team").inner_text(),
@@ -816,6 +1028,9 @@ class NavigationBrowserTests(unittest.TestCase):
 
         workload = self.page.locator("#assign-surveyor-workload")
         workload.wait_for(state="visible")
+        self.assertFalse(workload.evaluate("(element) => element.open"))
+        self.assertIn("busy", workload.locator("summary").inner_text().lower())
+        workload.locator("summary").click()
         busy_surveyor = self.page.locator(
             "#assign-surveyor-workload-list .assign-surveyor-row"
         ).filter(has_text="House Surveyor")
@@ -838,6 +1053,162 @@ class NavigationBrowserTests(unittest.TestCase):
             workload.evaluate("(element) => element.scrollWidth"),
             workload.evaluate("(element) => element.clientWidth"),
         )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_assign_map_can_view_details_and_mark_selected_house_ready(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, address, owner_name)
+                VALUES ('MAP-ASSIGN-PENDING', 'D03 TEST', 'Selected map address', 'Map Owner')
+                """
+            )
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications(application_id, detail_data_json) "
+                "VALUES (?, ?)",
+                (
+                    "MAP-ASSIGN-PENDING",
+                    json.dumps(
+                        {
+                            "Application": [
+                                {"Application ID": "MAP-ASSIGN-PENDING"}
+                            ]
+                        }
+                    ),
+                ),
+            )
+            server._insert_user(
+                db, "assign-map-user", "Map Assign User", "234567", "assign"
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("assign-map-user")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='not_started']").click()
+        card_ready_button = self.page.locator(
+            "#houses-list [data-house-id='MAP-ASSIGN-PENDING'].plan-ready-toggle"
+        )
+        card_ready_button.wait_for()
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
+        card_light_colors = card_ready_button.evaluate(
+            """button => ({
+              background: getComputedStyle(button).backgroundColor,
+              border: getComputedStyle(button).borderTopColor,
+              color: getComputedStyle(button).color
+            })"""
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        card_dark_colors = card_ready_button.evaluate(
+            """button => ({
+              background: getComputedStyle(button).backgroundImage,
+              border: getComputedStyle(button).borderTopColor,
+              color: getComputedStyle(button).color
+            })"""
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
+        self.page.locator("[data-assign-house-filter='seai']").click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        map_house = self.page.locator(
+            "#house-map-house-list [data-map-house-id='MAP-ASSIGN-PENDING']"
+        )
+        map_house.wait_for()
+        map_house.click()
+        selection = self.page.locator("#house-map-selection")
+        details_button = selection.locator(".assign-seai-details")
+        ready_button = selection.locator(
+            '.plan-ready-toggle[data-ready="true"]'
+        )
+        self.assertTrue(details_button.is_visible())
+        self.assertTrue(ready_button.is_visible())
+        self.assertEqual(
+            ready_button.evaluate(
+                """button => ({
+                  background: getComputedStyle(button).backgroundColor,
+                  border: getComputedStyle(button).borderTopColor,
+                  color: getComputedStyle(button).color
+                })"""
+            ),
+            card_light_colors,
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        self.assertEqual(
+            ready_button.evaluate(
+                """button => ({
+                  background: getComputedStyle(button).backgroundImage,
+                  border: getComputedStyle(button).borderTopColor,
+                  color: getComputedStyle(button).color
+                })"""
+            ),
+            card_dark_colors,
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
+
+        details_button.click()
+        self.page.locator("#assign-seai-house-detail").wait_for(state="visible")
+        self.assertEqual(
+            self.page.locator("#assign-seai-house-detail-title").inner_text(),
+            "MAP-ASSIGN-PENDING",
+        )
+        self.page.wait_for_function(
+            """() => document.querySelector('#assign-seai-house-record')
+              ?.textContent.includes('MAP-ASSIGN-PENDING')"""
+        )
+        self.page.locator("#assign-seai-house-back").click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        self.assertIn("MAP-ASSIGN-PENDING", selection.inner_text())
+
+        with self.page.expect_response(
+            lambda response: response.url.endswith("/api/houses/plan")
+            and response.request.method == "POST"
+            and response.status == 200
+        ):
+            selection.locator(
+                '.plan-ready-toggle[data-ready="true"]'
+            ).click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector('#houses-list-heading')
+              ?.dataset.status === 'ready'"""
+        )
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "ready",
+        )
+        ready_card = self.page.locator(
+            "#houses-list article[data-house-id='MAP-ASSIGN-PENDING']"
+        )
+        ready_card.wait_for()
+        self.assertIn("assign-ready-arrival", ready_card.get_attribute("class"))
+        self.assertEqual(
+            ready_card.evaluate("(card) => getComputedStyle(card).animationName"),
+            "assign-ready-arrival",
+        )
+        self.assertTrue(ready_card.locator(".status-pill.ready").is_visible())
+        self.assertFalse(
+            ready_card.locator('.plan-ready-toggle[data-ready="true"]').count()
+        )
+        self.assertTrue(ready_card.locator(".assign-seai-details").is_visible())
+        ready_card.locator(".assign-seai-details").click()
+        self.page.locator("#assign-seai-house-detail").wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector('#assign-seai-house-ready')
+              ?.classList.contains('hidden')"""
+        )
+        self.assertEqual(
+            self.page.locator("#assign-seai-house-status").inner_text(),
+            "Ready for start",
+        )
+        self.assertTrue(self.page.locator("#assign-seai-house-ready").is_hidden())
+        self.page.locator("#assign-seai-house-back").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
         self.assertEqual(self.browser_errors, [])
 
     def test_assign_user_not_started_card_hides_surveyor_information(self):
@@ -1705,7 +2076,10 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Light Rain", areas.nth(0).inner_text())
         self.assertIn("High 11° · Low 5°", areas.nth(0).inner_text())
         self.assertIn("30 km/h", areas.nth(0).inner_text())
-        self.assertIn("Met Éireann", self.page.locator(".weather-attribution").inner_text())
+        self.assertIn(
+            "Met Éireann",
+            self.page.locator("#page-overview .weather-attribution").inner_text(),
+        )
         self.assertEqual(self.browser_errors, [])
 
     def test_teams_tab_can_switch_back_to_houses_after_overview_navigation(self):
