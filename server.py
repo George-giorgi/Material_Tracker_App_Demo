@@ -86,7 +86,7 @@ def _record_change(path):
         return
     elif path == "/api/auth/setup":
         domain = "users"
-    elif path == "/api/users":
+    elif path.startswith(("/api/users", "/api/roles", "/api/departments")):
         domain = "users"
     elif path.startswith("/api/auth/"):
         return
@@ -737,17 +737,46 @@ def initialize_db():
                 id INTEGER PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 display_name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (
-                    role IN (
-                        'admin', 'assign', 'boss', 'surveyor', 'warehouse',
-                        'delivery', 'supervisor', 'teamlead', 'plumber', 'employee'
-                    )
-                ),
+                role TEXT NOT NULL,
                 password_salt BLOB NOT NULL,
                 password_hash BLOB NOT NULL,
                 password_iterations INTEGER NOT NULL,
                 credential_type TEXT NOT NULL DEFAULT 'pin',
-                is_active INTEGER NOT NULL DEFAULT 1
+                is_active INTEGER NOT NULL DEFAULT 1,
+                supervisor_specialty TEXT NOT NULL DEFAULT '',
+                team_name TEXT NOT NULL DEFAULT '',
+                work_phone TEXT,
+                home_phone TEXT,
+                company_email TEXT,
+                private_email TEXT
+            );
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
+            );
+            CREATE TABLE IF NOT EXISTS user_departments (
+                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                department_id INTEGER NOT NULL REFERENCES departments(id) ON DELETE RESTRICT,
+                is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+                PRIMARY KEY (user_id, department_id)
+            );
+            CREATE TABLE IF NOT EXISTS user_reporting_lines (
+                manager_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                report_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                relationship TEXT NOT NULL DEFAULT 'manager',
+                PRIMARY KEY (manager_user_id, report_user_id),
+                CHECK (manager_user_id != report_user_id)
+            );
+            CREATE INDEX IF NOT EXISTS user_reporting_report_idx
+                ON user_reporting_lines(report_user_id);
+            CREATE TABLE IF NOT EXISTS team_roster_members (
+                id INTEGER PRIMARY KEY,
+                teamlead_user_id INTEGER NOT NULL
+                    REFERENCES app_users(id) ON DELETE CASCADE,
+                member_name TEXT NOT NULL COLLATE NOCASE
+                    CHECK (length(trim(member_name)) BETWEEN 1 AND 120),
+                UNIQUE (teamlead_user_id, member_name)
             );
             CREATE TABLE IF NOT EXISTS app_sessions (
                 token_hash TEXT PRIMARY KEY,
@@ -791,6 +820,79 @@ def initialize_db():
                 (role_key, permission_key, is_allowed)
             VALUES ('admin', '*', 1)
             """
+        )
+        access_profiles = (
+            ("access.admin", "Administrator account management and unrestricted access."),
+            ("access.assign", "House assignment and workflow controls without materials access."),
+            ("access.boss", "Boss dashboard and operational views."),
+            ("access.surveyor", "Surveyor room, ready-house surveys, and survey documents."),
+            ("access.warehouse", "Warehouse inventory and material movement features."),
+            ("access.delivery", "Delivery-related views and operations."),
+            ("access.supervisor", "Assigned-house supervisor dashboard and team-lead oversight."),
+            ("access.teamlead", "Team-lead dashboard and own team roster management."),
+            ("access.plumber", "Employee-style operational access for plumbing work."),
+            ("access.employee", "Standard employee dashboard and material movement access."),
+        )
+        db.executemany(
+            "INSERT OR IGNORE INTO app_permissions(permission_key, description) VALUES (?, ?)",
+            access_profiles,
+        )
+        for role_key, _display_name in (
+            ("assign", "Assign"),
+            ("boss", "Boss"),
+            ("surveyor", "Surveyor"),
+            ("warehouse", "Warehouse"),
+            ("delivery", "Delivery"),
+            ("supervisor", "Supervisor"),
+            ("teamlead", "Teamlead"),
+            ("plumber", "Plumber"),
+            ("employee", "Employee"),
+        ):
+            db.execute(
+                """
+                INSERT OR IGNORE INTO app_role_permissions
+                    (role_key, permission_key, is_allowed)
+                VALUES (?, ?, 1)
+                """,
+                (role_key, f"access.{role_key}"),
+            )
+        for department_name in (
+            "Administration",
+            "External Wall Insulation",
+            "Surveyors",
+            "Delivery",
+            "Ventilation",
+            "Attic",
+            "Plumbing",
+        ):
+            db.execute(
+                "INSERT OR IGNORE INTO departments(name) VALUES (?)",
+                (department_name,),
+            )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_departments (
+                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                department_id INTEGER NOT NULL REFERENCES departments(id) ON DELETE RESTRICT,
+                is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+                PRIMARY KEY (user_id, department_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_reporting_lines (
+                manager_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                report_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                relationship TEXT NOT NULL DEFAULT 'manager',
+                PRIMARY KEY (manager_user_id, report_user_id),
+                CHECK (manager_user_id != report_user_id)
+            )
+            """
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS user_reporting_report_idx "
+            "ON user_reporting_lines(report_user_id)"
         )
         if db.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' "
@@ -1073,7 +1175,26 @@ def initialize_db():
             db.execute(
                 "ALTER TABLE app_users ADD COLUMN credential_type TEXT NOT NULL DEFAULT 'password'"
             )
+        if "supervisor_specialty" not in user_columns:
+            db.execute(
+                "ALTER TABLE app_users ADD COLUMN supervisor_specialty TEXT NOT NULL DEFAULT ''"
+            )
+        if "team_name" not in user_columns:
+            db.execute(
+                "ALTER TABLE app_users ADD COLUMN team_name TEXT NOT NULL DEFAULT ''"
+            )
+        if "company_email" not in user_columns:
+            if "work_email" in user_columns:
+                db.execute(
+                    "ALTER TABLE app_users RENAME COLUMN work_email TO company_email"
+                )
+            else:
+                db.execute("ALTER TABLE app_users ADD COLUMN company_email TEXT")
+        for column in ("work_phone", "home_phone", "private_email"):
+            if column not in user_columns:
+                db.execute(f"ALTER TABLE app_users ADD COLUMN {column} TEXT")
     _migrate_user_roles()
+    _seed_user_departments()
 
 
 def _migrate_user_roles():
@@ -1081,13 +1202,7 @@ def _migrate_user_roles():
         schema = db.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'app_users'"
         ).fetchone()[0]
-        if all(
-            f"'{role}'" in schema
-            for role in (
-                "admin", "assign", "boss", "surveyor", "warehouse",
-                "delivery", "supervisor", "teamlead", "plumber", "employee",
-            )
-        ):
+        if not re.search(r"role\s+TEXT\s+NOT\s+NULL\s+CHECK", schema, re.IGNORECASE):
             return
         db.execute("PRAGMA foreign_keys = OFF")
         db.execute("BEGIN IMMEDIATE")
@@ -1097,20 +1212,21 @@ def _migrate_user_roles():
                     id INTEGER PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                     display_name TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK (
-                        role IN (
-                            'admin', 'assign', 'boss', 'surveyor', 'warehouse',
-                            'delivery', 'supervisor', 'teamlead', 'plumber', 'employee'
-                        )
-                    ),
+                    role TEXT NOT NULL,
                     password_salt BLOB NOT NULL,
                     password_hash BLOB NOT NULL,
                     password_iterations INTEGER NOT NULL,
                     credential_type TEXT NOT NULL DEFAULT 'pin',
-                    is_active INTEGER NOT NULL DEFAULT 1
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    supervisor_specialty TEXT NOT NULL DEFAULT '',
+                    team_name TEXT NOT NULL DEFAULT '',
+                    work_phone TEXT,
+                    home_phone TEXT,
+                    company_email TEXT,
+                    private_email TEXT
                 )
             """)
-            db.execute("INSERT INTO app_users_new SELECT id, username, display_name, role, password_salt, password_hash, password_iterations, credential_type, is_active FROM app_users")
+            db.execute("INSERT INTO app_users_new SELECT id, username, display_name, role, password_salt, password_hash, password_iterations, credential_type, is_active, supervisor_specialty, team_name, work_phone, home_phone, company_email, private_email FROM app_users")
             db.execute("""CREATE TABLE app_sessions_new (
                 token_hash TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES app_users_new(id) ON DELETE CASCADE,
@@ -1128,6 +1244,88 @@ def _migrate_user_roles():
             raise
         finally:
             db.execute("PRAGMA foreign_keys = ON")
+
+
+def _seed_user_departments():
+    with connect_db() as db:
+        department_ids = {
+            row["name"]: row["id"]
+            for row in db.execute("SELECT id, name FROM departments")
+        }
+        for user in db.execute(
+            "SELECT id, username, role, supervisor_specialty, team_name FROM app_users"
+        ):
+            if db.execute(
+                "SELECT 1 FROM user_departments WHERE user_id = ? LIMIT 1",
+                (user["id"],),
+            ).fetchone():
+                continue
+            if user["role"] in {"admin", "assign"}:
+                department = "Administration"
+            elif user["role"] == "surveyor":
+                department = "Surveyors"
+            elif user["role"] == "delivery":
+                department = "Delivery"
+            elif user["role"] == "supervisor":
+                specialty = user["supervisor_specialty"]
+                department = specialty if specialty in department_ids else "Administration"
+            elif user["role"] == "teamlead":
+                department = user["team_name"] if user["team_name"] in department_ids else "External Wall Insulation"
+            elif user["role"] == "plumber":
+                department = "Plumbing"
+            elif user["role"] == "employee":
+                department = "External Wall Insulation"
+            else:
+                department = "Administration"
+            db.execute(
+                """
+                INSERT OR IGNORE INTO user_departments
+                    (user_id, department_id, is_primary)
+                VALUES (?, ?, 1)
+                """,
+                (user["id"], department_ids[department]),
+            )
+        karol = db.execute(
+            "SELECT id FROM app_users WHERE username = 'Karol' COLLATE NOCASE"
+        ).fetchone()
+        if karol is not None:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO user_departments
+                    (user_id, department_id, is_primary)
+                VALUES (?, ?, 0)
+                """,
+                (karol["id"], department_ids["Surveyors"]),
+            )
+        ewi_department_id = department_ids["External Wall Insulation"]
+        karol = db.execute(
+            """
+            SELECT id FROM app_users
+            WHERE role = 'supervisor' AND supervisor_specialty = ?
+            ORDER BY id LIMIT 1
+            """,
+            ("External Wall Insulation",),
+        ).fetchone()
+        if karol is not None:
+            for teamlead in db.execute(
+                """
+                SELECT users.id FROM app_users users
+                JOIN user_departments departments ON departments.user_id = users.id
+                WHERE users.role = 'teamlead'
+                  AND users.team_name = ''
+                  AND departments.department_id = ?
+                """,
+                (ewi_department_id,),
+            ):
+                if teamlead["id"] != karol["id"]:
+                    db.execute(
+                        """
+                        INSERT OR IGNORE INTO user_reporting_lines
+                            (manager_user_id, report_user_id, relationship)
+                        VALUES (?, ?, 'supervisor')
+                        """,
+                        (karol["id"], teamlead["id"]),
+                    )
 
 
 def _validate_user_details(username, display_name):
@@ -1154,29 +1352,48 @@ def _credential_digest(credential, salt, iterations=CREDENTIAL_ITERATIONS):
     )
 
 
-def _insert_user(db, username, display_name, pin, role):
+def _role_has_access(db, role_key, profile):
+    return db.execute(
+        """
+        SELECT 1 FROM app_role_permissions
+        WHERE role_key = ? AND permission_key = ? AND is_allowed = 1
+        """,
+        (role_key, f"access.{profile}"),
+    ).fetchone() is not None
+
+
+def _insert_user(
+    db, username, display_name, pin, role, supervisor_specialty="", team_name=""
+):
     username, display_name = _validate_user_details(username, display_name)
-    if not isinstance(role, str) or role not in {
-        "admin",
-        "assign",
-        "boss",
-        "surveyor",
-        "warehouse",
-        "delivery",
-        "supervisor",
-        "teamlead",
-        "plumber",
-        "employee",
-    }:
+    if not isinstance(role, str) or db.execute(
+        "SELECT 1 FROM app_roles WHERE role_key = ? AND is_active = 1",
+        (role,),
+    ).fetchone() is None:
         raise ApiError(400, "Choose a valid account role.")
+    if not isinstance(supervisor_specialty, str):
+        raise ApiError(400, "Supervisor specialty must be text.")
+    supervisor_specialty = supervisor_specialty.strip()
+    if len(supervisor_specialty) > 120:
+        raise ApiError(400, "Supervisor specialty must be 120 characters or fewer.")
+    if not _role_has_access(db, role, "supervisor") and supervisor_specialty:
+        raise ApiError(400, "Only Supervisor accounts can have a specialty.")
+    if not isinstance(team_name, str):
+        raise ApiError(400, "Team name must be text.")
+    team_name = team_name.strip()
+    if len(team_name) > 120:
+        raise ApiError(400, "Team name must be 120 characters or fewer.")
+    if not _role_has_access(db, role, "teamlead") and team_name:
+        raise ApiError(400, "Only Teamlead accounts can have a team name.")
     pin = _validate_pin(pin)
     salt = secrets.token_bytes(16)
     password_hash = _credential_digest(pin, salt)
     cursor = db.execute(
         """
         INSERT INTO app_users
-            (username, display_name, role, password_salt, password_hash, password_iterations, credential_type)
-        VALUES (?, ?, ?, ?, ?, ?, 'pin')
+            (username, display_name, role, password_salt, password_hash, password_iterations,
+             credential_type, supervisor_specialty, team_name)
+        VALUES (?, ?, ?, ?, ?, ?, 'pin', ?, ?)
         """,
         (
             username,
@@ -1185,18 +1402,265 @@ def _insert_user(db, username, display_name, pin, role):
             salt,
             password_hash,
             CREDENTIAL_ITERATIONS,
+            supervisor_specialty,
+            team_name,
         ),
     )
-    return cursor.lastrowid
+    user_id = cursor.lastrowid
+    default_department = {
+        "admin": "Administration",
+        "assign": "Administration",
+        "surveyor": "Surveyors",
+        "delivery": "Delivery",
+        "supervisor": supervisor_specialty or "Administration",
+        "teamlead": team_name or "External Wall Insulation",
+        "plumber": "Plumbing",
+        "employee": "External Wall Insulation",
+    }.get(role, "Administration")
+    department = db.execute(
+        "SELECT id FROM departments WHERE name = ? COLLATE NOCASE",
+        (default_department,),
+    ).fetchone()
+    if department is None:
+        department = db.execute(
+            "SELECT id FROM departments WHERE name = 'Administration'"
+        ).fetchone()
+    db.execute(
+        """
+        INSERT INTO user_departments(user_id, department_id, is_primary)
+        VALUES (?, ?, 1)
+        """,
+        (user_id, department["id"]),
+    )
+    return user_id
 
 
 def _public_user(row):
-    return {
+    user = {
         "id": row["id"],
         "username": row["username"],
         "display_name": row["display_name"],
         "role": row["role"],
     }
+    if "role_name" in row.keys():
+        user["role_name"] = row["role_name"]
+    if "supervisor_specialty" in row.keys():
+        user["supervisor_specialty"] = row["supervisor_specialty"]
+    if "team_name" in row.keys():
+        user["team_name"] = row["team_name"]
+    if "role_permissions" in row.keys():
+        user["permissions"] = [
+            permission
+            for permission in (row["role_permissions"] or "").split("\x1f")
+            if permission
+        ]
+    if "departments_json" in row.keys():
+        try:
+            user["departments"] = json.loads(row["departments_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            raise ApiError(500, "Stored user department data is invalid.")
+    return user
+
+
+def _user_record(db, user_id):
+    return db.execute(
+        """
+        SELECT users.*, roles.display_name AS role_name,
+               COALESCE((
+                   SELECT group_concat(permission_key, char(31))
+                   FROM app_role_permissions
+                   WHERE role_key = users.role AND is_allowed = 1
+               ), '') AS role_permissions,
+               COALESCE((
+                   SELECT json_group_array(json_object(
+                       'id', departments.id,
+                       'name', departments.name,
+                       'is_primary', memberships.is_primary
+                   ))
+                   FROM user_departments memberships
+                   JOIN departments ON departments.id = memberships.department_id
+                   WHERE memberships.user_id = users.id
+               ), '[]') AS departments_json
+        FROM app_users users
+        LEFT JOIN app_roles roles ON roles.role_key = users.role
+        WHERE users.id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+
+def _has_access_profile(user, role_key):
+    if user is None:
+        return False
+    permissions = user["role_permissions"] if "role_permissions" in user.keys() else ""
+    values = set((permissions or "").split("\x1f"))
+    return f"access.{role_key}" in values or (
+        role_key == "admin" and "*" in values
+    )
+
+
+def _set_user_organization(db, user_id, department_ids, manager_user_id=None):
+    if not isinstance(department_ids, list) or not department_ids:
+        raise ApiError(400, "Select at least one department for each user.")
+    normalized_ids = []
+    for department_id in department_ids:
+        if isinstance(department_id, bool):
+            raise ApiError(400, "Choose valid departments.")
+        try:
+            department_id = int(department_id)
+        except (TypeError, ValueError):
+            raise ApiError(400, "Choose valid departments.") from None
+        if department_id not in normalized_ids:
+            normalized_ids.append(department_id)
+    placeholders = ",".join("?" for _ in normalized_ids)
+    departments = db.execute(
+        f"SELECT id FROM departments WHERE is_active = 1 AND id IN ({placeholders})",
+        normalized_ids,
+    ).fetchall()
+    if len(departments) != len(normalized_ids):
+        raise ApiError(400, "Choose active departments.")
+    db.execute("DELETE FROM user_departments WHERE user_id = ?", (user_id,))
+    db.executemany(
+        """
+        INSERT INTO user_departments(user_id, department_id, is_primary)
+        VALUES (?, ?, ?)
+        """,
+        (
+            (user_id, department_id, int(index == 0))
+            for index, department_id in enumerate(normalized_ids)
+        ),
+    )
+    db.execute(
+        "DELETE FROM user_reporting_lines WHERE report_user_id = ?", (user_id,)
+    )
+    if manager_user_id in (None, ""):
+        return
+    if isinstance(manager_user_id, bool):
+        raise ApiError(400, "Choose a valid manager.")
+    try:
+        manager_user_id = int(manager_user_id)
+    except (TypeError, ValueError):
+        raise ApiError(400, "Choose a valid manager.") from None
+    if manager_user_id == user_id:
+        raise ApiError(400, "A user cannot manage themselves.")
+    manager = db.execute(
+        """
+        SELECT users.id, users.role FROM app_users users
+        WHERE users.id = ? AND users.is_active = 1
+          AND EXISTS (
+              SELECT 1 FROM app_role_permissions access
+              WHERE access.role_key = users.role
+                AND access.is_allowed = 1
+                AND access.permission_key IN (
+                    '*', 'access.admin', 'access.supervisor', 'access.teamlead'
+                )
+          )
+        """,
+        (manager_user_id,),
+    ).fetchone()
+    if manager is None:
+        raise ApiError(400, "Choose an active Admin, Supervisor, or Teamlead.")
+    report_role = db.execute(
+        "SELECT role FROM app_users WHERE id = ?", (user_id,)
+    ).fetchone()["role"]
+    manager_is_admin = _role_has_access(db, manager["role"], "admin") or (
+        db.execute(
+            """
+            SELECT 1 FROM app_role_permissions
+            WHERE role_key = ? AND permission_key = '*' AND is_allowed = 1
+            """,
+            (manager["role"],),
+        ).fetchone()
+        is not None
+    )
+    manager_is_supervisor = _role_has_access(db, manager["role"], "supervisor")
+    manager_is_teamlead = _role_has_access(db, manager["role"], "teamlead")
+    report_is_assign = _role_has_access(db, report_role, "assign")
+    report_is_teamlead = _role_has_access(db, report_role, "teamlead")
+    report_is_team_member = any(
+        _role_has_access(db, report_role, profile)
+        for profile in ("employee", "plumber")
+    )
+    if report_is_assign:
+        if not manager_is_admin:
+            raise ApiError(409, "Assign accounts can report only to an Admin.")
+    elif report_is_teamlead:
+        if not manager_is_supervisor:
+            raise ApiError(409, "Teamleads can report only to a Supervisor.")
+    elif report_is_team_member:
+        if not manager_is_teamlead:
+            raise ApiError(409, "Team members can report only to a Teamlead.")
+    else:
+        raise ApiError(
+            409,
+            "Reporting lines must connect Supervisors to Teamleads or Teamleads to team members.",
+        )
+    shared_department = db.execute(
+        f"""
+        SELECT 1
+        FROM user_departments memberships
+        WHERE memberships.user_id = ?
+          AND memberships.department_id IN ({placeholders})
+        LIMIT 1
+        """,
+        [manager_user_id, *normalized_ids],
+    ).fetchone()
+    if shared_department is None:
+        raise ApiError(409, "The manager and user must share a department.")
+    cycle = db.execute(
+        """
+        WITH RECURSIVE reports(user_id) AS (
+            SELECT report_user_id FROM user_reporting_lines
+            WHERE manager_user_id = ?
+            UNION
+            SELECT lines.report_user_id
+            FROM user_reporting_lines lines
+            JOIN reports ON lines.manager_user_id = reports.user_id
+        )
+        SELECT 1 FROM reports WHERE user_id = ? LIMIT 1
+        """,
+        (user_id, manager_user_id),
+    ).fetchone()
+    if cycle:
+        raise ApiError(409, "This reporting line would create a management cycle.")
+    db.execute(
+        """
+        INSERT INTO user_reporting_lines(manager_user_id, report_user_id, relationship)
+        VALUES (?, ?, ?)
+        """,
+        (
+            manager_user_id,
+            user_id,
+            "administrator" if report_is_assign else "manager",
+        ),
+    )
+
+
+def _can_manage_team_roster(db, user, teamlead_id):
+    if _has_access_profile(user, "admin"):
+        return True
+    if (
+        _has_access_profile(user, "teamlead")
+        and user["id"] == teamlead_id
+    ):
+        return True
+    if not _has_access_profile(user, "supervisor"):
+        return False
+    return db.execute(
+        """
+        SELECT 1
+        FROM user_reporting_lines lines
+        JOIN app_users reports ON reports.id = lines.report_user_id
+        JOIN app_role_permissions access ON access.role_key = reports.role
+        WHERE lines.manager_user_id = ?
+          AND lines.report_user_id = ?
+          AND reports.is_active = 1
+          AND access.permission_key = 'access.teamlead'
+          AND access.is_allowed = 1
+        LIMIT 1
+        """,
+        (user["id"], teamlead_id),
+    ).fetchone() is not None
 
 
 def _new_session(db, user_id):
@@ -2164,6 +2628,7 @@ def _dashboard(db):
         counts["closed"] = len(counts["closed_house_ids"])
     return {
         "materials": materials,
+        "team_rosters": _team_rosters(db),
         "demo_mode": (
             db.execute(
                 "SELECT value FROM app_settings WHERE key = 'demo_mode'"
@@ -2226,6 +2691,71 @@ def _dashboard(db):
     }
 
 
+def _team_rosters(db):
+    rosters = {}
+    for row in db.execute(
+        """
+        SELECT users.id AS teamlead_id, users.display_name AS teamlead_name,
+               users.team_name,
+               members.id AS member_id, members.member_name
+        FROM app_users users
+        LEFT JOIN team_roster_members members
+          ON members.teamlead_user_id = users.id
+        WHERE users.is_active = 1
+          AND EXISTS (
+              SELECT 1 FROM app_role_permissions access
+              WHERE access.role_key = users.role
+                AND access.is_allowed = 1
+                AND access.permission_key = 'access.teamlead'
+          )
+        ORDER BY users.display_name COLLATE NOCASE,
+                 members.member_name COLLATE NOCASE
+        """
+    ):
+        roster = rosters.setdefault(
+            row["teamlead_id"],
+            {
+                "teamlead_id": row["teamlead_id"],
+                "teamlead_name": row["teamlead_name"],
+                "team_name": row["team_name"],
+                "members": [],
+            },
+        )
+        if row["member_id"] is not None:
+            roster["members"].append(
+                {"id": row["member_id"], "name": row["member_name"]}
+            )
+    return list(rosters.values())
+
+
+def _visible_team_rosters(db, user):
+    rosters = _team_rosters(db)
+    if _has_access_profile(user, "admin"):
+        return rosters
+    if _has_access_profile(user, "teamlead"):
+        visible_ids = {user["id"]}
+    elif _has_access_profile(user, "supervisor"):
+        visible_ids = {
+            row["report_user_id"]
+            for row in db.execute(
+                """
+                SELECT lines.report_user_id
+                FROM user_reporting_lines lines
+                JOIN app_users reports ON reports.id = lines.report_user_id
+                JOIN app_role_permissions access ON access.role_key = reports.role
+                WHERE lines.manager_user_id = ?
+                  AND reports.is_active = 1
+                  AND access.permission_key = 'access.teamlead'
+                  AND access.is_allowed = 1
+                """,
+                (user["id"],),
+            )
+        }
+    else:
+        visible_ids = set()
+    return [roster for roster in rosters if roster["teamlead_id"] in visible_ids]
+
+
 def _surveyor_workload_summary(db):
     surveyors = {}
     rows = db.execute(
@@ -2237,7 +2767,13 @@ def _surveyor_workload_summary(db):
           ON assignment.user_id = u.id AND assignment.role = 'surveyor'
         LEFT JOIN provided_houses p ON p.id = assignment.house_id
         LEFT JOIN house_surveys hs ON hs.house_id = p.id
-        WHERE u.role = 'surveyor' AND u.is_active = 1
+        WHERE u.is_active = 1
+          AND EXISTS (
+              SELECT 1 FROM app_role_permissions access
+              WHERE access.role_key = u.role
+                AND access.is_allowed = 1
+                AND access.permission_key = 'access.surveyor'
+          )
         ORDER BY u.display_name COLLATE NOCASE, p.id COLLATE NOCASE
         """
     )
@@ -2644,9 +3180,26 @@ class LegacyRouteHandlers:
         with connect_db() as db:
             return db.execute(
                 """
-                SELECT u.id, u.username, u.display_name, u.role, s.token_hash
+                SELECT u.id, u.username, u.display_name, u.role,
+                       roles.display_name AS role_name, s.token_hash,
+                       COALESCE((
+                           SELECT group_concat(permission_key, char(31))
+                           FROM app_role_permissions
+                           WHERE role_key = u.role AND is_allowed = 1
+                       ), '') AS role_permissions,
+                       COALESCE((
+                           SELECT json_group_array(json_object(
+                               'id', departments.id,
+                               'name', departments.name,
+                               'is_primary', memberships.is_primary
+                           ))
+                           FROM user_departments memberships
+                           JOIN departments ON departments.id = memberships.department_id
+                           WHERE memberships.user_id = u.id
+                       ), '[]') AS departments_json
                 FROM app_sessions s
                 JOIN app_users u ON u.id = s.user_id
+                LEFT JOIN app_roles roles ON roles.role_key = u.role
                 WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1
                 """,
                 (token_hash, now),
@@ -2658,7 +3211,27 @@ class LegacyRouteHandlers:
             self._send_json(401, {"error": "Sign in to continue."})
             return None
         path = urlparse(self.path).path
-        if user["role"] == "assign" and path in {
+        if not any(
+            _has_access_profile(user, profile)
+            for profile in (
+                "admin",
+                "assign",
+                "boss",
+                "surveyor",
+                "warehouse",
+                "delivery",
+                "supervisor",
+                "teamlead",
+                "plumber",
+                "employee",
+            )
+        ) and path not in {"/api/auth/pin", "/api/auth/logout"}:
+            self._send_json(
+                403,
+                {"error": "This account has no active access permissions. Contact an administrator."},
+            )
+            return None
+        if _has_access_profile(user, "assign") and path in {
             "/api/calculator/requests",
             "/api/import",
             "/api/materials",
@@ -2672,7 +3245,7 @@ class LegacyRouteHandlers:
                 {"error": "Assign accounts cannot access material information."},
             )
             return None
-        if user["role"] == "surveyor":
+        if _has_access_profile(user, "surveyor"):
             allowed = self.command == "GET" and self.path.split("?", 1)[0] == "/api/calculator/houses"
             allowed = allowed or (
                 self.command == "GET"
@@ -2739,7 +3312,7 @@ class LegacyRouteHandlers:
         return user
 
     def _admin_required(self, user):
-        if user["role"] != "admin":
+        if not _has_access_profile(user, "admin"):
             self._send_json(403, {"error": "Administrator access is required."})
             return False
         return True
@@ -2767,7 +3340,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(
                     403,
                     {"error": "Surveyor access is required to view house photos."},
@@ -2780,7 +3353,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(
                     403,
                     {"error": "Surveyor access is required to view house photos."},
@@ -2801,7 +3374,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(
                     403,
                     {"error": "Surveyor access is required to view house documents."},
@@ -2852,7 +3425,7 @@ class LegacyRouteHandlers:
             self._send_file(STATIC_DIR / "brusna-curious-cat-logo.png", "image/png")
         elif path == "/calculator":
             user = self._current_user()
-            if user is not None and user["role"] == "assign":
+            if user is not None and _has_access_profile(user, "assign"):
                 self._send_json(
                     403,
                     {"error": "Assign accounts cannot access material information."},
@@ -2866,7 +3439,7 @@ class LegacyRouteHandlers:
             params = parse_qs(urlparse(self.path).query)
             query = params.get("q", [""])[0].strip()
             status_filter = params.get("status", [""])[0]
-            if user["role"] == "surveyor":
+            if _has_access_profile(user, "surveyor"):
                 status_filter = "ready"
             wanted = {
                 "not_started": "h.id IS NULL AND p.ready_for_start = 0",
@@ -2887,7 +3460,7 @@ class LegacyRouteHandlers:
             else:
                 ordering = "(h.is_finished = 1), p.id COLLATE NOCASE"
             surveyor_assignment_filter = ""
-            if user["role"] == "surveyor":
+            if _has_access_profile(user, "surveyor"):
                 surveyor_assignment_filter = """
                     AND EXISTS (
                         SELECT 1 FROM house_role_assignments surveyor_scope
@@ -2919,7 +3492,12 @@ class LegacyRouteHandlers:
                                WHERE assignment.house_id = p.id
                                  AND assignment.role = 'surveyor'
                                  AND assigned_user.is_active = 1
-                                 AND assigned_user.role = 'surveyor'
+                                 AND EXISTS (
+                                     SELECT 1 FROM app_role_permissions access
+                                     WHERE access.role_key = assigned_user.role
+                                       AND access.permission_key = 'access.surveyor'
+                                       AND access.is_allowed = 1
+                                 )
                            ) AS has_assigned_surveyor,
                            EXISTS (
                                SELECT 1 FROM house_role_assignments assignment
@@ -2927,7 +3505,12 @@ class LegacyRouteHandlers:
                                WHERE assignment.house_id = p.id
                                  AND assignment.role = 'supervisor'
                                  AND assigned_user.is_active = 1
-                                 AND assigned_user.role = 'supervisor'
+                                 AND EXISTS (
+                                     SELECT 1 FROM app_role_permissions access
+                                     WHERE access.role_key = assigned_user.role
+                                       AND access.permission_key = 'access.supervisor'
+                                       AND access.is_allowed = 1
+                                 )
                            ) AS has_assigned_supervisor,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
@@ -2953,12 +3536,12 @@ class LegacyRouteHandlers:
                         like,
                         like,
                         like,
-                        *([user["id"]] if user["role"] == "surveyor" else []),
+                        *([user["id"]] if _has_access_profile(user, "surveyor") else []),
                         500 if status_filter in {"all", "map"} or wanted else 20,
                     ),
                 ).fetchall()
                 seai_details = {}
-                if user["role"] in {"admin", "surveyor"} and rows:
+                if (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")) and rows:
                     has_seai_applications = db.execute(
                         "SELECT 1 FROM sqlite_master WHERE type = 'table' "
                         "AND name = 'seai_applications'"
@@ -2981,10 +3564,10 @@ class LegacyRouteHandlers:
             houses = []
             for row in rows:
                 house = dict(row)
-                if user["role"] in {"admin", "surveyor"}:
+                if (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     house["seai_details"] = seai_details.get(row["id"])
                 raw_survey = house.pop("survey_data", None)
-                if user["role"] == "assign":
+                if _has_access_profile(user, "assign"):
                     house["survey"] = bool(raw_survey)
                     survey_data = json.loads(raw_survey) if raw_survey else {}
                     try:
@@ -3003,7 +3586,7 @@ class LegacyRouteHandlers:
                         row["id"], {"status_history": [], "last_movement": None}
                     )
                 )
-                if user["role"] == "assign":
+                if _has_access_profile(user, "assign"):
                     house.pop("last_movement", None)
                     house["activity_history"] = [
                         entry
@@ -3016,7 +3599,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "assign"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "assign")):
                 self._send_json(
                     403,
                     {"error": "Administrator or Assign access is required to manage house assignments."},
@@ -3047,10 +3630,16 @@ class LegacyRouteHandlers:
                             """
                             SELECT id, username, display_name
                             FROM app_users
-                            WHERE role = ? AND is_active = 1
+                            WHERE is_active = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = app_users.role
+                                    AND access.permission_key = ?
+                                    AND access.is_allowed = 1
+                              )
                             ORDER BY display_name COLLATE NOCASE, username COLLATE NOCASE
                             """,
-                            (role,),
+                            (f"access.{role}",),
                         )
                     ]
                     for role in ("surveyor", "supervisor")
@@ -3104,7 +3693,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(403, {"error": "Surveyor access is required to view house documents."})
                 return
             house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
@@ -3140,7 +3729,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(
                     403,
                     {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
@@ -3205,7 +3794,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(
                     403,
                     {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
@@ -3267,7 +3856,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] not in {"admin", "surveyor"}:
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                 self._send_json(403, {"error": "Surveyor access is required to view house documents."})
                 return
             document_path = path[len("/api/house-documents/"):].split("/")
@@ -3401,12 +3990,13 @@ class LegacyRouteHandlers:
             with connect_db() as db:
                 db.execute("BEGIN")
                 dashboard = _dashboard(db)
-                if user["role"] == "assign":
+                if _has_access_profile(user, "assign"):
                     dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
-            if user["role"] == "assign":
+            if _has_access_profile(user, "assign"):
                 dashboard["materials"] = []
                 dashboard["movements"] = []
                 dashboard["teams"] = []
+                dashboard["team_rosters"] = []
                 dashboard["locations"] = [
                     location
                     for location in dashboard["locations"]
@@ -3419,7 +4009,7 @@ class LegacyRouteHandlers:
                         for entry in house.get("activity_history", [])
                         if entry.get("type") not in {"movement", "material_request"}
                     ]
-            elif user["role"] == "supervisor":
+            elif _has_access_profile(user, "supervisor"):
                 with connect_db() as db:
                     assigned_house_ids = {
                         row["house_id"]
@@ -3432,7 +4022,12 @@ class LegacyRouteHandlers:
                             WHERE assignment.role = 'supervisor'
                               AND assignment.user_id = ?
                               AND assigned_user.is_active = 1
-                              AND assigned_user.role = 'supervisor'
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = assigned_user.role
+                                    AND access.permission_key = 'access.supervisor'
+                                    AND access.is_allowed = 1
+                              )
                             """,
                             (user["id"],),
                         )
@@ -3441,12 +4036,39 @@ class LegacyRouteHandlers:
                         row["display_name"]
                         for row in db.execute(
                             """
-                            SELECT display_name FROM app_users
-                            WHERE role = 'teamlead' AND is_active = 1
+                            SELECT users.display_name FROM app_users users
+                            JOIN user_reporting_lines reports
+                              ON reports.report_user_id = users.id
+                            WHERE users.is_active = 1
+                              AND reports.manager_user_id = ?
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = users.role
+                                    AND access.permission_key = 'access.teamlead'
+                                    AND access.is_allowed = 1
+                              )
                             ORDER BY display_name COLLATE NOCASE
-                            """
+                            """,
+                            (user["id"],),
                         )
                     ]
+                    managed_teamlead_ids = {
+                        row["report_user_id"]
+                        for row in db.execute(
+                            """
+                            SELECT lines.report_user_id
+                            FROM user_reporting_lines lines
+                            JOIN app_users reports ON reports.id = lines.report_user_id
+                            JOIN app_role_permissions access
+                              ON access.role_key = reports.role
+                            WHERE lines.manager_user_id = ?
+                              AND reports.is_active = 1
+                              AND access.permission_key = 'access.teamlead'
+                              AND access.is_allowed = 1
+                            """,
+                            (user["id"],),
+                        )
+                    }
                 dashboard["house_list"] = [
                     house
                     for house in dashboard["house_list"]
@@ -3476,6 +4098,17 @@ class LegacyRouteHandlers:
                     ),
                     "teams": teamlead_names,
                 }
+                dashboard["team_rosters"] = [
+                    roster
+                    for roster in dashboard["team_rosters"]
+                    if roster["teamlead_id"] in managed_teamlead_ids
+                ]
+            elif _has_access_profile(user, "teamlead"):
+                dashboard["team_rosters"] = [
+                    roster
+                    for roster in dashboard["team_rosters"]
+                    if roster["teamlead_id"] == user["id"]
+                ]
             self._send_json(200, dashboard)
         elif path == "/api/weather":
             user = self._login_required()
@@ -3549,7 +4182,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if user["role"] != "assign":
+            if not _has_access_profile(user, "assign"):
                 self._send_json(403, {"error": "Assign role access is required."})
                 return
             raw_house_id = path[len("/api/assign/seai-record/"):]
@@ -3728,11 +4361,144 @@ class LegacyRouteHandlers:
             with connect_db() as db:
                 users = db.execute(
                     """
-                    SELECT id, username, display_name, role, is_active
-                    FROM app_users ORDER BY username COLLATE NOCASE
+                    SELECT users.id, users.username, users.display_name, users.role,
+                           roles.display_name AS role_name, users.is_active,
+                           users.supervisor_specialty, users.team_name,
+                           COALESCE((
+                               SELECT json_group_array(json_object(
+                                   'id', departments.id,
+                                   'name', departments.name,
+                                   'is_primary', memberships.is_primary
+                               ))
+                               FROM user_departments memberships
+                               JOIN departments ON departments.id = memberships.department_id
+                               WHERE memberships.user_id = users.id
+                           ), '[]') AS departments_json,
+                           COALESCE((
+                               SELECT group_concat(permission_key, char(31))
+                               FROM app_role_permissions
+                               WHERE role_key = users.role AND is_allowed = 1
+                           ), '') AS role_permissions,
+                           (SELECT manager_user_id FROM user_reporting_lines
+                            WHERE report_user_id = users.id LIMIT 1) AS manager_user_id
+                    FROM app_users users
+                    LEFT JOIN app_roles roles ON roles.role_key = users.role
+                    ORDER BY users.username COLLATE NOCASE
                     """
                 ).fetchall()
-            self._send_json(200, {"users": [dict(row) for row in users]})
+                departments = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT id, name, is_active FROM departments "
+                        "ORDER BY name COLLATE NOCASE"
+                    )
+                ]
+                roles = db.execute(
+                    """
+                    SELECT roles.role_key, roles.display_name, roles.is_active,
+                           COALESCE((
+                               SELECT json_group_array(permissions.permission_key)
+                               FROM app_role_permissions assignments
+                               JOIN app_permissions permissions
+                                 ON permissions.permission_key = assignments.permission_key
+                               WHERE assignments.role_key = roles.role_key
+                                 AND assignments.is_allowed = 1
+                           ), '[]') AS permissions_json
+                    FROM app_roles roles
+                    ORDER BY roles.display_name COLLATE NOCASE
+                    """
+                ).fetchall()
+                permission_catalog = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT permission_key, description FROM app_permissions "
+                        "ORDER BY permission_key"
+                    )
+                ]
+            user_rows = []
+            for row in users:
+                item = dict(row)
+                try:
+                    item["departments"] = json.loads(item.pop("departments_json"))
+                except (TypeError, json.JSONDecodeError):
+                    raise ApiError(500, "Stored user department data is invalid.")
+                item["permissions"] = [
+                    permission
+                    for permission in item.pop("role_permissions", "").split("\x1f")
+                    if permission
+                ]
+                user_rows.append(item)
+            role_rows = []
+            for row in roles:
+                item = dict(row)
+                try:
+                    item["permissions"] = json.loads(item.pop("permissions_json"))
+                except (TypeError, json.JSONDecodeError):
+                    raise ApiError(500, "Stored role permission data is invalid.")
+                role_rows.append(item)
+            self._send_json(
+                200,
+                {
+                    "users": user_rows,
+                    "departments": departments,
+                    "roles": role_rows,
+                    "permissions": permission_catalog,
+                },
+            )
+        elif path == "/api/departments":
+            user = self._login_required()
+            if user is None:
+                return
+            if not self._admin_required(user):
+                return
+            with connect_db() as db:
+                departments = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT id, name, is_active FROM departments "
+                        "ORDER BY name COLLATE NOCASE"
+                    )
+                ]
+            self._send_json(200, {"departments": departments})
+        elif path == "/api/roles":
+            user = self._login_required()
+            if user is None:
+                return
+            if not self._admin_required(user):
+                return
+            with connect_db() as db:
+                roles = [
+                    dict(row)
+                    for row in db.execute(
+                        """
+                        SELECT roles.role_key, roles.display_name, roles.is_active,
+                               COALESCE((
+                                   SELECT json_group_array(assignments.permission_key)
+                                   FROM app_role_permissions assignments
+                                   WHERE assignments.role_key = roles.role_key
+                                     AND assignments.is_allowed = 1
+                               ), '[]') AS permissions_json
+                        FROM app_roles roles
+                        ORDER BY roles.display_name COLLATE NOCASE
+                        """
+                    )
+                ]
+                permissions = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT permission_key, description FROM app_permissions "
+                        "ORDER BY permission_key"
+                    )
+                ]
+            for role in roles:
+                try:
+                    role["permissions"] = json.loads(role.pop("permissions_json"))
+                except (TypeError, json.JSONDecodeError):
+                    raise ApiError(500, "Stored role permission data is invalid.")
+            self._send_json(
+                200,
+                {"roles": roles, "permissions": permissions},
+            )
         else:
             self._send_json(404, {"error": "Page not found."})
 
@@ -3755,10 +4521,7 @@ class LegacyRouteHandlers:
                         "admin",
                     )
                     token, _, _ = _new_session(db, user_id)
-                    user = db.execute(
-                        "SELECT id, username, display_name, role FROM app_users WHERE id = ?",
-                        (user_id,),
-                    ).fetchone()
+                    user = _user_record(db, user_id)
                 self._send_json(
                     201, {"user": _public_user(user)}, self._session_headers(token)
                 )
@@ -3790,7 +4553,7 @@ class LegacyRouteHandlers:
                     else:
                         _clear_login_attempts(db, username_hash)
                         token, _, _ = _new_session(db, row["id"])
-                        user = _public_user(row)
+                        user = _public_user(_user_record(db, row["id"]))
                 if user is None:
                     if locked:
                         raise ApiError(
@@ -3866,7 +4629,7 @@ class LegacyRouteHandlers:
                 r"/api/house-documents/(\d+)/delete", path
             )
             if house_document_delete_match:
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
                         403,
                         "Administrator or surveyor access is required to delete house PDFs.",
@@ -3907,7 +4670,7 @@ class LegacyRouteHandlers:
                 return
             seai_share_match = re.fullmatch(r"/api/seai-documents/(\d+)/share", path)
             if seai_share_match:
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
                         403,
                         "Administrator or surveyor access is required to share SEAI PDFs.",
@@ -3958,7 +4721,7 @@ class LegacyRouteHandlers:
                 self._send_pdf(share_filename, shared_pdf, attachment=True)
                 return
             if path == "/api/seai-documents/share":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
                         403,
                         "Administrator or surveyor access is required to share SEAI PDFs.",
@@ -4092,7 +4855,7 @@ class LegacyRouteHandlers:
                 r"/api/seai-documents/(\d+)/annotations", path
             )
             if seai_annotation_match:
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
                         403, "Administrator or surveyor access is required to annotate SEAI PDFs."
                     )
@@ -4180,7 +4943,7 @@ class LegacyRouteHandlers:
                 r"/api/house-documents/(\d+)/annotations", path
             )
             if annotation_match:
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to annotate house documents.")
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -4253,7 +5016,7 @@ class LegacyRouteHandlers:
                 )
                 return
             if path == "/api/house-survey":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to record measurements.")
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -4293,7 +5056,7 @@ class LegacyRouteHandlers:
                 )
                 return
             if path == "/api/house-notes":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to edit house notes.")
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -4322,7 +5085,7 @@ class LegacyRouteHandlers:
                 self._send_json(200, {"house_id": house_id, "notes": notes, "saved": True})
                 return
             if path == "/api/survey-notes":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to edit survey notes.")
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -4386,7 +5149,7 @@ class LegacyRouteHandlers:
                 )
                 return
             if path == "/api/house-documents":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to upload house documents.")
                 content_type = self.headers.get("Content-Type", "")
                 if not content_type.startswith("multipart/form-data;"):
@@ -4479,24 +5242,35 @@ class LegacyRouteHandlers:
                 )
                 return
             if path == "/api/houses/plan":
-                if user["role"] not in {"admin", "assign"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "assign")):
                     raise ApiError(
                         403,
                         "Administrator or Assign access is required to update house readiness.",
                     )
             elif path == "/api/supervisor/house-assignment":
-                if user["role"] != "supervisor":
+                if not _has_access_profile(user, "supervisor"):
                     raise ApiError(
                         403,
                         "Supervisor access is required to assign a delivery person and team.",
                     )
             elif path == "/api/house-assignments":
-                if user["role"] not in {"admin", "assign"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "assign")):
                     raise ApiError(
                         403,
                         "Administrator or Assign access is required to manage house assignments.",
                     )
-            elif path == "/api/houses" and user["role"] == "assign":
+            elif path == "/api/team-roster" or re.fullmatch(
+                r"/api/team-roster/\d+/delete", path
+            ):
+                if not any(
+                    _has_access_profile(user, profile)
+                    for profile in ("admin", "supervisor", "teamlead")
+                ):
+                    raise ApiError(
+                        403,
+                        "Supervisor, Teamlead, or administrator access is required to manage team rosters.",
+                    )
+            elif path == "/api/houses" and _has_access_profile(user, "assign"):
                 pass
             elif path not in {
                 "/api/movements",
@@ -4518,12 +5292,353 @@ class LegacyRouteHandlers:
                             payload.get("display_name"),
                             payload.get("pin"),
                             payload.get("role", "employee"),
+                            payload.get("supervisor_specialty", ""),
+                            payload.get("team_name", ""),
                         )
+                        if "department_ids" in payload or "manager_user_id" in payload:
+                            existing_departments = [
+                                row["department_id"]
+                                for row in db.execute(
+                                    "SELECT department_id FROM user_departments "
+                                    "WHERE user_id = ? ORDER BY is_primary DESC",
+                                    (user_id,),
+                                )
+                            ]
+                            _set_user_organization(
+                                db,
+                                user_id,
+                                payload.get("department_ids", existing_departments),
+                                payload.get("manager_user_id"),
+                            )
                         created = db.execute(
-                            "SELECT id, username, display_name, role FROM app_users WHERE id = ?",
+                            """
+                            SELECT id, username, display_name, role,
+                                   supervisor_specialty, team_name
+                            FROM app_users WHERE id = ?
+                            """,
                             (user_id,),
                         ).fetchone()
                 self._send_json(201, {"user": _public_user(created)})
+            elif path == "/api/departments":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Department details must be a JSON object.")
+                name = payload.get("name")
+                if not isinstance(name, str):
+                    raise ApiError(400, "Department name must be text.")
+                name = name.strip()
+                if not name or len(name) > 120:
+                    raise ApiError(400, "Department name must be between 1 and 120 characters.")
+                with connect_db() as db:
+                    with db:
+                        if db.execute(
+                            "SELECT 1 FROM departments WHERE name = ? COLLATE NOCASE",
+                            (name,),
+                        ).fetchone():
+                            raise ApiError(409, "A department with that name already exists.")
+                        cursor = db.execute(
+                            "INSERT INTO departments(name) VALUES (?)", (name,)
+                        )
+                        department = db.execute(
+                            "SELECT id, name, is_active FROM departments WHERE id = ?",
+                            (cursor.lastrowid,),
+                        ).fetchone()
+                self._send_json(201, {"department": dict(department)})
+            elif path == "/api/roles":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Role details must be a JSON object.")
+                role_key = payload.get("role_key")
+                display_name = payload.get("display_name")
+                if not isinstance(role_key, str) or not re.fullmatch(
+                    r"[a-z][a-z0-9_]{1,48}", role_key
+                ):
+                    raise ApiError(400, "Role key must be 2-49 lowercase letters, numbers, or underscores.")
+                if not isinstance(display_name, str):
+                    raise ApiError(400, "Role name must be text.")
+                display_name = display_name.strip()
+                if not display_name or len(display_name) > 80:
+                    raise ApiError(400, "Role name must be between 1 and 80 characters.")
+                with connect_db() as db:
+                    with db:
+                        if db.execute(
+                            "SELECT 1 FROM app_roles WHERE role_key = ? OR display_name = ? COLLATE NOCASE",
+                            (role_key, display_name),
+                        ).fetchone():
+                            raise ApiError(409, "A role with that key or name already exists.")
+                        db.execute(
+                            "INSERT INTO app_roles(role_key, display_name) VALUES (?, ?)",
+                            (role_key, display_name),
+                        )
+                        role = db.execute(
+                            "SELECT role_key, display_name, is_active FROM app_roles WHERE role_key = ?",
+                            (role_key,),
+                        ).fetchone()
+                self._send_json(201, {"role": dict(role)})
+            elif role_permissions_match := re.fullmatch(
+                r"/api/roles/([a-z][a-z0-9_]{1,48})/permissions", path
+            ):
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Permission details must be a JSON object.")
+                permissions = payload.get("permissions")
+                if not isinstance(permissions, list) or not all(
+                    isinstance(permission, str) for permission in permissions
+                ):
+                    raise ApiError(400, "Choose a valid permission list.")
+                permissions = list(dict.fromkeys(permissions))
+                role_key = role_permissions_match.group(1)
+                with connect_db() as db:
+                    with db:
+                        role = db.execute(
+                            "SELECT role_key FROM app_roles WHERE role_key = ?",
+                            (role_key,),
+                        ).fetchone()
+                        if role is None:
+                            raise ApiError(404, "Role was not found.")
+                        placeholders = ",".join("?" for _ in permissions) or "''"
+                        valid = {
+                            row["permission_key"]
+                            for row in db.execute(
+                                f"SELECT permission_key FROM app_permissions "
+                                f"WHERE permission_key IN ({placeholders})",
+                                permissions,
+                            )
+                        }
+                        if valid != set(permissions):
+                            raise ApiError(400, "Choose only permissions from the catalog.")
+                        if "*" in permissions and role_key != "admin":
+                            raise ApiError(
+                                400, "Unrestricted access can only be assigned to the Admin role."
+                            )
+                        if role_key == "admin" and "*" not in permissions:
+                            raise ApiError(
+                                409, "The Admin role must retain unrestricted access."
+                            )
+                        db.execute(
+                            "DELETE FROM app_role_permissions WHERE role_key = ?",
+                            (role_key,),
+                        )
+                        db.executemany(
+                            """
+                            INSERT INTO app_role_permissions
+                                (role_key, permission_key, is_allowed)
+                            VALUES (?, ?, 1)
+                            """,
+                            ((role_key, permission) for permission in permissions),
+                        )
+                        has_admin = db.execute(
+                            """
+                            SELECT 1
+                            FROM app_users users
+                            JOIN app_role_permissions assignments
+                              ON assignments.role_key = users.role
+                            WHERE users.is_active = 1
+                              AND assignments.is_allowed = 1
+                              AND assignments.permission_key IN ('*', 'access.admin')
+                            LIMIT 1
+                            """
+                        ).fetchone()
+                        if has_admin is None:
+                            raise ApiError(
+                                409, "At least one active account must retain administrator access."
+                            )
+                self._send_json(200, {"ok": True})
+            elif organization_match := re.fullmatch(
+                r"/api/users/(\d+)/organization", path
+            ):
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Organization details must be a JSON object.")
+                user_id = int(organization_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        if db.execute(
+                            "SELECT 1 FROM app_users WHERE id = ?", (user_id,)
+                        ).fetchone() is None:
+                            raise ApiError(404, "Account was not found.")
+                        _set_user_organization(
+                            db,
+                            user_id,
+                            payload.get("department_ids"),
+                            payload.get("manager_user_id"),
+                        )
+                self._send_json(200, {"ok": True})
+            elif team_name_match := re.fullmatch(r"/api/users/(\d+)/team-name", path):
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Team details must be a JSON object.")
+                team_name = payload.get("team_name")
+                if not isinstance(team_name, str):
+                    raise ApiError(400, "Team name must be text.")
+                team_name = team_name.strip()
+                if len(team_name) > 120:
+                    raise ApiError(400, "Team name must be 120 characters or fewer.")
+                user_id = int(team_name_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        teamlead = db.execute(
+                            """
+                            SELECT id, username, display_name, role,
+                                   supervisor_specialty, team_name
+                            FROM app_users WHERE id = ?
+                            """,
+                            (user_id,),
+                        ).fetchone()
+                        if teamlead is None:
+                            raise ApiError(404, "Account was not found.")
+                        if not _role_has_access(
+                            db, teamlead["role"], "teamlead"
+                        ):
+                            raise ApiError(
+                                409, "Only Teamlead accounts can have a team name."
+                            )
+                        db.execute(
+                            "UPDATE app_users SET team_name = ? WHERE id = ?",
+                            (team_name, user_id),
+                        )
+                        teamlead = db.execute(
+                            """
+                            SELECT id, username, display_name, role,
+                                   supervisor_specialty, team_name
+                            FROM app_users WHERE id = ?
+                            """,
+                            (user_id,),
+                        ).fetchone()
+                self._send_json(200, {"user": _public_user(teamlead)})
+            elif supervisor_specialty_match := re.fullmatch(
+                r"/api/users/(\d+)/specialty", path
+            ):
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Supervisor details must be a JSON object.")
+                specialty = payload.get("supervisor_specialty")
+                if not isinstance(specialty, str):
+                    raise ApiError(400, "Supervisor specialty must be text.")
+                specialty = specialty.strip()
+                if len(specialty) > 120:
+                    raise ApiError(
+                        400, "Supervisor specialty must be 120 characters or fewer."
+                    )
+                user_id = int(supervisor_specialty_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        supervisor = db.execute(
+                            """
+                            SELECT id, username, display_name, role,
+                                   supervisor_specialty
+                            FROM app_users WHERE id = ?
+                            """,
+                            (user_id,),
+                        ).fetchone()
+                        if supervisor is None:
+                            raise ApiError(404, "Account was not found.")
+                        if not _role_has_access(
+                            db, supervisor["role"], "supervisor"
+                        ):
+                            raise ApiError(
+                                409, "Only Supervisor accounts can have a specialty."
+                            )
+                        db.execute(
+                            "UPDATE app_users SET supervisor_specialty = ? WHERE id = ?",
+                            (specialty, user_id),
+                        )
+                        supervisor = db.execute(
+                            """
+                            SELECT id, username, display_name, role,
+                                   supervisor_specialty
+                            FROM app_users WHERE id = ?
+                            """,
+                            (user_id,),
+                        ).fetchone()
+                self._send_json(200, {"user": _public_user(supervisor)})
+            elif path == "/api/team-roster":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Team member details must be a JSON object.")
+                teamlead_id = payload.get("teamlead_id")
+                if isinstance(teamlead_id, bool):
+                    raise ApiError(400, "Choose an active Teamlead.")
+                try:
+                    teamlead_id = int(teamlead_id)
+                except (TypeError, ValueError):
+                    raise ApiError(400, "Choose an active Teamlead.") from None
+                member_name = payload.get("member_name")
+                if not isinstance(member_name, str):
+                    raise ApiError(400, "Enter a valid team member name.")
+                member_name = member_name.strip()
+                if not member_name or len(member_name) > 120:
+                    raise ApiError(
+                        400, "Team member name must be between 1 and 120 characters."
+                    )
+                with connect_db() as db:
+                    with db:
+                        teamlead = db.execute(
+                            """
+                            SELECT id FROM app_users
+                            WHERE id = ? AND is_active = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = app_users.role
+                                    AND access.permission_key = 'access.teamlead'
+                                    AND access.is_allowed = 1
+                              )
+                            """,
+                            (teamlead_id,),
+                        ).fetchone()
+                        if teamlead is None:
+                            raise ApiError(400, "Choose an active Teamlead.")
+                        if not _can_manage_team_roster(db, user, teamlead_id):
+                            raise ApiError(
+                                403,
+                                "You can manage only your own roster or a Teamlead who reports to you.",
+                            )
+                        inserted = db.execute(
+                            """
+                            INSERT INTO team_roster_members(teamlead_user_id, member_name)
+                            VALUES (?, ?)
+                            ON CONFLICT(teamlead_user_id, member_name) DO NOTHING
+                            """,
+                            (teamlead_id, member_name),
+                        )
+                        if inserted.rowcount == 0:
+                            raise ApiError(
+                                409, "That team member is already on this roster."
+                            )
+                        member_id = inserted.lastrowid
+                    rosters = _visible_team_rosters(db, user)
+                self._send_json(
+                    201,
+                    {
+                        "member": {"id": member_id, "name": member_name},
+                        "team_rosters": rosters,
+                    },
+                )
+            elif team_roster_delete_match := re.fullmatch(
+                r"/api/team-roster/(\d+)/delete", path
+            ):
+                member_id = int(team_roster_delete_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        member = db.execute(
+                            "SELECT teamlead_user_id FROM team_roster_members WHERE id = ?",
+                            (member_id,),
+                        ).fetchone()
+                        if member is None:
+                            raise ApiError(404, "Team member was not found.")
+                        if not _can_manage_team_roster(
+                            db, user, member["teamlead_user_id"]
+                        ):
+                            raise ApiError(
+                                403,
+                                "You can manage only your own roster or a Teamlead who reports to you.",
+                            )
+                        deleted = db.execute(
+                            "DELETE FROM team_roster_members WHERE id = ?",
+                            (member_id,),
+                        )
+                    rosters = _visible_team_rosters(db, user)
+                self._send_json(200, {"ok": True, "team_rosters": rosters})
             elif path == "/api/supervisor/house-assignment":
                 payload = self._json_body()
                 if not isinstance(payload, dict) or set(payload) != {
@@ -4620,7 +5735,13 @@ class LegacyRouteHandlers:
                         assigned_user = db.execute(
                             """
                             SELECT id FROM app_users
-                            WHERE id = ? AND role = 'surveyor' AND is_active = 1
+                            WHERE id = ? AND is_active = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = app_users.role
+                                    AND access.permission_key = 'access.surveyor'
+                                    AND access.is_allowed = 1
+                              )
                             """,
                             (surveyor_user_id,),
                         ).fetchone()
@@ -4648,7 +5769,7 @@ class LegacyRouteHandlers:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "Movement data must be a JSON object.")
-                allow_house_updates = user["role"] == "admin"
+                allow_house_updates = _has_access_profile(user, "admin")
                 if path.endswith("/batch"):
                     with connect_db() as db:
                         with db:
@@ -4689,7 +5810,7 @@ class LegacyRouteHandlers:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House checklist must be a JSON object.")
-                if user["role"] not in {"admin", "employee", "plumber"}:
+                if not any(_has_access_profile(user, role) for role in ("admin", "employee", "plumber")):
                     raise ApiError(403, "Administrator or employee access is required.")
                 house_id = str(payload.get("house_id") or "").strip()
                 if not house_id:
@@ -4718,7 +5839,7 @@ class LegacyRouteHandlers:
                             "SELECT 1 FROM houses WHERE id = ?", (house_id,)
                         ).fetchone()
                         if not is_active:
-                            if user["role"] != "admin":
+                            if not _has_access_profile(user, "admin"):
                                 raise ApiError(
                                     403,
                                     "Administrator access is required to edit a pre-start checklist.",
@@ -4752,7 +5873,7 @@ class LegacyRouteHandlers:
                             )
                 self._send_json(200, {"house_id": house_id, "saved": True})
             elif path == "/api/house-work-plan":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
                         403, "Surveyor access is required to save a work plan."
                     )
@@ -4820,7 +5941,7 @@ class LegacyRouteHandlers:
                             )
                 self._send_json(200, {"house_id": house_id, "saved": True})
             elif path == "/api/seai-measure-variation":
-                if user["role"] not in {"admin", "surveyor"}:
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
                         403, "Administrator or surveyor access is required to edit SEAI quantities."
                     )
@@ -4869,7 +5990,7 @@ class LegacyRouteHandlers:
                                 409,
                                 "Survey variations can only be edited for houses ready for start.",
                             )
-                        if user["role"] == "surveyor" and (
+                        if _has_access_profile(user, "surveyor") and (
                             house["is_active"]
                         ):
                             raise ApiError(
@@ -4990,7 +6111,7 @@ class LegacyRouteHandlers:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House details must be a JSON object.")
-                if user["role"] == "assign" and (
+                if _has_access_profile(user, "assign") and (
                     set(payload) != {"id", "ready"} or payload.get("ready") is not True
                 ):
                     raise ApiError(
@@ -5144,7 +6265,7 @@ class LegacyRouteHandlers:
                 if len(house_id) > 120:
                     raise ApiError(400, "House ID must be 120 characters or fewer.")
                 supervisor_user_id = None
-                if user["role"] == "assign":
+                if _has_access_profile(user, "assign"):
                     if set(payload) != {"id", "supervisor_user_id"}:
                         raise ApiError(
                             403,
@@ -5164,7 +6285,7 @@ class LegacyRouteHandlers:
                 with connect_db() as db:
                     with db:
                         _require_ready_to_activate(db, house_id)
-                        if user["role"] == "assign":
+                        if _has_access_profile(user, "assign"):
                             ready_house = db.execute(
                                 """
                                 SELECT 1 FROM provided_houses p
@@ -5185,7 +6306,12 @@ class LegacyRouteHandlers:
                                 JOIN app_users assigned_user ON assigned_user.id = assignment.user_id
                                 WHERE assignment.house_id = ? AND assignment.role = 'surveyor'
                                   AND assigned_user.is_active = 1
-                                  AND assigned_user.role = 'surveyor'
+                                  AND EXISTS (
+                                      SELECT 1 FROM app_role_permissions access
+                                      WHERE access.role_key = assigned_user.role
+                                        AND access.permission_key = 'access.surveyor'
+                                        AND access.is_allowed = 1
+                                  )
                                 """,
                                 (house_id,),
                             ).fetchone()
@@ -5197,7 +6323,13 @@ class LegacyRouteHandlers:
                             supervisor = db.execute(
                                 """
                                 SELECT id, display_name FROM app_users
-                                WHERE id = ? AND role = 'supervisor' AND is_active = 1
+                                WHERE id = ? AND is_active = 1
+                                  AND EXISTS (
+                                      SELECT 1 FROM app_role_permissions access
+                                      WHERE access.role_key = app_users.role
+                                        AND access.permission_key = 'access.supervisor'
+                                        AND access.is_allowed = 1
+                                  )
                                 """,
                                 (supervisor_user_id,),
                             ).fetchone()
@@ -5281,7 +6413,7 @@ class LegacyRouteHandlers:
                             raise ApiError(500, "Stored house survey data is invalid.")
                         if not isinstance(survey_data, dict):
                             raise ApiError(500, "Stored house survey data is invalid.")
-                        if user["role"] != "assign":
+                        if not _has_access_profile(user, "assign"):
                             survey_data["perimeter_m"] = perimeter
                             db.execute(
                                 "UPDATE house_surveys SET data = ?, updated_by = ?, "

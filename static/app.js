@@ -18,6 +18,7 @@ const state = {
   houseAssignmentHouseId: "",
   houseAssignmentRequest: 0,
   houseAssignmentReturnFilter: "ready",
+  houseAssignmentReturnToMap: false,
   houseActivationHouseId: "",
   houseTeamFilter: null,
   houseStatusFilter: null,
@@ -46,8 +47,26 @@ const state = {
   seaiSharePages: new Map(),
   pdfAnnotator: null,
   user: null,
+  users: [],
+  departments: [],
+  roles: [],
+  permissions: [],
   setupRequired: false,
 };
+const hasAccessProfile = (user, profile) =>
+  Boolean(
+    user?.permissions?.includes(`access.${profile}`) ||
+      (profile === "admin" && user?.permissions?.includes("*")),
+  );
+const canManageReportingRole = (manager, report) =>
+  (hasAccessProfile(report, "assign") &&
+    hasAccessProfile(manager, "admin")) ||
+  (hasAccessProfile(report, "teamlead") &&
+    hasAccessProfile(manager, "supervisor")) ||
+  (!hasAccessProfile(report, "teamlead") &&
+    (hasAccessProfile(report, "employee") ||
+      hasAccessProfile(report, "plumber")) &&
+    hasAccessProfile(manager, "teamlead"));
 let knownChangeRevisions = null;
 let pendingDashboardRefresh = false;
 let pendingMovementRefresh = false;
@@ -527,6 +546,97 @@ async function request(url, options = {}) {
   return result;
 }
 
+let authCatTypingTimeout = 0;
+
+function updateAuthCatGaze(input) {
+  const cat = $("#auth-cat");
+  const isPin = input?.id === "auth-pin";
+  const length = input?.value.length || 0;
+  // Eyes follow the typed text across the username, and glance down at the keypad for the PIN.
+  const x = isPin ? Math.min(length, 6) / 6 * 3 - 1.5 : Math.min(length, 18) / 18 * 5 - 2.5;
+  cat.style.setProperty("--gaze-x", x.toFixed(2));
+  cat.style.setProperty("--gaze-y", isPin ? "2.5" : "1.2");
+}
+
+function updateAuthCatField(field, mood) {
+  const cat = $("#auth-cat");
+  cat.dataset.field = field;
+  cat.dataset.mood = mood;
+  if (mood === "idle") {
+    cat.style.setProperty("--gaze-x", "0");
+    cat.style.setProperty("--gaze-y", "0");
+  }
+}
+
+function handleAuthCatFocus(event) {
+  if (!event.target.matches("#auth-username, #auth-pin")) return;
+  updateAuthCatField(event.target.id === "auth-pin" ? "pin" : "username", "watching");
+  updateAuthCatGaze(event.target);
+}
+
+function handleAuthCatTyping(event) {
+  if (!event.target.matches("#auth-username, #auth-pin")) return;
+  updateAuthCatField(event.target.id === "auth-pin" ? "pin" : "username", "typing");
+  updateAuthCatGaze(event.target);
+  clearTimeout(authCatTypingTimeout);
+  authCatTypingTimeout = window.setTimeout(() => {
+    updateAuthCatField(event.target.id === "auth-pin" ? "pin" : "username", "watching");
+    authCatTypingTimeout = 0;
+  }, 520);
+}
+
+function handleAuthCatBlur(event) {
+  if (!event.target.matches("#auth-username, #auth-pin")) return;
+  if (event.relatedTarget?.matches("#auth-username, #auth-pin")) return;
+  clearTimeout(authCatTypingTimeout);
+  authCatTypingTimeout = 0;
+  $("#auth-cat").dataset.mood = "idle";
+}
+
+const AUTH_USERNAME_KEY = "material-tracker-username";
+
+function rememberedUsername() {
+  try {
+    return localStorage.getItem(AUTH_USERNAME_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function focusAuthStart() {
+  const username = $("#auth-username");
+  if (!state.setupRequired && !username.value && rememberedUsername()) {
+    username.value = rememberedUsername();
+  }
+  const target = !state.setupRequired && username.value ? $("#auth-pin") : username;
+  target.focus();
+}
+
+function resetAuthPinVisibility() {
+  $$("[data-auth-pin-toggle]").forEach((toggle) => {
+    const input = document.getElementById(toggle.dataset.authPinToggle);
+    input.type = "password";
+    toggle.textContent = "Show";
+    toggle.setAttribute("aria-pressed", "false");
+    toggle.setAttribute("aria-label", toggle.getAttribute("aria-label").replace("Hide", "Show"));
+  });
+}
+
+function toggleAuthPinVisibility(event) {
+  const toggle = event.target.closest("[data-auth-pin-toggle]");
+  if (!toggle) return;
+  const input = document.getElementById(toggle.dataset.authPinToggle);
+  const reveal = input.type === "password";
+  input.type = reveal ? "text" : "password";
+  toggle.textContent = reveal ? "Hide" : "Show";
+  toggle.setAttribute("aria-pressed", String(reveal));
+  toggle.setAttribute(
+    "aria-label",
+    toggle.getAttribute("aria-label").replace(reveal ? "Show" : "Hide", reveal ? "Hide" : "Show"),
+  );
+  input.focus();
+}
+
 function showAuthScreen(setupRequired) {
   state.houseMapMode = false;
   state.houseMapData = null;
@@ -543,6 +653,7 @@ function showAuthScreen(setupRequired) {
   $("#auth-title").textContent = setupRequired
     ? "Set up your administrator account"
     : "Sign in";
+  $("#auth-description").classList.toggle("hidden", !setupRequired);
   $("#auth-description").textContent = setupRequired
     ? "Create the first administrator account. Only this account can create employee logins."
     : "Sign in with your tracker account to continue.";
@@ -572,7 +683,9 @@ function showAuthScreen(setupRequired) {
     ? "Create administrator account"
     : "Sign in";
   $("#auth-screen").classList.remove("hidden");
-  $("#auth-username").focus();
+  updateAuthCatField("username", "watching");
+  resetAuthPinVisibility();
+  focusAuthStart();
 }
 
 function showWorkspace(user) {
@@ -608,10 +721,10 @@ function showWorkspace(user) {
     plumber: "Plumber",
     warehouse: "Warehouse",
   };
-  $("#account-details").textContent = `${user.username} - ${roleNames[user.role] || "Employee"}`;
-  const isSurveyor = user.role === "surveyor";
-  const isSupervisor = user.role === "supervisor";
-  const isAssign = user.role === "assign";
+  $("#account-details").textContent = `${user.username} - ${user.role_name || roleNames[user.role] || user.role}`;
+  const isSurveyor = hasAccessProfile(user, "surveyor");
+  const isSupervisor = hasAccessProfile(user, "supervisor");
+  const isAssign = hasAccessProfile(user, "assign");
   $('[data-tab="houses"] .nav-label').textContent = isAssign
     ? "Dashboard"
     : "Houses & teams";
@@ -629,18 +742,18 @@ function showWorkspace(user) {
     ),
   );
   $("#new-movement-top").classList.toggle("hidden", isSurveyor || isSupervisor || isAssign);
-  $("#start-presentation").classList.toggle("hidden", isSurveyor || user.role !== "admin");
+  $("#start-presentation").classList.toggle("hidden", isSurveyor || !hasAccessProfile(user, "admin"));
   $("#start-navigation-tour").classList.toggle(
     "hidden",
     isSurveyor || isSupervisor || isAssign,
   );
   $("#houses-teams-tabs").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign,
+    isSurveyor || isAssign,
   );
   $("#teams-section").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign,
+    isSurveyor || isAssign,
   );
   $("#open-house").classList.toggle("hidden", isSurveyor || isSupervisor);
   if (isSurveyor) {
@@ -695,16 +808,16 @@ function showWorkspace(user) {
     $("#house-search").placeholder = "Search houses";
     $("#house-search").setAttribute("aria-label", "Search houses");
   }
-  $("#account-manage-users").classList.toggle("hidden", user.role !== "admin");
-  $("#house-map-import-card").classList.toggle("hidden", user.role !== "admin");
-  $("#open-stocktake").classList.toggle("hidden", user.role !== "admin");
-  $("#open-material").classList.toggle("hidden", user.role !== "admin");
-  $("#open-house").classList.toggle("hidden", user.role !== "admin");
-  $("#open-import-empty").classList.toggle("hidden", user.role !== "admin");
-  $("#start-presentation").classList.toggle("hidden", user.role !== "admin");
+  $("#account-manage-users").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
+  $("#house-map-import-card").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
+  $("#open-stocktake").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
+  $("#open-material").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
+  $("#open-house").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
+  $("#open-import-empty").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
+  $("#start-presentation").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
   $("#go-overview").classList.add("hidden");
   updateMovementFields();
-  if (user.role !== "admin") closePresentation();
+  if (!hasAccessProfile(user, "admin")) closePresentation();
   if (isSurveyor) closeNavigationTour();
 }
 
@@ -713,20 +826,20 @@ async function checkAuthentication() {
   if (result.user) {
     await initializeChangeTracking();
     showWorkspace(result.user);
-    if (result.user.role !== "surveyor") await refresh();
+    if (!hasAccessProfile(result.user, "surveyor")) await refresh();
   } else {
     showAuthScreen(result.setup_required);
   }
 }
 
 function setTab(tab) {
-  if (state.user?.role === "assign" && tab !== "houses") tab = "houses";
+  if (hasAccessProfile(state.user, "assign") && tab !== "houses") tab = "houses";
   if (tab === "overview" && state.housesTeamsTab !== "houses") {
     state.housesTeamsTab = "houses";
     renderHouses();
   }
   $("#go-overview").classList.toggle("hidden", tab === "overview");
-  if (["assign", "surveyor"].includes(state.user?.role)) {
+  if ((hasAccessProfile(state.user, "assign") || hasAccessProfile(state.user, "surveyor"))) {
     $("#go-overview").classList.add("hidden");
   }
   $$(".nav-item").forEach((button) => {
@@ -745,7 +858,7 @@ function setTab(tab) {
 function goToHomeView(event) {
   if (event) event.preventDefault();
   if (!state.user) return;
-  if (state.user?.role === "surveyor") {
+  if (hasAccessProfile(state.user, "surveyor")) {
     setTab("houses");
     loadSurveyorHouses();
     return;
@@ -856,7 +969,7 @@ function openNavigationTourStep(stepKey) {
 }
 
 function startNavigationTour() {
-  if (!state.user || state.user.role === "surveyor") return;
+  if (!state.user || hasAccessProfile(state.user, "surveyor")) return;
   closePresentation();
   state.navigationTour = { index: 0 };
   $("#navigation-tour").classList.remove("hidden");
@@ -1262,7 +1375,7 @@ function locationTotal(item, type) {
 
 function renderInventory() {
   const query = $("#material-search").value.trim().toLocaleLowerCase();
-  const canAdministerInventory = state.user?.role === "admin";
+  const canAdministerInventory = hasAccessProfile(state.user, "admin");
   const materials = state.dashboard.materials.filter((item) =>
     `${item.name} ${item.code || ""}`.toLocaleLowerCase().includes(query),
   );
@@ -1378,7 +1491,7 @@ function houseNoteActionClass(notes) {
 }
 
 function houseMapButtonHtml(houseId) {
-  if (state.user?.role === "assign") return "";
+  if (hasAccessProfile(state.user, "assign")) return "";
   return `<button class="text-button house-map-open" type="button" data-house-id="${escapeHtml(houseId)}"><svg class="house-map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg><span>View on map</span></button>`;
 }
 
@@ -1843,7 +1956,7 @@ function setNoteAction(button, hasNote) {
 function openHouseSurvey(houseId) {
   const house = surveyHouses.find((item) => item.id === houseId) || findPlanHouse(houseId);
   if (!house) return;
-  if (!["admin", "surveyor"].includes(state.user?.role)) {
+  if (!(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor"))) {
     showToast("Surveyor access is required to open this room.", true);
     return;
   }
@@ -1865,7 +1978,7 @@ function openHouseSurvey(houseId) {
   const isNotStarted = house.status === "not_started";
   workPlanForm.classList.toggle(
     "hidden",
-    !isReady || !["admin", "surveyor"].includes(state.user?.role),
+    !isReady || !(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")),
   );
   $("#survey-room-work-plan").classList.toggle("hidden", !isReady);
   for (const trade of ["scaffolding", "esb", "plumber"]) {
@@ -1934,7 +2047,7 @@ function openHouseSurvey(houseId) {
   $("#house-documents-list").innerHTML = '<p class="muted">Loading survey documents…</p>';
   $("#house-document-form").classList.toggle(
     "hidden",
-    !isReady || !["admin", "surveyor"].includes(state.user?.role),
+    !isReady || !(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")),
   );
   $$(".survey-room-nav a").forEach((link) => {
     const target = $(link.getAttribute("href"));
@@ -1951,7 +2064,7 @@ function openHouseSurvey(houseId) {
   $("#house-detail").classList.add("hidden");
   $("#surveyor-room").classList.remove("hidden");
   setTab("houses");
-  if (["admin", "surveyor"].includes(state.user?.role)) {
+  if ((hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor"))) {
     loadSeaiDocuments(houseId, state.surveyRoomRequest, isReady);
   } else {
     $("#survey-room-seai-documents").innerHTML =
@@ -2825,7 +2938,7 @@ function closeSurveyorRoom() {
   state.houseStatusFilter = "ready";
   state.houseTeamFilter = null;
   state.housesTeamsTab = "houses";
-  if (state.user?.role === "surveyor") {
+  if (hasAccessProfile(state.user, "surveyor")) {
     setTab("houses");
     loadSurveyorHouses();
   } else {
@@ -2930,9 +3043,9 @@ async function renderNotStartedHouses(query, mode = "not_started") {
       .catch(() => {});
   }
   const isReady = mode === "ready";
-  const canManageHouses = state.user?.role === "admin";
-  const canSurveyHouses = ["admin", "surveyor"].includes(state.user?.role);
-  const isAssign = state.user?.role === "assign";
+  const canManageHouses = hasAccessProfile(state.user, "admin");
+  const canSurveyHouses = (hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor"));
+  const isAssign = hasAccessProfile(state.user, "assign");
   list.classList.toggle("house-grid-ready", isReady);
   const rows = planCache[cacheKey].filter((h) =>
     [h.id, h.owner_name, h.address, h.postcode].filter(Boolean).join(" ").toLocaleLowerCase().includes(query),
@@ -2966,7 +3079,7 @@ async function renderNotStartedHouses(query, mode = "not_started") {
           ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : `
               <button class="text-button seai-activate" type="button" data-house-id="${id}"${h.survey ? "" : ' disabled title="Complete a survey before activation."'}>${h.survey ? "&#43; Activate house" : "Survey required to activate"}</button>
             ${canSurveyHouses ? `<button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${h.survey ? "Review completed survey" : "Open surveyor room"}">${h.survey ? "Review survey" : "Surveyor room"}</button>` : ""}
-            ${state.user?.role === "assign" ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}
+            ${hasAccessProfile(state.user, "assign") ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}
             ${houseMapButtonHtml(h.id)}
             `}
         `}
@@ -3127,7 +3240,7 @@ async function toggleHouseReady(houseId, ready) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: houseId, ready }),
     });
-    if (state.user?.role === "assign" && ready) {
+    if (hasAccessProfile(state.user, "assign") && ready) {
       state.houseMapMode = false;
       state.selectedMapHouseId = "";
       state.houseMapCamera = null;
@@ -3418,15 +3531,20 @@ function renderHouseMapCanvas() {
 
 function mapHouseActions(house) {
   const id = escapeHtml(house.id);
-  const admin = state.user?.role === "admin";
-  if (state.user?.role === "assign") {
-    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">View SEAI details</button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : ""}`;
+  const admin = hasAccessProfile(state.user, "admin");
+  if (hasAccessProfile(state.user, "assign")) {
+    const hasAssignedSurveyor = Boolean(
+      house.has_assigned_surveyor ||
+      house.assigned_surveyor_name ||
+      house.surveyor_assigned_at,
+    );
+    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">View SEAI details</button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-team" type="button" data-house-id="${id}">${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</button>` : ""}`;
   }
   if (house.status === "not_started") {
-    return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>${["admin", "surveyor"].includes(state.user?.role) ? `<button class="text-button house-survey-open survey-needed" type="button" data-house-id="${id}">View Surveyor room</button>` : ""}`;
+    return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open survey-needed" type="button" data-house-id="${id}">View Surveyor room</button>` : ""}`;
   }
   if (house.status === "ready") {
-    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${house.survey ? "" : " disabled"}>＋ Activate house</button>${["admin", "surveyor"].includes(state.user?.role) ? `<button class="text-button house-survey-open ${house.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${house.survey ? "Review completed survey" : "Open surveyor room"}">${house.survey ? "Review survey" : "Surveyor room"}</button>` : ""}<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`;
+    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${house.survey ? "" : " disabled"}>＋ Activate house</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open ${house.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${house.survey ? "Review completed survey" : "Open surveyor room"}">${house.survey ? "Review survey" : "Surveyor room"}</button>` : ""}<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`;
   }
   if (house.status === "closed") {
     return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
@@ -3441,7 +3559,7 @@ function selectMapHouse(houseId) {
   const tracked = state.dashboard.house_list.find((item) => item.id === houseId);
   const displayHouse = { ...tracked, ...house };
   const address = [house.address, house.postcode].filter(Boolean).join(" · ");
-  const measures = state.user?.role === "assign" ? "" : [
+  const measures = hasAccessProfile(state.user, "assign") ? "" : [
     house.area_m2 === null ? "" : `${formatQuantity(house.area_m2)} m²`,
     house.perimeter_m === null ? "" : `${formatQuantity(house.perimeter_m)} m perimeter`,
   ].filter(Boolean).join(" · ");
@@ -3500,7 +3618,7 @@ function renderHouseMapSummary() {
   const mappedCount = visibleHouses.filter(hasUsableHouseCoordinates).length;
   const readyCount = visibleHouses.filter((house) => house.status === "ready").length;
   const activeCount = visibleHouses.filter((house) => house.status === "active").length;
-  const houseCountLabel = state.user?.role === "assign" ? "provided" : "eligible";
+  const houseCountLabel = hasAccessProfile(state.user, "assign") ? "provided" : "eligible";
   $("#house-map-summary").innerHTML = `
     <span><strong>${visibleHouses.length}</strong> shown of ${houses.length} ${houseCountLabel}</span>
     <span><strong>${mappedCount}</strong> mapped</span>
@@ -3510,15 +3628,15 @@ function renderHouseMapSummary() {
 
 async function loadHouseMap() {
   try {
-    const status = state.user?.role === "assign" ? "all" : "map";
+    const status = hasAccessProfile(state.user, "assign") ? "all" : "map";
     const result = await request(`/api/calculator/houses?status=${status}`);
     if (!state.houseMapMode) return;
-    state.houseMapData = state.user?.role === "assign"
+    state.houseMapData = hasAccessProfile(state.user, "assign")
       ? addAssignDemoMapLocations(result.houses)
       : result.houses;
     const houses = state.houseMapData;
     $(".house-map-list-heading h3").textContent =
-      state.user?.role === "assign" ? "Provided houses" : "Eligible houses";
+      hasAccessProfile(state.user, "assign") ? "Provided houses" : "Eligible houses";
     renderHouseMapSummary();
     renderHouseMapList();
     renderHouseMapStageFilters();
@@ -3561,6 +3679,61 @@ function setHouseListHeading(text, status) {
   heading.dataset.status = status;
 }
 
+function renderTeamRosters() {
+  const rosters = state.dashboard?.team_rosters || [];
+  const canManageRoster =
+    hasAccessProfile(state.user, "admin") ||
+    hasAccessProfile(state.user, "supervisor") ||
+    hasAccessProfile(state.user, "teamlead");
+  const query = $("#team-search").value.trim().toLocaleLowerCase();
+  const select = $("#team-roster-teamlead");
+  const selectedTeamlead = select.value;
+  select.innerHTML = rosters
+    .map((roster) =>
+      `<option value="${roster.teamlead_id}">${escapeHtml(roster.team_name || roster.teamlead_name)}${roster.team_name ? ` · ${escapeHtml(roster.teamlead_name)}` : ""}</option>`,
+    )
+    .join("");
+  select.disabled = !rosters.length;
+  if (rosters.some((roster) => String(roster.teamlead_id) === selectedTeamlead)) {
+    select.value = selectedTeamlead;
+  }
+  $("#team-roster-form").classList.toggle(
+    "hidden",
+    !canManageRoster || !rosters.length,
+  );
+
+  const matchingRosters = rosters.filter((roster) =>
+    [roster.team_name, roster.teamlead_name, ...roster.members.map((member) => member.name)]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(query),
+  );
+  $("#team-roster-list").innerHTML = matchingRosters.map((roster) => `
+    <article class="team-card team-roster-card">
+      <div class="house-top">
+        <span class="house-avatar" aria-hidden="true">T</span>
+        <div class="house-meta"><h2>${escapeHtml(roster.team_name || roster.teamlead_name)}</h2><p>Teamlead: ${escapeHtml(roster.teamlead_name)} · ${roster.members.length} team member${roster.members.length === 1 ? "" : "s"}</p></div>
+      </div>
+      <ul class="team-roster-members">
+        ${roster.members.length
+          ? roster.members.map((member) => `
+            <li><span>${escapeHtml(member.name)}</span>${canManageRoster ? `<button class="text-button team-roster-remove" type="button" data-member-id="${member.id}" data-member-name="${escapeHtml(member.name)}" aria-label="Remove ${escapeHtml(member.name)} from ${escapeHtml(roster.teamlead_name)}’s team">Remove</button>` : ""}</li>
+          `).join("")
+          : `<li class="team-roster-empty-member">No members added yet.</li>`}
+      </ul>
+    </article>
+  `).join("");
+  $("#team-roster-empty").classList.toggle("hidden", matchingRosters.length > 0);
+  if (!matchingRosters.length) {
+    $("#team-roster-empty").querySelector("strong").textContent = rosters.length
+      ? "No matching team rosters"
+      : "No active Teamlead accounts";
+    $("#team-roster-empty").querySelector("p").textContent = rosters.length
+      ? "Try another teamlead or member name."
+      : "Active Teamlead accounts will appear here.";
+  }
+}
+
 function renderHouses() {
   if (state.houseMapMode) {
     $("#houses-overview").classList.add("hidden");
@@ -3569,10 +3742,13 @@ function renderHouses() {
     return;
   }
   const data = state.dashboard;
-  const canManageHouses = state.user?.role === "admin";
-  const canEditHouseChecklist = ["admin", "employee", "plumber"].includes(state.user?.role);
-  const canViewMaterials = state.user?.role !== "assign";
-  const isAssign = state.user?.role === "assign";
+  const canManageHouses = hasAccessProfile(state.user, "admin");
+  const canEditHouseChecklist =
+    hasAccessProfile(state.user, "admin") ||
+    hasAccessProfile(state.user, "employee") ||
+    hasAccessProfile(state.user, "plumber");
+  const canViewMaterials = !hasAccessProfile(state.user, "assign");
+  const isAssign = hasAccessProfile(state.user, "assign");
   $("#assign-houses-dashboard").classList.toggle("hidden", !isAssign);
   $("#assign-surveyor-workload").classList.toggle("hidden", !isAssign);
   $("#assign-weather-panel").classList.toggle("hidden", !isAssign);
@@ -3760,6 +3936,7 @@ function renderHouses() {
     data.team_house_counts || {},
   );
   const teamQuery = $("#team-search").value.trim().toLocaleLowerCase();
+  renderTeamRosters();
   const matchingTeams = teams.filter((location) =>
     location.name.toLocaleLowerCase().includes(teamQuery),
   );
@@ -3790,7 +3967,7 @@ function renderHouses() {
   );
   $("#teams-section").classList.toggle(
     "hidden",
-    state.housesTeamsTab !== "teams" || state.user?.role === "assign",
+    state.housesTeamsTab !== "teams" || hasAccessProfile(state.user, "assign"),
   );
   $("#houses-tab").classList.toggle(
     "active",
@@ -3870,7 +4047,7 @@ function renderHouses() {
 }
 
 async function openHouseChecklist(houseId) {
-  if (state.user?.role !== "admin") return;
+  if (!hasAccessProfile(state.user, "admin")) return;
   const requestId = ++state.houseChecklistRequest;
   const form = $("#house-checklist-form");
   form.reset();
@@ -3908,7 +4085,7 @@ async function openHouseChecklist(houseId) {
 
 async function submitHouseChecklist(event) {
   event.preventDefault();
-  if (state.user?.role !== "admin") {
+  if (!hasAccessProfile(state.user, "admin")) {
     showToast("Administrator access is required to edit house checklists.", true);
     return;
   }
@@ -4206,7 +4383,7 @@ async function loadAssignSeaiHouseRecord(houseId, requestId) {
 }
 
 function openAssignSeaiHouseRecord(houseId) {
-  if (state.user?.role !== "assign") return;
+  if (!hasAccessProfile(state.user, "assign")) return;
   state.assignSeaiReturnToMap = state.houseMapMode;
   state.houseMapMode = false;
   state.assignSeaiHouseViewId = houseId;
@@ -4228,7 +4405,7 @@ function openAssignSeaiHouseRecord(houseId) {
 }
 
 function closeAssignSeaiHouseRecord() {
-  if (state.assignSeaiReturnToMap && state.user?.role === "assign") {
+  if (state.assignSeaiReturnToMap && hasAccessProfile(state.user, "assign")) {
     state.assignSeaiReturnToMap = false;
     state.assignSeaiHouseViewId = "";
     state.assignSeaiHouseRequest += 1;
@@ -4294,6 +4471,7 @@ function updateSurveyorAccountSelection(event) {
 async function openHouseAssignments(houseId) {
   const requestId = ++state.houseAssignmentRequest;
   state.houseAssignmentHouseId = houseId;
+  state.houseAssignmentReturnToMap = state.houseMapMode;
   state.houseAssignmentReturnFilter =
     state.houseStatusFilter === "not_started" ? "not_started" : "ready";
   state.houseMapMode = false;
@@ -4369,8 +4547,23 @@ async function openHouseAssignments(houseId) {
   } catch (error) {
     if (requestId !== state.houseAssignmentRequest) return;
     showToast(error.message, true);
-    showHousesOverview();
+    returnFromHouseAssignments();
   }
+}
+
+function returnFromHouseAssignments() {
+  const returnToMap = state.houseAssignmentReturnToMap;
+  state.houseAssignmentReturnToMap = false;
+  if (returnToMap) {
+    state.houseAssignmentHouseId = "";
+    state.houseAssignmentRequest += 1;
+    state.houseMapMode = true;
+    $("#house-assignment-dashboard").classList.add("hidden");
+    renderHouses();
+    return;
+  }
+  showHousesOverview();
+  renderHouses();
 }
 
 async function submitHouseAssignments(event) {
@@ -4396,8 +4589,7 @@ async function submitHouseAssignments(event) {
     state.houseStatusFilter = state.houseAssignmentReturnFilter;
     state.houseTeamFilter = null;
     $("#house-search").value = "";
-    showHousesOverview();
-    renderHouses();
+    returnFromHouseAssignments();
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -4717,7 +4909,7 @@ function fillSeaiHouse(h) {
 function renderAll(preserveMovementLines = false) {
   renderOverview();
   renderInventory();
-  if (state.user?.role === "supervisor") {
+  if (hasAccessProfile(state.user, "supervisor")) {
     renderSupervisorHouses();
   } else {
     renderHouses();
@@ -4753,7 +4945,7 @@ async function refreshPendingChanges() {
       !surveyRoomOpen &&
       activeTab
     ) {
-      if (state.user.role === "surveyor") {
+      if (hasAccessProfile(state.user, "surveyor")) {
         if (activeTab === "houses") {
           await loadSurveyorHouses({ quiet: true });
           pendingDashboardRefresh = false;
@@ -4777,7 +4969,7 @@ async function refreshPendingChanges() {
         pendingDashboardViews.delete(activeTab);
       } else if (
         activeTab === "houses" &&
-        state.user.role !== "surveyor" &&
+        !hasAccessProfile(state.user, "surveyor") &&
         !assignmentViewOpen &&
         !surveyRoomOpen
       ) {
@@ -4785,7 +4977,7 @@ async function refreshPendingChanges() {
           if (dashboardFetched) await loadHouseDetail(state.viewingHouseId);
         } else {
           Object.keys(planCache).forEach((mode) => planStale.add(mode));
-          if (state.user.role === "supervisor") {
+          if (hasAccessProfile(state.user, "supervisor")) {
             renderSupervisorHouses();
           } else {
             renderHouses();
@@ -4854,7 +5046,7 @@ async function pollTrackerChanges() {
     pendingDocumentRefresh ||= revisions.documents !== knownChangeRevisions.documents;
     if (
       revisions.dashboard !== knownChangeRevisions.dashboard &&
-      state.user.role !== "surveyor"
+      !hasAccessProfile(state.user, "surveyor")
     ) {
       pendingDashboardViews.add("overview");
       pendingDashboardViews.add("inventory");
@@ -4870,8 +5062,8 @@ async function pollTrackerChanges() {
 async function refresh(preserveMovementLines = false) {
   Object.keys(planCache).forEach((mode) => planStale.add(mode));
   const search = $("#movement-search")?.value.trim() || "";
-  const isAssign = state.user?.role === "assign";
-  const isSupervisor = state.user?.role === "supervisor";
+  const isAssign = hasAccessProfile(state.user, "assign");
+  const isSupervisor = hasAccessProfile(state.user, "supervisor");
   const [dashboard, ledger] = await Promise.all([
     request("/api/dashboard"),
     isAssign || isSupervisor
@@ -4949,7 +5141,7 @@ function updateMovementFields() {
   $("#house-hint").textContent = ["pickup", "return"].includes(kind)
     ? "Required for this movement. Search matches house, owner and assigned employee."
     : "Optional for this movement. Search matches house, owner and assigned employee.";
-  if (["employee", "plumber"].includes(state.user?.role)) {
+  if ((hasAccessProfile(state.user, "employee") || hasAccessProfile(state.user, "plumber"))) {
     $("#house-hint").textContent =
       "This account can record movements only for existing houses.";
   }
@@ -5414,7 +5606,9 @@ async function submitAuthentication(event) {
   };
   if (setup) payload.display_name = values.get("display_name");
   const button = $("#auth-submit");
+  const idleLabel = button.textContent;
   button.disabled = true;
+  button.textContent = setup ? "Creating account…" : "Signing in…";
   $("#auth-error").classList.add("hidden");
   try {
     const result = await request(
@@ -5425,10 +5619,16 @@ async function submitAuthentication(event) {
         body: JSON.stringify(payload),
       },
     );
+    try {
+      if (!setup) localStorage.setItem(AUTH_USERNAME_KEY, String(payload.username).trim());
+    } catch {
+      // Remembering the username is optional.
+    }
     form.reset();
+    resetAuthPinVisibility();
     await initializeChangeTracking();
     showWorkspace(result.user);
-    if (result.user.role === "surveyor") return;
+    if (hasAccessProfile(result.user, "surveyor")) return;
     try {
       await refresh();
     } catch (error) {
@@ -5444,41 +5644,283 @@ async function submitAuthentication(event) {
   } catch (error) {
     $("#auth-error").textContent = error.message;
     $("#auth-error").classList.remove("hidden");
+    const card = $(".auth-card");
+    card.classList.remove("auth-shake");
+    void card.offsetWidth;
+    card.classList.add("auth-shake");
+    $("#auth-pin").value = "";
+    $("#auth-pin-confirm").value = "";
+    $("#auth-pin").focus();
   } finally {
     button.disabled = false;
+    button.textContent = idleLabel;
   }
 }
 
 async function loadUsers() {
   const result = await request("/api/users");
   pendingUserRefresh = false;
-  const roleNames = {
-    admin: "Admin",
-    assign: "Assign",
-    boss: "Boss",
-    surveyor: "Surveyor",
-    warehouse: "Warehouse",
-    delivery: "Delivery",
-    supervisor: "Supervisor",
-    teamlead: "Teamlead",
-    plumber: "Plumber",
-    employee: "Employee (legacy)",
-  };
-  $("#user-list").innerHTML = result.users
+  state.users = result.users;
+  state.departments = result.departments;
+  state.roles = result.roles;
+  state.permissions = result.permissions;
+  $("#user-form [name='role']").innerHTML = state.roles
+    .filter((role) => role.is_active)
     .map(
-      (user) => `
-        <div class="user-row">
-          <span><strong>${escapeHtml(user.display_name)}</strong><small>${escapeHtml(user.username)}</small></span>
-          <span>${escapeHtml(roleNames[user.role] || user.role)}${user.is_active ? "" : " (Disabled)"}</span>
-        </div>`,
+      (role) =>
+        `<option value="${escapeHtml(role.role_key)}">${escapeHtml(role.display_name)}</option>`,
     )
     .join("");
+  $("#new-user-departments").innerHTML = state.departments
+    .filter((department) => department.is_active)
+    .map(
+      (department) =>
+        `<option value="${department.id}">${escapeHtml(department.name)}</option>`,
+    )
+    .join("");
+  $("#department-list").innerHTML = state.departments
+    .map(
+      (department) =>
+        `<span class="department-chip${department.is_active ? "" : " inactive"}">${escapeHtml(department.name)}${department.is_active ? "" : " · Inactive"}</span>`,
+    )
+    .join("");
+  $("#user-list").innerHTML = result.users
+    .map(
+      (user) => {
+        const status = `${escapeHtml(user.role_name || user.role)}${user.is_active ? "" : " (Disabled)"}`;
+        const departments = user.departments || [];
+        const managerValue = user.manager_user_id == null
+          ? ""
+          : String(user.manager_user_id);
+        const managers = reportingManagersFor(
+          user,
+          departments.map((department) => department.id),
+        );
+        return `
+        <div class="user-row">
+          <div class="user-row-identity"><strong>${escapeHtml(user.display_name)}</strong><small>${escapeHtml(user.username)}</small><small>${status}</small></div>
+          <div class="user-organization-controls">
+            <fieldset class="user-department-options"><legend>Department membership</legend>
+              ${state.departments.filter((department) => department.is_active).map((department) => `
+                <label><input type="checkbox" class="user-department-check" data-user-id="${user.id}" value="${department.id}" ${departments.some((membership) => membership.id === department.id) ? "checked" : ""}>${escapeHtml(department.name)}</label>
+              `).join("")}
+            </fieldset>
+            <label class="field">Reports to<select class="user-manager-select" data-user-id="${user.id}">
+              <option value="">No manager</option>
+              ${managers.map((manager) => `<option value="${manager.id}" ${managerValue === String(manager.id) ? "selected" : ""}>${escapeHtml(manager.display_name)} · ${escapeHtml(manager.role_name || manager.role)}</option>`).join("")}
+            </select></label>
+            <button class="button button-secondary user-organization-save" type="button" data-user-id="${user.id}">Save organization</button>
+          </div>
+          ${hasAccessProfile(user, "supervisor")
+            ? `<span class="user-row-specialty"><strong>${status}</strong><span class="user-row-specialty-edit"><input class="supervisor-specialty-input" data-user-id="${user.id}" maxlength="120" value="${escapeHtml(user.supervisor_specialty || "")}" placeholder="Add specialty" aria-label="Specialty for ${escapeHtml(user.display_name)}"><button class="button button-secondary supervisor-specialty-save" type="button" data-user-id="${user.id}">Save</button></span></span>`
+            : hasAccessProfile(user, "teamlead")
+              ? `<span class="user-row-specialty"><strong>${status}</strong><span class="user-row-specialty-edit"><input class="team-name-input" data-user-id="${user.id}" maxlength="120" value="${escapeHtml(user.team_name || "")}" placeholder="Add team name" aria-label="Team name for ${escapeHtml(user.display_name)}"><button class="button button-secondary team-name-save" type="button" data-user-id="${user.id}">Save</button></span></span>`
+              : ""}
+        </div>`;
+      },
+    )
+    .join("");
+  renderRolePermissionEditor();
+  updateRoleSpecificFields();
+}
+
+function reportingManagersFor(report, departmentIds) {
+  const departmentIdSet = new Set(departmentIds.map(Number));
+  if (!departmentIdSet.size) return [];
+  return state.users.filter(
+    (manager) =>
+      manager.is_active &&
+      manager.id !== report.id &&
+      canManageReportingRole(manager, report) &&
+      (manager.departments || []).some((department) =>
+        departmentIdSet.has(Number(department.id)),
+      ),
+  );
+}
+
+function updateNewUserManagerOptions(role) {
+  const select = $("#new-user-manager");
+  const previousValue = select.value;
+  const departmentIds = $$("#new-user-departments option:checked").map(
+    (option) => Number(option.value),
+  );
+  const managers = reportingManagersFor(role || {}, departmentIds);
+  let selectedManager = managers.some(
+    (manager) => String(manager.id) === previousValue,
+  )
+    ? previousValue
+    : "";
+  if (
+    !selectedManager &&
+    hasAccessProfile(role, "assign") &&
+    $$("#new-user-departments option:checked").some(
+      (option) => option.textContent === "Administration",
+    )
+  ) {
+    const administrator = managers.find((user) =>
+      hasAccessProfile(user, "admin"),
+    );
+    if (administrator) selectedManager = String(administrator.id);
+  }
+  if (
+    !selectedManager &&
+    hasAccessProfile(role, "teamlead") &&
+    $$("#new-user-departments option:checked").some(
+      (option) => option.textContent === "External Wall Insulation",
+    )
+  ) {
+    const ewiSupervisor = managers.find(
+      (user) =>
+        user.display_name.toLocaleLowerCase() === "karol" &&
+        hasAccessProfile(user, "supervisor"),
+    );
+    if (ewiSupervisor) selectedManager = String(ewiSupervisor.id);
+  }
+  select.innerHTML = `<option value="">No manager</option>${managers
+    .map(
+      (manager) =>
+        `<option value="${manager.id}">${escapeHtml(manager.display_name)} · ${escapeHtml(manager.role_name || manager.role)}</option>`,
+    )
+    .join("")}`;
+  select.value = selectedManager;
+}
+
+function renderRolePermissionEditor() {
+  const roleSelect = $("#permission-role-select");
+  const selectedKey = roleSelect.value;
+  roleSelect.innerHTML = state.roles
+    .map(
+      (role) =>
+        `<option value="${escapeHtml(role.role_key)}">${escapeHtml(role.display_name)}</option>`,
+    )
+    .join("");
+  if (state.roles.some((role) => role.role_key === selectedKey)) {
+    roleSelect.value = selectedKey;
+  }
+  const role = state.roles.find(
+    (item) => item.role_key === roleSelect.value,
+  );
+  const assigned = new Set(role?.permissions || []);
+  $("#role-permission-list").innerHTML = state.permissions
+    .map(
+      (permission) => `
+        <label class="role-permission-option">
+          <input type="checkbox" class="role-permission-check" value="${escapeHtml(permission.permission_key)}" ${assigned.has(permission.permission_key) ? "checked" : ""} ${permission.permission_key === "*" && role?.role_key !== "admin" ? "disabled" : ""}>
+          <span><strong>${escapeHtml(permission.permission_key)}</strong><small>${escapeHtml(permission.description)}</small></span>
+        </label>
+      `,
+    )
+    .join("");
+}
+
+async function saveUserOrganization(button) {
+  const userId = button.dataset.userId;
+  const departmentIds = $$(
+    `.user-department-check[data-user-id="${userId}"]:checked`,
+  ).map((input) => Number(input.value));
+  const managerUserId = $(
+    `.user-manager-select[data-user-id="${userId}"]`,
+  ).value;
+  button.disabled = true;
+  try {
+    await request(`/api/users/${userId}/organization`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        department_ids: departmentIds,
+        manager_user_id: managerUserId || null,
+      }),
+    });
+    await loadUsers();
+    showToast("User departments and reporting line saved.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveSupervisorSpecialty(button) {
+  const input = $(`.supervisor-specialty-input[data-user-id="${button.dataset.userId}"]`);
+  button.disabled = true;
+  try {
+    await request(`/api/users/${button.dataset.userId}/specialty`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ supervisor_specialty: input.value }),
+    });
+    await loadUsers();
+    showToast("Supervisor specialty saved.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveTeamName(button) {
+  const input = $(`.team-name-input[data-user-id="${button.dataset.userId}"]`);
+  button.disabled = true;
+  try {
+    await request(`/api/users/${button.dataset.userId}/team-name`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_name: input.value }),
+    });
+    await loadUsers();
+    showToast("Team name saved.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function updateRoleSpecificFields() {
+  const roleKey = $("#user-form [name='role']").value;
+  const role = state.roles.find((item) => item.role_key === roleKey);
+  const hasProfile = (profile) =>
+    role?.permissions?.includes(`access.${profile}`) ||
+    (profile === "admin" && role?.permissions?.includes("*"));
+  const isSupervisor = hasProfile("supervisor");
+  $("#supervisor-specialty-field").classList.toggle("hidden", !isSupervisor);
+  $("#user-form [name='supervisor_specialty']").disabled = !isSupervisor;
+  const isTeamlead = hasProfile("teamlead");
+  $("#team-name-field").classList.toggle("hidden", !isTeamlead);
+  $("#user-form [name='team_name']").disabled = !isTeamlead;
+  const defaultDepartments = {
+    admin: "Administration",
+    assign: "Administration",
+    surveyor: "Surveyors",
+    delivery: "Delivery",
+    supervisor: "Administration",
+    teamlead: "External Wall Insulation",
+    plumber: "Plumbing",
+    employee: "External Wall Insulation",
+  };
+  const desiredDepartment = defaultDepartments[roleKey];
+  if (desiredDepartment) {
+    const departmentSelect = $("#new-user-departments");
+    const match = [...departmentSelect.options].find(
+      (option) => option.textContent === desiredDepartment,
+    );
+    if (match) {
+      [...departmentSelect.options].forEach((option) => {
+        option.selected = option === match;
+      });
+    }
+  }
+  updateNewUserManagerOptions(role);
 }
 
 async function submitEmployee(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
   const values = Object.fromEntries(new FormData(formElement));
+  values.department_ids = $$("#new-user-departments option:checked").map(
+    (option) => Number(option.value),
+  );
+  values.manager_user_id = $("#new-user-manager").value || null;
   if (values.pin !== values.pin_confirm) {
     showToast("The PINs do not match.", true);
     return;
@@ -5493,8 +5935,138 @@ async function submitEmployee(event) {
       body: JSON.stringify(values),
     });
     formElement.reset();
+    updateRoleSpecificFields();
     await loadUsers();
-    showToast(`${values.role[0].toUpperCase()}${values.role.slice(1)} account created.`);
+    await refresh();
+    const roleName =
+      state.roles.find((role) => role.role_key === values.role)?.display_name ||
+      values.role;
+    showToast(`${roleName} account created.`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitDepartment(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const name = new FormData(formElement).get("name");
+  const button = $("button[type='submit']", formElement);
+  button.disabled = true;
+  try {
+    await request("/api/departments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    formElement.reset();
+    await loadUsers();
+    showToast("Department added.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitRole(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const values = Object.fromEntries(new FormData(formElement));
+  const button = $("button[type='submit']", formElement);
+  button.disabled = true;
+  try {
+    await request("/api/roles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    formElement.reset();
+    await loadUsers();
+    $("#permission-role-select").value = values.role_key;
+    renderRolePermissionEditor();
+    showToast("Role added. Select its permissions before assigning it.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveRolePermissions() {
+  const roleKey = $("#permission-role-select").value;
+  const permissions = $$(".role-permission-check:checked").map(
+    (input) => input.value,
+  );
+  const button = $("#save-role-permissions");
+  button.disabled = true;
+  try {
+    await request(`/api/roles/${encodeURIComponent(roleKey)}/permissions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permissions }),
+    });
+    await loadUsers();
+    $("#permission-role-select").value = roleKey;
+    renderRolePermissionEditor();
+    const auth = await request("/api/auth/status");
+    if (auth.user) showWorkspace(auth.user);
+    showToast("Role permissions saved.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitTeamRosterMember(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const values = Object.fromEntries(new FormData(formElement));
+  const button = $("button[type='submit']", formElement);
+  button.disabled = true;
+  try {
+    const result = await request("/api/team-roster", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    state.dashboard.team_rosters = result.team_rosters;
+    formElement.elements.member_name.value = "";
+    renderTeamRosters();
+    try {
+      knownChangeRevisions = (await request("/api/updates")).revisions;
+    } catch (error) {
+      showToast(`Member saved, but live-update status could not refresh: ${error.message}`, true);
+      return;
+    }
+    showToast(`${result.member.name} added to the team.`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeTeamRosterMember(button) {
+  if (!window.confirm(`Remove ${button.dataset.memberName} from this team?`)) return;
+  button.disabled = true;
+  try {
+    const result = await request(
+      `/api/team-roster/${button.dataset.memberId}/delete`,
+      { method: "POST" },
+    );
+    state.dashboard.team_rosters = result.team_rosters;
+    renderTeamRosters();
+    try {
+      knownChangeRevisions = (await request("/api/updates")).revisions;
+    } catch (error) {
+      showToast(`Member removed, but live-update status could not refresh: ${error.message}`, true);
+      return;
+    }
+    showToast(`${button.dataset.memberName} removed from the team.`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -5602,7 +6174,79 @@ function bindEvents() {
   });
   $("#account-sign-out").addEventListener("click", signOut);
   $("#auth-form").addEventListener("submit", submitAuthentication);
+  $("#auth-form").addEventListener("click", toggleAuthPinVisibility);
+  $("#auth-form").addEventListener("focusin", handleAuthCatFocus);
+  $("#auth-form").addEventListener("input", handleAuthCatTyping);
+  $("#auth-form").addEventListener("focusout", handleAuthCatBlur);
   $("#user-form").addEventListener("submit", submitEmployee);
+  $("#department-form").addEventListener("submit", submitDepartment);
+  $("#role-form").addEventListener("submit", submitRole);
+  $("#permission-role-select").addEventListener(
+    "change",
+    renderRolePermissionEditor,
+  );
+  $("#save-role-permissions").addEventListener(
+    "click",
+    saveRolePermissions,
+  );
+  $("#user-form [name='role']").addEventListener(
+    "change",
+    updateRoleSpecificFields,
+  );
+  $("#new-user-departments").addEventListener("change", () => {
+    const roleKey = $("#user-form [name='role']").value;
+    updateNewUserManagerOptions(
+      state.roles.find((role) => role.role_key === roleKey),
+    );
+  });
+  $("#user-form [name='team_name']").addEventListener("input", (event) => {
+    const departmentSelect = $("#new-user-departments");
+    const match = [...departmentSelect.options].find(
+      (option) =>
+        option.textContent.toLocaleLowerCase() ===
+        event.currentTarget.value.trim().toLocaleLowerCase(),
+    );
+    if (match) {
+      [...departmentSelect.options].forEach((option) => {
+        option.selected = option === match;
+      });
+      $("#new-user-manager").value = "";
+    }
+    const roleKey = $("#user-form [name='role']").value;
+    updateNewUserManagerOptions(
+      state.roles.find((role) => role.role_key === roleKey),
+    );
+  });
+  $("#user-form [name='supervisor_specialty']").addEventListener(
+    "input",
+    (event) => {
+      const departmentSelect = $("#new-user-departments");
+      const match = [...departmentSelect.options].find(
+        (option) =>
+          option.textContent.toLocaleLowerCase() ===
+          event.currentTarget.value.trim().toLocaleLowerCase(),
+      );
+      if (match) {
+        [...departmentSelect.options].forEach((option) => {
+          option.selected = option === match;
+        });
+        $("#new-user-manager").value = "";
+      }
+      const roleKey = $("#user-form [name='role']").value;
+      updateNewUserManagerOptions(
+        state.roles.find((role) => role.role_key === roleKey),
+      );
+    },
+  );
+  updateRoleSpecificFields();
+  $("#user-list").addEventListener("click", (event) => {
+    const specialtyButton = event.target.closest(".supervisor-specialty-save");
+    if (specialtyButton) saveSupervisorSpecialty(specialtyButton);
+    const teamNameButton = event.target.closest(".team-name-save");
+    if (teamNameButton) saveTeamName(teamNameButton);
+    const organizationButton = event.target.closest(".user-organization-save");
+    if (organizationButton) saveUserOrganization(organizationButton);
+  });
   $("#pin-form").addEventListener("submit", submitPinChange);
   $("#close-presentation").addEventListener("click", closePresentation);
   $("#minimize-presentation").addEventListener("click", minimizePresentation);
@@ -5680,8 +6324,7 @@ function bindEvents() {
   });
   $("#assign-seai-house-ready").addEventListener("click", markAssignSeaiHouseReady);
   $("#back-from-house-assignments").addEventListener("click", () => {
-    showHousesOverview();
-    renderHouses();
+    returnFromHouseAssignments();
   });
   $("#house-assignment-form").addEventListener("submit", submitHouseAssignments);
   $("#house-assignment-form").addEventListener("change", updateHouseAssignmentSaveState);
@@ -5809,7 +6452,7 @@ function bindEvents() {
   $("#seai-results").addEventListener("click", pickSeaiHouse);
   $("#houses-list").addEventListener("click", toggleHouseFinished);
   $("#house-map-list-view").addEventListener("click", () => {
-    if (state.user?.role === "assign" && state.houseStatusFilter === "seai") {
+    if (hasAccessProfile(state.user, "assign") && state.houseStatusFilter === "seai") {
       state.houseStatusFilter = "active";
     }
     state.houseMapMode = false;
@@ -6185,9 +6828,9 @@ function bindEvents() {
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
   $("#house-search").addEventListener("input", () => {
-    if (state.user?.role === "surveyor") {
+    if (hasAccessProfile(state.user, "surveyor")) {
       renderSurveyorHouses();
-    } else if (state.user?.role === "supervisor") {
+    } else if (hasAccessProfile(state.user, "supervisor")) {
       renderSupervisorHouses();
     } else {
       renderHouses();
@@ -6203,6 +6846,11 @@ function bindEvents() {
     renderSurveyorHouses();
   });
   $("#team-search").addEventListener("input", renderHouses);
+  $("#team-roster-form").addEventListener("submit", submitTeamRosterMember);
+  $("#team-roster-list").addEventListener("click", (event) => {
+    const button = event.target.closest(".team-roster-remove");
+    if (button) removeTeamRosterMember(button);
+  });
   $("#clear-house-team-filter").addEventListener("click", () => {
     state.houseTeamFilter = null;
     state.houseStatusFilter = null;

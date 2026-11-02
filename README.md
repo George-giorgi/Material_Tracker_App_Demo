@@ -29,6 +29,18 @@ checklists, but cannot administer accounts or change house status. Employee
 accounts remain available for compatibility.
 Supervisors see only houses assigned to their account and can set each house's
 delivery person and team from their dashboard.
+Supervisor specialties are stored on supervisor accounts and can be maintained
+in **Account → Manage accounts**. This describes the supervisor's trade; house
+assignment access continues to follow the existing supervisor permissions.
+The Teams view includes a non-login roster for each active Teamlead. Admins can
+name each Teamlead's team when creating or editing the account. Teamleads can
+manage their own roster; Supervisors can manage rosters for Teamleads who report
+to them. Administrators maintain department membership and reporting lines from
+**Account → Manage accounts**.
+User records include optional `work_phone`, `home_phone`, `company_email`, and
+`private_email` fields for supervisors, Teamleads, and Surveyors. They remain
+empty until contact details are provided. The company email is named
+“Company Email” on contact sheets.
 Give each person their own username and PIN; do not share PINs. Users can
 change their PIN from **Account**; sessions expire after 12 hours. Five
 incorrect PIN attempts lock that username for 15 minutes. A short PIN is less
@@ -37,12 +49,29 @@ network. If a tracker database already contains an older password-based
 account, its existing password still works in the PIN field; change it to a
 6-digit PIN after signing in.
 
-The database maintains a role catalog for Admin, Assign, Boss, Surveyor,
-Warehouse, Delivery, Supervisor, Teamlead, and Plumber, plus the existing
-Employee role for compatibility. Admin is assigned the `*` permission, meaning
-all application features and operations. The role-permission tables are
-catalog metadata; application access is enforced by the existing role-specific
-rules.
+The database has editable Departments, user-to-department memberships, and
+manager-to-report relationships. Each account must belong to at least one
+department; a user may belong to more than one. Supervisors can be department
+members without being assigned as that department's manager. Administrators
+can add departments and custom roles, assign a manager when the users share a
+department, and manage which access profiles belong to each role. Reporting
+lines support Admin -> Assign, Supervisor -> Teamlead, and Teamlead ->
+Employee/Plumber; departments can exist without a Supervisor.
+
+The built-in role catalog includes Admin, Assign, Boss, Surveyor, Warehouse,
+Delivery, Supervisor, Teamlead, Plumber, and Employee. Role permissions are
+server-enforced access profiles (such as Surveyor, Supervisor, or Teamlead),
+and a custom role can combine profiles without changing the user or role
+database schema. Admin's `*` permission grants unrestricted access. Users with
+no active access profile cannot use application APIs.
+
+The SEAI Red dataset is initialized with Administration, External Wall
+Insulation, Surveyors, Delivery, Ventilation, Attic, and Plumbing departments.
+The existing EWI Supervisor Karol is linked to the four EWI Teamleads shown in
+the organization chart and is also listed in Surveyors / Quality Check, as in
+the drawing. Existing roster names remain non-login team members assigned to
+their Teamlead. Attic and Plumbing departments are ready for additional
+structure as it is provided.
 
 ## Run the separate SEAI Red dataset
 

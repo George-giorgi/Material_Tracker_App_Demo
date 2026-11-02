@@ -987,6 +987,29 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
+    def test_login_cat_reacts_to_username_and_pin_typing(self):
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+
+        cat = self.page.locator("#auth-cat")
+        self.assertTrue(cat.locator("svg.auth-cat-art").is_visible())
+        self.assertTrue(self.page.locator("#auth-description").is_hidden())
+        username = self.page.locator("#auth-username")
+        username.fill("typing-user")
+        self.assertEqual(cat.get_attribute("data-mood"), "typing")
+        self.assertEqual(cat.get_attribute("data-field"), "username")
+
+        pin = self.page.locator("#auth-pin")
+        pin.fill("123456")
+        self.assertEqual(cat.get_attribute("data-mood"), "typing")
+        self.assertEqual(cat.get_attribute("data-field"), "pin")
+        self.page.wait_for_function(
+            "document.querySelector('#auth-cat').dataset.mood === 'watching'",
+            timeout=2000,
+        )
+        self.assertEqual(self.browser_errors, [])
+
     def test_assign_dashboard_shows_surveyor_workload(self):
         with server.connect_db() as db:
             db.execute(
@@ -1209,6 +1232,78 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#assign-seai-house-ready").is_hidden())
         self.page.locator("#assign-seai-house-back").click()
         self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.assertEqual(self.browser_errors, [])
+
+    def test_assign_user_can_assign_surveyor_from_ready_house_map(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES ('MAP-READY-ASSIGN', 'D03 TEST', 'Map Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+                VALUES ('MAP-READY-ASSIGN', 'ready', 'Cathy', '2026-10-29T11:00:00')
+                """
+            )
+            surveyor_id = server._insert_user(
+                db, "map-assignment-surveyor", "Map Surveyor", "345678", "surveyor"
+            )
+            server._insert_user(
+                db, "map-assignment-cathy", "Cathy", "234567", "assign"
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("map-assignment-cathy")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='seai']").click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        self.page.locator(
+            "#house-map-house-list [data-map-house-id='MAP-READY-ASSIGN']"
+        ).click()
+
+        selection = self.page.locator("#house-map-selection")
+        assign_button = selection.locator(".assign-house-team")
+        self.assertEqual(assign_button.inner_text(), "Assign Surveyor")
+        assign_button.click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
+        self.page.locator("#back-from-house-assignments").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="hidden")
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        assign_button = selection.locator(".assign-house-team")
+        assign_button.wait_for()
+        assign_button.click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
+        surveyor_option = self.page.locator(
+            f'#house-assignment-surveyor input[name="surveyor_user_id"][value="{surveyor_id}"]'
+        )
+        surveyor_option.check()
+        self.page.locator("#save-house-assignments").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="hidden")
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '#house-map-selection .house-map-selected-heading strong'
+            )?.textContent === 'MAP-READY-ASSIGN'"""
+        )
+        self.assertEqual(
+            self.page.locator("#house-map-selection .assign-house-team").inner_text(),
+            "Change Surveyor",
+        )
+        with server.connect_db() as db:
+            assignment = db.execute(
+                """
+                SELECT user_id FROM house_role_assignments
+                WHERE house_id = 'MAP-READY-ASSIGN' AND role = 'surveyor'
+                """
+            ).fetchone()
+        self.assertEqual(assignment["user_id"], surveyor_id)
         self.assertEqual(self.browser_errors, [])
 
     def test_assign_user_not_started_card_hides_surveyor_information(self):
@@ -2105,6 +2200,195 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator('[data-tab="houses"]').click()
         self.page.locator("#houses-tab").click()
         self.assertTrue(self.page.locator("#houses-section").is_visible())
+        self.assertEqual(self.browser_errors, [])
+
+    def test_admin_can_add_non_login_member_to_teamlead_roster(self):
+        with server.connect_db() as db:
+            with db:
+                server._insert_user(
+                    db,
+                    "kamil-bulczak",
+                    "Kamil Bulczak",
+                    "123456",
+                    "teamlead",
+                )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator('[data-tab="houses"]').click()
+        self.page.locator("#teams-tab").click()
+        self.page.locator("#team-roster-form").wait_for(state="visible")
+        self.page.locator("#team-roster-teamlead").select_option(label="Kamil Bulczak")
+        self.page.locator("#team-roster-form input[name='member_name']").fill(
+            "Grzegorz Kaminski"
+        )
+        self.page.locator("#team-roster-form button[type='submit']").click()
+        roster = self.page.locator("#team-roster-list .team-roster-card").filter(
+            has=self.page.locator("h2", has_text="Kamil Bulczak")
+        )
+        roster.get_by_text("Grzegorz Kaminski").wait_for(state="visible")
+        self.assertTrue(roster.get_by_text("Grzegorz Kaminski").is_visible())
+        self.assertEqual(self.browser_errors, [])
+
+    def test_admin_can_create_named_teamlead_and_add_roster_member(self):
+        with server.connect_db() as db:
+            karol_id = server._insert_user(
+                db,
+                "karol",
+                "Karol",
+                "123456",
+                "supervisor",
+                "External Wall Insulation",
+            )
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-manage-users").click()
+        self.page.locator("#user-form [name='display_name']").fill("Krystian Stelmach")
+        self.page.locator("#user-form [name='username']").fill("krystian.stelmach")
+        self.page.locator("#user-form [name='role']").select_option("teamlead")
+        self.assertEqual(
+            self.page.locator("#new-user-manager").input_value(),
+            str(karol_id),
+        )
+        self.page.locator("#user-form [name='team_name']").fill("Ventilation")
+        self.assertEqual(
+            self.page.locator("#new-user-manager").input_value(),
+            "",
+        )
+        self.page.locator("#user-form [name='pin']").fill("123456")
+        self.page.locator("#user-form [name='pin_confirm']").fill("123456")
+        self.page.locator("#user-form button[type='submit']").click()
+        self.page.locator(
+            "#user-list .user-row-identity", has_text="Krystian Stelmach"
+        ).wait_for()
+        self.page.locator("#users-dialog .close-dialog").click()
+
+        self.page.locator('[data-tab="houses"]').click()
+        self.page.locator("#teams-tab").click()
+        self.page.locator("#team-roster-teamlead").select_option(
+            label="Ventilation · Krystian Stelmach"
+        )
+        self.page.locator("#team-roster-form input[name='member_name']").fill(
+            "Nariman Ibrahimov"
+        )
+        self.page.locator("#team-roster-form button[type='submit']").click()
+        roster = self.page.locator("#team-roster-list .team-roster-card").filter(
+            has=self.page.locator("h2", has_text="Ventilation")
+        )
+        roster.get_by_text("Nariman Ibrahimov").wait_for(state="visible")
+        self.assertIn("Teamlead: Krystian Stelmach", roster.inner_text())
+        self.assertEqual(self.browser_errors, [])
+
+    def test_admin_can_create_department_custom_role_and_assign_permissions(self):
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-manage-users").click()
+        self.page.locator("#department-form [name='name']").fill("Quality Assurance")
+        self.page.locator("#department-form button[type='submit']").click()
+        self.page.locator("#department-list").get_by_text(
+            "Quality Assurance", exact=True
+        ).wait_for()
+
+        self.page.locator("#role-form [name='display_name']").fill("Quality Checker")
+        self.page.locator("#role-form [name='role_key']").fill("quality_checker")
+        self.page.locator("#role-form button[type='submit']").click()
+        self.page.locator("#permission-role-select").select_option("quality_checker")
+        self.page.locator(
+            "#role-permission-list .role-permission-check[value='access.surveyor']"
+        ).check()
+        self.page.locator("#save-role-permissions").click()
+        self.page.get_by_text("Role permissions saved.").wait_for()
+
+        self.page.locator("#user-form [name='display_name']").fill("Quality Checker One")
+        self.page.locator("#user-form [name='username']").fill("quality-checker-one")
+        self.page.locator("#user-form [name='role']").select_option("quality_checker")
+        self.page.locator("#new-user-departments").select_option(
+            label="Quality Assurance"
+        )
+        self.assertEqual(
+            self.page.locator("#new-user-manager option").all_text_contents(),
+            ["No manager"],
+        )
+        self.page.locator("#user-form [name='pin']").fill("123456")
+        self.page.locator("#user-form [name='pin_confirm']").fill("123456")
+        self.page.locator("#user-form button[type='submit']").click()
+        self.page.locator(
+            "#user-list .user-row-identity", has_text="Quality Checker One"
+        ).wait_for()
+        with server.connect_db() as db:
+            user = db.execute(
+                "SELECT id, role FROM app_users WHERE username = ?",
+                ("quality-checker-one",),
+            ).fetchone()
+            self.assertEqual(user["role"], "quality_checker")
+            department = db.execute(
+                """
+                SELECT departments.name
+                FROM user_departments memberships
+                JOIN departments ON departments.id = memberships.department_id
+                WHERE memberships.user_id = ?
+                """,
+                (user["id"],),
+            ).fetchone()
+            self.assertEqual(department["name"], "Quality Assurance")
+            self.assertTrue(
+                db.execute(
+                    """
+                    SELECT 1 FROM app_role_permissions
+                    WHERE role_key = 'quality_checker'
+                      AND permission_key = 'access.surveyor'
+                      AND is_allowed = 1
+                    """
+                ).fetchone()
+            )
+
+        with server.connect_db() as db:
+            admin_id = db.execute(
+                "SELECT id FROM app_users WHERE role = 'admin' AND is_active = 1"
+            ).fetchone()["id"]
+        self.page.locator("#user-form [name='display_name']").fill("Cathy")
+        self.page.locator("#user-form [name='username']").fill("cathy-assign")
+        self.page.locator("#user-form [name='role']").select_option("assign")
+        self.assertEqual(
+            self.page.locator("#new-user-manager").input_value(),
+            str(admin_id),
+        )
+        self.page.locator("#user-form [name='pin']").fill("234567")
+        self.page.locator("#user-form [name='pin_confirm']").fill("234567")
+        self.page.locator("#user-form button[type='submit']").click()
+        self.page.locator(
+            "#user-list .user-row-identity", has_text="Cathy"
+        ).wait_for()
+        with server.connect_db() as db:
+            user = db.execute(
+                "SELECT id, role FROM app_users WHERE username = ?",
+                ("cathy-assign",),
+            ).fetchone()
+            reporting_line = db.execute(
+                "SELECT manager_user_id FROM user_reporting_lines WHERE report_user_id = ?",
+                (user["id"],),
+            ).fetchone()
+            self.assertEqual(user["role"], "assign")
+            self.assertEqual(reporting_line["manager_user_id"], admin_id)
+        self.assertEqual(self.browser_errors, [])
+
+    def test_admin_can_edit_supervisor_specialty_from_account_management(self):
+        with server.connect_db() as db:
+            with db:
+                supervisor_id = server._insert_user(
+                    db,
+                    "supervisor-specialty",
+                    "Specialty Supervisor",
+                    "234567",
+                    "supervisor",
+                )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-manage-users").click()
+        specialty_input = self.page.locator(
+            f".supervisor-specialty-input[data-user-id='{supervisor_id}']"
+        )
+        specialty_input.fill("Plumbing")
+        self.page.locator(
+            f".supervisor-specialty-save[data-user-id='{supervisor_id}']"
+        ).click()
+        self.assertEqual(specialty_input.input_value(), "Plumbing")
         self.assertEqual(self.browser_errors, [])
 
     def test_teams_tab_shows_open_and_closed_assigned_house_counts(self):

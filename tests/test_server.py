@@ -72,24 +72,44 @@ class TrackerTests(unittest.TestCase):
                 )
             }
             self.assertEqual(roles, expected_roles)
+            permissions = {
+                row["permission_key"]: row["description"]
+                for row in db.execute(
+                    "SELECT permission_key, description FROM app_permissions"
+                )
+            }
             self.assertEqual(
-                [
-                    tuple(row)
-                    for row in db.execute(
-                        "SELECT permission_key, description FROM app_permissions"
-                    )
-                ],
-                [("*", "All application features and operations")],
+                set(permissions),
+                {
+                    "*",
+                    "access.admin",
+                    "access.assign",
+                    "access.boss",
+                    "access.surveyor",
+                    "access.warehouse",
+                    "access.delivery",
+                    "access.supervisor",
+                    "access.teamlead",
+                    "access.plumber",
+                    "access.employee",
+                },
             )
             self.assertEqual(
-                [
-                    tuple(row)
+                {
+                    (row["role_key"], row["permission_key"], row["is_allowed"])
                     for row in db.execute(
                         "SELECT role_key, permission_key, is_allowed "
                         "FROM app_role_permissions"
                     )
-                ],
-                [("admin", "*", 1)],
+                },
+                {
+                    ("admin", "*", 1),
+                    *(
+                        (role, f"access.{role}", 1)
+                        for role in expected_roles
+                        if role != "admin"
+                    ),
+                },
             )
 
         server.initialize_db()
@@ -101,7 +121,7 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(
                 db.execute("SELECT COUNT(*) FROM app_role_permissions").fetchone()[0],
-                1,
+                len(expected_roles),
             )
             self.assertEqual(
                 db.execute("PRAGMA foreign_key_check").fetchall(),
@@ -122,7 +142,7 @@ class TrackerTests(unittest.TestCase):
         )
         httpd, thread = self.start_test_server()
         try:
-            status, _, admin_cookie = self.http_request(
+            status, admin, admin_cookie = self.http_request(
                 httpd,
                 "POST",
                 "/api/auth/setup",
@@ -155,6 +175,669 @@ class TrackerTests(unittest.TestCase):
                     db.execute("SELECT COUNT(*) FROM app_users").fetchone()[0],
                     len(roles) + 1,
                 )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_admin_manages_departments_custom_roles_permissions_and_reporting_lines(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, admin, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "organization-admin",
+                    "display_name": "Organization Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/users",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            departments = {
+                department["name"]: department["id"]
+                for department in result["departments"]
+            }
+            status, cathy, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "cathy-assign",
+                    "display_name": "Cathy",
+                    "pin": "234567",
+                    "role": "assign",
+                    "department_ids": [departments["Administration"]],
+                    "manager_user_id": admin["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/departments",
+                {"name": "Quality Assurance"},
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(result["department"]["name"], "Quality Assurance")
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/roles",
+                {
+                    "role_key": "quality_checker",
+                    "display_name": "Quality Checker",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/roles/quality_checker/permissions",
+                {"permissions": ["access.surveyor"]},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+
+            status, karol, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "karol-supervisor",
+                    "display_name": "Karol",
+                    "pin": "234567",
+                    "role": "supervisor",
+                    "supervisor_specialty": "External Wall Insulation",
+                    "department_ids": [departments["External Wall Insulation"]],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, lead, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "ewi-teamlead",
+                    "display_name": "EWI Teamlead",
+                    "pin": "345678",
+                    "role": "teamlead",
+                    "team_name": "EWI Crew",
+                    "department_ids": [departments["External Wall Insulation"]],
+                    "manager_user_id": karol["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{cathy['user']['id']}/organization",
+                {
+                    "department_ids": [departments["Administration"]],
+                    "manager_user_id": lead["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+            self.assertIn("Assign accounts can report only to an Admin", error["error"])
+            status, quality_user, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "quality-checker",
+                    "display_name": "Quality Checker",
+                    "pin": "456789",
+                    "role": "quality_checker",
+                    "department_ids": [departments["Surveyors"]],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+
+            status, user_list, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/users",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            saved_lead = next(
+                user for user in user_list["users"]
+                if user["id"] == lead["user"]["id"]
+            )
+            saved_cathy = next(
+                user for user in user_list["users"]
+                if user["id"] == cathy["user"]["id"]
+            )
+            self.assertEqual(saved_cathy["manager_user_id"], admin["user"]["id"])
+            self.assertEqual(saved_lead["manager_user_id"], karol["user"]["id"])
+            self.assertEqual(
+                [item["name"] for item in saved_lead["departments"]],
+                ["External Wall Insulation"],
+            )
+
+            status, member, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "ewi-member",
+                    "display_name": "EWI Member",
+                    "pin": "678901",
+                    "role": "employee",
+                    "department_ids": [departments["External Wall Insulation"]],
+                    "manager_user_id": lead["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, members, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/users",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            saved_member = next(
+                user for user in members["users"]
+                if user["id"] == member["user"]["id"]
+            )
+            self.assertEqual(saved_member["manager_user_id"], lead["user"]["id"])
+
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "unmanaged-member",
+                    "display_name": "Unmanaged Member",
+                    "pin": "789012",
+                    "role": "employee",
+                    "department_ids": [departments["External Wall Insulation"]],
+                    "manager_user_id": karol["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+            self.assertIn("Team members can report only to a Teamlead", error["error"])
+
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{quality_user['user']['id']}/organization",
+                {
+                    "department_ids": [departments["Surveyors"]],
+                    "manager_user_id": lead["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{karol['user']['id']}/organization",
+                {
+                    "department_ids": [departments["External Wall Insulation"]],
+                    "manager_user_id": lead["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+
+            status, logged_in, quality_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "quality-checker", "pin": "456789"},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(logged_in["user"]["permissions"], ["access.surveyor"])
+            self.assertEqual(
+                [item["name"] for item in logged_in["user"]["departments"]],
+                ["Surveyors"],
+            )
+            status, _, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/calculator/houses",
+                cookie=quality_cookie,
+            )
+            self.assertEqual(status, 200)
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "not-admin",
+                    "display_name": "Not Admin",
+                    "pin": "567890",
+                },
+                quality_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("Surveyor access", error["error"])
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/roles/quality_checker/permissions",
+                {"permissions": []},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/updates",
+                cookie=quality_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("no active access permissions", error["error"])
+            self.assertEqual(quality_user["user"]["role"], "quality_checker")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_supervisor_and_teamlead_manage_only_their_rosters(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "roster-scope-admin",
+                    "display_name": "Roster Scope Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, account_data, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/users",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            ewi_id = next(
+                department["id"]
+                for department in account_data["departments"]
+                if department["name"] == "External Wall Insulation"
+            )
+
+            status, supervisor, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "roster-supervisor",
+                    "display_name": "EWI Supervisor",
+                    "pin": "234567",
+                    "role": "supervisor",
+                    "supervisor_specialty": "External Wall Insulation",
+                    "department_ids": [ewi_id],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, lead_one, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "lead-one",
+                    "display_name": "Lead One",
+                    "pin": "345678",
+                    "role": "teamlead",
+                    "department_ids": [ewi_id],
+                    "manager_user_id": supervisor["user"]["id"],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, lead_two, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "lead-two",
+                    "display_name": "Lead Two",
+                    "pin": "456789",
+                    "role": "teamlead",
+                    "department_ids": [ewi_id],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+
+            status, _, supervisor_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "roster-supervisor", "pin": "234567"},
+            )
+            self.assertEqual(status, 200)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/team-roster",
+                {
+                    "teamlead_id": lead_one["user"]["id"],
+                    "member_name": "Lead One Worker",
+                },
+                supervisor_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/team-roster",
+                {
+                    "teamlead_id": lead_two["user"]["id"],
+                    "member_name": "Unauthorized Worker",
+                },
+                supervisor_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("only your own roster", error["error"])
+            status, supervisor_dashboard, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/dashboard",
+                cookie=supervisor_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [roster["teamlead_id"] for roster in supervisor_dashboard["team_rosters"]],
+                [lead_one["user"]["id"]],
+            )
+
+            status, _, lead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "lead-one", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/team-roster",
+                {
+                    "teamlead_id": lead_one["user"]["id"],
+                    "member_name": "Self Managed Worker",
+                },
+                lead_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/team-roster",
+                {
+                    "teamlead_id": lead_two["user"]["id"],
+                    "member_name": "Other Team Worker",
+                },
+                lead_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("only your own roster", error["error"])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_admin_manages_non_login_team_rosters_and_teamlead_sees_own(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "roster-admin",
+                    "display_name": "Roster Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "kamil-teamlead",
+                    "display_name": "Kamil Bulczak",
+                    "pin": "123456",
+                    "role": "teamlead",
+                    "team_name": "Ventilation",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "other-teamlead",
+                    "display_name": "Other Teamlead",
+                    "pin": "234567",
+                    "role": "teamlead",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "roster-employee",
+                    "display_name": "Roster Employee",
+                    "pin": "345678",
+                    "role": "employee",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+
+            member_ids = []
+            for name in ("Grzegorz Kaminski", "Edem Ametov", "Kasper Janowski"):
+                status, result, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/team-roster",
+                    {"teamlead_id": 2, "member_name": name},
+                    admin_cookie,
+                )
+                self.assertEqual(status, 201)
+                self.assertEqual(result["member"]["name"], name)
+                member_ids.append(result["member"]["id"])
+
+            status, result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/dashboard",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                result["team_rosters"][0]["teamlead_name"], "Kamil Bulczak"
+            )
+            self.assertEqual(result["team_rosters"][0]["team_name"], "Ventilation")
+            self.assertEqual(
+                [member["name"] for member in result["team_rosters"][0]["members"]],
+                ["Edem Ametov", "Grzegorz Kaminski", "Kasper Janowski"],
+            )
+
+            status, result, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/users",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            teamlead_user = next(
+                user for user in result["users"] if user["username"] == "kamil-teamlead"
+            )
+            self.assertEqual(teamlead_user["team_name"], "Ventilation")
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{teamlead_user['id']}/team-name",
+                {"team_name": "Ventilation Crew"},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["user"]["team_name"], "Ventilation Crew")
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{teamlead_user['id']}/team-name",
+                {"team_name": "Ventilation"},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/team-roster",
+                {"teamlead_id": 2, "member_name": "grzegorz kaminski"},
+                admin_cookie,
+            )
+            self.assertEqual(status, 409)
+
+            status, _, teamlead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "kamil-teamlead", "pin": "123456"},
+            )
+            self.assertEqual(status, 200)
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=teamlead_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(len(result["team_rosters"]), 1)
+            self.assertEqual(
+                result["team_rosters"][0]["teamlead_name"], "Kamil Bulczak"
+            )
+
+            status, result, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "roster-employee", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/team-roster",
+                {"teamlead_id": 2, "member_name": "Unauthorized Member"},
+                employee_cookie,
+            )
+            self.assertEqual(status, 403)
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/team-roster/{member_ids[0]}/delete",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertNotIn(
+                "Grzegorz Kaminski",
+                [member["name"] for member in result["team_rosters"][0]["members"]],
+            )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_admin_can_save_supervisor_specialty(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "specialty-admin",
+                    "display_name": "Specialty Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "plumbing-supervisor",
+                    "display_name": "Gerry Boland",
+                    "pin": "234567",
+                    "role": "supervisor",
+                    "supervisor_specialty": "  Plumbing  ",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(
+                result["user"]["supervisor_specialty"], "Plumbing"
+            )
+            user_id = result["user"]["id"]
+
+            status, result, _ = self.http_request(
+                httpd, "GET", "/api/users", cookie=admin_cookie
+            )
+            supervisor = next(
+                user for user in result["users"] if user["id"] == user_id
+            )
+            self.assertEqual(supervisor["supervisor_specialty"], "Plumbing")
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{user_id}/specialty",
+                {"supervisor_specialty": "External Wall Insulation"},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                result["user"]["supervisor_specialty"], "External Wall Insulation"
+            )
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                f"/api/users/{user_id}/specialty",
+                {"supervisor_specialty": ""},
+                admin_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["user"]["supervisor_specialty"], "")
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -1902,11 +2585,69 @@ class TrackerTests(unittest.TestCase):
             with server.connect_db() as db:
                 self.assertEqual(db.execute("SELECT role FROM app_users WHERE id = 1").fetchone()[0], "admin")
                 self.assertEqual(db.execute("SELECT user_id FROM app_sessions WHERE token_hash = 'session-hash'").fetchone()[0], 1)
+                user_columns = {
+                    row["name"] for row in db.execute("PRAGMA table_info(app_users)")
+                }
+                self.assertTrue({
+                    "work_phone", "home_phone", "company_email", "private_email",
+                }.issubset(user_columns))
+                self.assertEqual(
+                    tuple(db.execute(
+                        "SELECT work_phone, home_phone, company_email, private_email "
+                        "FROM app_users WHERE id = 1"
+                    ).fetchone()),
+                    (None, None, None, None),
+                )
                 for role in (
                     "assign", "boss", "surveyor", "warehouse", "delivery",
                     "supervisor", "teamlead", "plumber", "employee",
                 ):
                     db.execute("UPDATE app_users SET role = ? WHERE id = 1", (role,))
+        finally:
+            server.DB_PATH = original_path
+
+    def test_user_migrations_preserve_optional_contact_fields(self):
+        legacy_path = Path(self.temp_dir.name) / "legacy-contact.sqlite3"
+        with sqlite3.connect(legacy_path) as db:
+            db.executescript("""
+                CREATE TABLE app_users (
+                    id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    display_name TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+                    password_salt BLOB NOT NULL, password_hash BLOB NOT NULL,
+                    password_iterations INTEGER NOT NULL,
+                    credential_type TEXT NOT NULL DEFAULT 'pin',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    supervisor_specialty TEXT NOT NULL DEFAULT '',
+                    team_name TEXT NOT NULL DEFAULT '',
+                    work_phone TEXT, home_phone TEXT, work_email TEXT, private_email TEXT
+                );
+                CREATE TABLE app_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    expires_at INTEGER NOT NULL
+                );
+                INSERT INTO app_users (
+                    id, username, display_name, role, password_salt, password_hash,
+                    password_iterations, work_phone, home_phone, work_email, private_email
+                ) VALUES (
+                    1, 'admin1', 'Admin', 'admin', X'01', X'02', 1,
+                    '0100', '0200', 'work@example.com', 'private@example.com'
+                );
+            """)
+        db.close()
+        original_path = server.DB_PATH
+        try:
+            server.DB_PATH = legacy_path
+            server.initialize_db()
+            with server.connect_db() as db:
+                self.assertEqual(
+                    tuple(db.execute(
+                        "SELECT work_phone, home_phone, company_email, private_email "
+                        "FROM app_users WHERE id = 1"
+                    ).fetchone()),
+                    ("0100", "0200", "work@example.com", "private@example.com"),
+                )
         finally:
             server.DB_PATH = original_path
 

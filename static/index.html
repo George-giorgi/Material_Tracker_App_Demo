@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261030-1205">
+    <link rel="stylesheet" href="/app.css?v=20261102-1105">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -13,12 +13,89 @@
         <img class="auth-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat">
         <div class="eyebrow" id="auth-eyebrow">SECURE WORKSPACE</div>
         <h1 id="auth-title">Sign in</h1>
-        <p id="auth-description">Sign in with your tracker account to continue.</p>
+        <p id="auth-description" class="hidden"></p>
+        <div class="auth-cat-stage" id="auth-cat" data-mood="watching" data-field="username" aria-hidden="true">
+          <svg class="auth-cat-art" viewBox="0 0 240 148" role="presentation">
+            <defs>
+              <linearGradient id="auth-cat-fur" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0" stop-color="#fffdf8"></stop>
+                <stop offset="1" stop-color="#f2e7d5"></stop>
+              </linearGradient>
+              <linearGradient id="auth-cat-orange" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0" stop-color="#f8a33c"></stop>
+                <stop offset="1" stop-color="#d86a19"></stop>
+              </linearGradient>
+              <radialGradient id="auth-cat-iris" cx="35%" cy="28%" r="75%">
+                <stop offset="0" stop-color="#f8cf78"></stop>
+                <stop offset=".62" stop-color="#bd6e24"></stop>
+                <stop offset="1" stop-color="#713710"></stop>
+              </linearGradient>
+              <linearGradient id="auth-cat-keyboard" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0" stop-color="#fff"></stop>
+                <stop offset="1" stop-color="#e8f0eb"></stop>
+              </linearGradient>
+            </defs>
+            <ellipse class="auth-cat-glow" cx="120" cy="126" rx="82" ry="12"></ellipse>
+            <path class="auth-cat-tail" d="M157 111c28-2 34-19 20-28-9-6-19 2-14 9 3 4 9 2 9-2"></path>
+            <path class="auth-cat-tail-stripe" d="M173 88c-5 3-7 7-7 11m14-8c-5 3-7 7-7 11"></path>
+            <path class="auth-cat-body" d="M77 128c2-24 18-39 43-39s41 15 43 39"></path>
+            <path class="auth-cat-body-marking" d="M85 105c9-8 17-8 25-2m45 2c-9-8-17-8-25-2"></path>
+            <path class="auth-cat-chest" d="M99 100c2 15 9 23 21 23s19-8 21-23c-7 6-14 9-21 9s-14-3-21-9Z"></path>
+            <path class="auth-cat-ear auth-cat-ear-left" d="m73 57 2-36 34 27"></path>
+            <path class="auth-cat-ear-inner" d="m82 48 1-16 17 14"></path>
+            <path class="auth-cat-ear auth-cat-ear-right" d="m166 58-1-43-32 32"></path>
+            <path class="auth-cat-ear-inner" d="m157 47-1-23-17 19"></path>
+            <path class="auth-cat-head" d="M66 70c0-25 23-42 54-42s54 17 54 42c0 27-21 45-54 45S66 97 66 70Z"></path>
+            <path class="auth-cat-mask" d="M68 64c7-21 25-34 46-36-8 8-11 17-9 27-9-8-21-7-37 9Zm104 0c-7-21-25-34-46-36 8 8 11 17 9 27 9-8 21-7 37 9Z"></path>
+            <path class="auth-cat-blaze" d="M113 30c-4 9-3 17 2 24l5 8 5-8c5-7 6-15 2-24-4-1-10-1-14 0Z"></path>
+            <path class="auth-cat-tabby-stripe" d="M91 39c5 2 9 5 12 9m-29 5c7 0 12 2 17 6m58-20c-5 2-9 5-12 9m29 5c-7 0-12 2-17 6"></path>
+            <g class="auth-cat-eyes">
+              <ellipse cx="97" cy="70" rx="10" ry="11"></ellipse>
+              <ellipse cx="143" cy="70" rx="10" ry="11"></ellipse>
+              <g class="auth-cat-gaze">
+                <circle class="auth-cat-iris" cx="98" cy="71" r="7"></circle>
+                <circle class="auth-cat-iris" cx="144" cy="71" r="7"></circle>
+                <ellipse class="auth-cat-pupil" cx="98" cy="71" rx="2.8" ry="5.2"></ellipse>
+                <ellipse class="auth-cat-pupil" cx="144" cy="71" rx="2.8" ry="5.2"></ellipse>
+                <circle class="auth-cat-eye-glint" cx="100" cy="67" r="2"></circle>
+                <circle class="auth-cat-eye-glint" cx="146" cy="67" r="2"></circle>
+              </g>
+            </g>
+            <path class="auth-cat-blink" d="M89 71q8 7 16 0m30 0q8 7 16 0"></path>
+            <path class="auth-cat-muzzle" d="M91 80c7-6 16-5 23 2-1 9-7 14-15 12-7-2-10-8-8-14Zm58 0c-7-6-16-5-23 2 1 9 7 14 15 12 7-2 10-8 8-14Z"></path>
+            <path class="auth-cat-nose" d="m116 81 4 3 4-3-4-3-4 3Z"></path>
+            <path class="auth-cat-mouth" d="M120 83v5m0 0c-4 5-9 5-12 1m12-1c4 5 9 5 12 1"></path>
+            <path class="auth-cat-whiskers" d="m89 84-22-5m22 11-24 2m86-8 22-5m-22 11 24 2"></path>
+            <g class="auth-cat-paws">
+              <path d="M94 111c-7 2-10 8-7 13 3 4 13 3 18-1l6-6"></path>
+              <path d="M146 111c7 2 10 8 7 13-3 4-13 3-18-1l-6-6"></path>
+              <path class="auth-cat-paw-pad" d="M94 119h5m-2-3v6m48-3h-5m2-3v6"></path>
+            </g>
+            <g class="auth-cat-keyboard">
+              <path class="auth-cat-keyboard-base" d="M57 124q0-5 6-5h114q6 0 6 5v8H57Z"></path>
+              <path class="auth-cat-key" d="M70 123h10m5 0h10m5 0h10m5 0h10m5 0h10m5 0h10m5 0h10m5 0h10"></path>
+              <path class="auth-cat-key auth-cat-key-emphasis" d="M92 128h55"></path>
+            </g>
+            <path class="auth-cat-sparkle" d="M49 61v9m-4-4h9m137 2v8m-4-4h8"></path>
+          </svg>
+        </div>
         <form id="auth-form">
-          <label id="auth-display-name-field" class="field hidden">Your name<input id="auth-display-name" name="display_name" maxlength="120" autocomplete="name"></label>
-          <label class="field">Username<input id="auth-username" name="username" maxlength="64" required autocomplete="username"></label>
-          <label class="field">6-digit PIN<input id="auth-pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required></label>
-          <label id="auth-pin-confirm-field" class="field hidden">Confirm 6-digit PIN<input id="auth-pin-confirm" name="pin_confirm" type="password" inputmode="numeric" autocomplete="new-password"></label>
+          <label id="auth-display-name-field" class="field hidden">Your name<input id="auth-display-name" name="display_name" maxlength="120" autocomplete="name" placeholder="e.g. Cathy Murphy"></label>
+          <label class="field">Username<input id="auth-username" name="username" maxlength="64" required autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="Enter your username"></label>
+          <div class="field auth-pin-field">
+            <label for="auth-pin">6-digit PIN</label>
+            <div class="auth-pin-wrap">
+              <input id="auth-pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" enterkeyhint="go" required placeholder="••••••">
+              <button class="auth-pin-toggle" type="button" data-auth-pin-toggle="auth-pin" aria-label="Show PIN" aria-pressed="false">Show</button>
+            </div>
+          </div>
+          <div id="auth-pin-confirm-field" class="field auth-pin-field hidden">
+            <label for="auth-pin-confirm">Confirm 6-digit PIN</label>
+            <div class="auth-pin-wrap">
+              <input id="auth-pin-confirm" name="pin_confirm" type="password" inputmode="numeric" autocomplete="new-password" enterkeyhint="go" placeholder="••••••">
+              <button class="auth-pin-toggle" type="button" data-auth-pin-toggle="auth-pin-confirm" aria-label="Show PIN confirmation" aria-pressed="false">Show</button>
+            </div>
+          </div>
           <p class="auth-error hidden" id="auth-error" role="alert"></p>
           <button class="button button-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
         </form>
@@ -203,6 +280,14 @@
             </section>
             <section id="teams-section" class="hidden" role="tabpanel" aria-labelledby="teams-tab">
               <div class="teams-heading"><h2>Teams</h2><label class="search-box team-search-box"><span>⌕</span><input id="team-search" type="search" placeholder="Search teams" aria-label="Search teams"></label></div>
+              <h3 class="team-roster-heading">Team rosters</h3>
+              <form id="team-roster-form" class="team-roster-form hidden">
+                <label class="field">Teamlead<select name="teamlead_id" id="team-roster-teamlead" required></select></label>
+                <label class="field">Team member<input name="member_name" maxlength="120" required autocomplete="off" placeholder="Enter member name"></label>
+                <button class="button button-primary" type="submit">Add member</button>
+              </form>
+              <div id="team-roster-list" class="house-grid team-roster-list"></div>
+              <div id="team-roster-empty" class="empty-state hidden"><strong>No matching team rosters</strong><p>Try another teamlead or member name.</p></div>
               <div id="teams-list" class="house-grid"></div>
               <div class="empty-state card hidden" id="teams-no-results"><strong>No matching teams</strong><p>Try another team name.</p></div>
             </section>
@@ -670,12 +755,39 @@
       <div class="dialog-content">
         <div class="dialog-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h2>Manage accounts</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close">×</button></div>
         <div id="user-list" class="user-list"></div>
+        <section class="organization-admin">
+          <h3>Departments</h3>
+          <p class="dialog-intro">Create departments and assign each account to one or more departments.</p>
+          <div id="department-list" class="department-list"></div>
+          <form id="department-form" class="inline-admin-form">
+            <label class="field">New department<input name="name" maxlength="120" required placeholder="Department name"></label>
+            <button class="button button-secondary" type="submit">Add department</button>
+          </form>
+        </section>
+        <section class="organization-admin">
+          <h3>Roles and access permissions</h3>
+          <p class="dialog-intro">Roles combine reusable access profiles. Adding a custom role does not require code changes.</p>
+          <form id="role-form" class="inline-admin-form">
+            <label class="field">Role name<input name="display_name" maxlength="80" required placeholder="e.g. Quality Checker"></label>
+            <label class="field">Role key<input name="role_key" maxlength="49" pattern="[a-z][a-z0-9_]{1,48}" required placeholder="e.g. quality_checker"></label>
+            <button class="button button-secondary" type="submit">Add role</button>
+          </form>
+          <label class="field role-permission-select">Edit permissions for
+            <select id="permission-role-select"></select>
+          </label>
+          <div id="role-permission-list" class="role-permission-list"></div>
+          <button class="button button-secondary" id="save-role-permissions" type="button">Save role permissions</button>
+        </section>
         <form id="user-form">
           <h3>Add account</h3>
           <div class="form-grid">
             <label class="field">Display name<input name="display_name" maxlength="120" required autocomplete="name"></label>
             <label class="field">Username<input name="username" maxlength="64" required autocomplete="off"></label>
-            <label class="field">Account role<select name="role"><option value="admin">Admin</option><option value="assign">Assign</option><option value="boss">Boss</option><option value="surveyor">Surveyor</option><option value="warehouse">Warehouse</option><option value="delivery">Delivery</option><option value="supervisor">Supervisor</option><option value="teamlead">Teamlead</option><option value="plumber">Plumber</option><option value="employee">Employee (legacy)</option></select></label>
+            <label class="field">Account role<select name="role" required></select></label>
+            <label class="field full">Department(s)<select name="department_ids" id="new-user-departments" multiple required size="5"></select><small>Choose every department the user belongs to. Use Ctrl or Command to select more than one.</small></label>
+            <label class="field full">Reports to<select name="manager_user_id" id="new-user-manager"><option value="">No manager</option></select></label>
+            <label class="field hidden" id="supervisor-specialty-field">Supervisor specialty<input name="supervisor_specialty" maxlength="120" placeholder="e.g. Plumbing or External Wall Insulation"></label>
+            <label class="field hidden" id="team-name-field">Team name<input name="team_name" maxlength="120" placeholder="e.g. Ventilation"></label>
             <label class="field">6-digit PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
             <label class="field">Confirm PIN<input name="pin_confirm" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autocomplete="new-password"></label>
           </div>
@@ -721,6 +833,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261030-1206" defer></script>
+    <script src="/app.js?v=20261102-1105" defer></script>
   </body>
 </html>
