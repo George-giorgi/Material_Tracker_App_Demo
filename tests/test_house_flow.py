@@ -694,20 +694,20 @@ class SurveyorHouseNotesTests(HttpBase):
         )
         self.assertEqual(status, 200)
 
-    def test_surveyor_can_save_notes_only_for_ready_houses(self):
-        status, result, _ = self.call(
-            "POST",
-            "/api/house-notes",
-            {"house_id": "NOTES-READY", "notes": "Call before entering"},
-            cookie=self.surveyor_cookie,
-        )
-        self.assertEqual(status, 200, result)
-        self.assertEqual(result["notes"], "Call before entering")
-        with server.connect_db() as db:
-            saved_notes = db.execute(
-                "SELECT notes FROM provided_houses WHERE id = 'NOTES-READY'"
-            ).fetchone()["notes"]
-        self.assertEqual(saved_notes, "Call before entering")
+    def test_surveyor_can_add_edit_and_delete_house_notes_on_ready_houses(self):
+        for text in ("Call before entering", "Updated access note", ""):
+            status, result, _ = self.call(
+                "POST",
+                "/api/house-notes",
+                {"house_id": "NOTES-READY", "notes": text},
+                cookie=self.surveyor_cookie,
+            )
+            self.assertEqual(status, 200, result)
+            with server.connect_db() as db:
+                saved_notes = db.execute(
+                    "SELECT notes FROM provided_houses WHERE id = 'NOTES-READY'"
+                ).fetchone()["notes"]
+            self.assertEqual(saved_notes, text)
 
         status, result, _ = self.call(
             "POST",
@@ -715,17 +715,57 @@ class SurveyorHouseNotesTests(HttpBase):
             {"house_id": "NOTES-PENDING", "notes": "Not permitted yet"},
             cookie=self.surveyor_cookie,
         )
-        self.assertEqual(status, 409)
-        self.assertIn("ready for start", result["error"])
+        self.assertEqual(status, 409, result)
+
+    def test_admin_can_edit_reference_house_notes(self):
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-notes",
+            {"house_id": "NOTES-READY", "notes": "Call before entering"},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["notes"], "Call before entering")
 
         status, result, _ = self.call(
             "POST",
             "/api/house-notes",
             {"house_id": "NOTES-READY", "notes": "x" * 2001},
-            cookie=self.surveyor_cookie,
         )
         self.assertEqual(status, 400)
         self.assertIn("2,000 characters", result["error"])
+
+    def test_saving_survey_note_does_not_complete_the_survey(self):
+        status, result, _ = self.call(
+            "POST",
+            "/api/survey-notes",
+            {"house_id": "NOTES-READY", "notes": "Access is via the rear gate."},
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertFalse(result["survey_completed"])
+        _, houses, _ = self.call("GET", "/api/calculator/houses?status=ready")
+        notes_ready = next(
+            house for house in houses["houses"] if house["id"] == "NOTES-READY"
+        )
+        self.assertFalse(notes_ready["survey_completed"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            {
+                "house_id": "NOTES-READY",
+                "survey": {
+                    "windows": [],
+                    "doors": [],
+                    "house_corners": [],
+                    "perimeter_m": 42.5,
+                    "notes": "Access is via the rear gate.",
+                },
+            },
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["survey_completed"])
 
     def test_surveyor_can_save_a_separate_survey_note_without_losing_measurements(self):
         existing_survey = {
@@ -750,6 +790,7 @@ class SurveyorHouseNotesTests(HttpBase):
         )
         self.assertEqual(status, 200, result)
         self.assertEqual(result["survey"]["notes"], "Survey access requires ladder.")
+        self.assertFalse(result["survey_completed"])
         self.assertEqual(result["updated_by"], "House Notes Surveyor")
         self.assertEqual(result["survey"]["windows"], existing_survey["windows"])
         with server.connect_db() as db:
@@ -761,6 +802,11 @@ class SurveyorHouseNotesTests(HttpBase):
         self.assertEqual(row["updated_by"], "House Notes Surveyor")
         self.assertEqual(saved_survey["doors"], existing_survey["doors"])
         self.assertEqual(saved_survey["house_corners"], existing_survey["house_corners"])
+        _, houses, _ = self.call("GET", "/api/calculator/houses?status=ready")
+        notes_ready = next(
+            house for house in houses["houses"] if house["id"] == "NOTES-READY"
+        )
+        self.assertFalse(notes_ready["survey_completed"])
 
         status, result, _ = self.call(
             "POST",
@@ -1074,9 +1120,12 @@ class CalculatorApiTests(HttpBase):
             "/api/calculator/houses?status=ready",
             cookie=employee_cookie,
         )
-        self.assertNotIn(
-            "seai_details",
-            next(house for house in employee_result["houses"] if house["id"] == "WH2131"),
+        employee_house = next(house for house in employee_result["houses"] if house["id"] == "WH2131")
+        self.assertNotIn("seai_details", employee_house)
+        self.assertNotIn("seai_summary", employee_house)
+        self.assertEqual(
+            next(house for house in admin_result["houses"] if house["id"] == "WH2131")["seai_summary"]["Application Details"]["Applicant Name"],
+            "Sample Applicant",
         )
 
     def test_seai_measure_variation_can_be_updated_and_is_returned_on_cards(self):
@@ -1141,6 +1190,38 @@ class CalculatorApiTests(HttpBase):
             {"house_id": "WH2131", "measure_index": 3, "variation": "10"},
         )
         self.assertEqual(status, 404)
+
+    def test_surveyor_can_save_measure_variation_on_assigned_ready_house(self):
+        self.provide("VAR-SURVEYOR-1", "T58 V4X9", "1 Main Street", "Owner")
+        with server.connect_db() as db:
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                (
+                    "VAR-SURVEYOR-1",
+                    json.dumps({"Measures": [{"Name": "External Wall Insulation", "Survey Qty including Variation": "10"}]}),
+                ),
+            )
+            db.execute("UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'VAR-SURVEYOR-1'")
+        self.call(
+            "POST",
+            "/api/users",
+            {"username": "variation-surveyor", "display_name": "Variation Surveyor", "pin": "456789", "role": "surveyor"},
+        )
+        _, _, surveyor_cookie = self.call(
+            "POST", "/api/auth/login", {"username": "variation-surveyor", "pin": "456789"}
+        )
+        status, result, _ = self.call(
+            "POST",
+            "/api/seai-measure-variation",
+            {"house_id": "VAR-SURVEYOR-1", "measure_index": 0, "variation": "12.5"},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["variation"], "12.5")
 
     def test_seai_pdf_documents_are_role_restricted_and_served_inline(self):
         house_id = "PDF-TEST-1"
@@ -3421,7 +3502,7 @@ class HouseRoleAssignmentTests(HttpBase):
             db.execute(
                 """
                 INSERT INTO house_surveys(house_id, data, updated_by, updated_at)
-                VALUES ('ASSIGN-COMPLETED', '{}', 'House Surveyor', '2026-10-29T12:00:00')
+                VALUES ('ASSIGN-COMPLETED', '{"perimeter_m": 20}', 'House Surveyor', '2026-10-29T12:00:00')
                 """
             )
 
@@ -4049,8 +4130,8 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('class="team-house-counts"', app_js)
     def test_not_started_cards_have_no_activate_button_but_ready_cards_do(self):
         self.assertIn('${!isReady ? `<button class="text-button plan-ready-toggle"', APP_JS)
-        self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
-        self.assertIn("seaiInsulationSummaryHtml(h.seai_details, h.id)", APP_JS)
+        self.assertIn('${surveyIsComplete(h) ? "Review survey" : "Surveyor room"}', APP_JS)
+        self.assertIn("seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)", APP_JS)
         self.assertIn("View Surveyor room", APP_JS)
         self.assertIn('id="survey-room-seai-details"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
 
@@ -4087,13 +4168,31 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
         self.assertIn('data-not-started-only', html)
 
-    def test_pdf_annotator_uses_scroll_for_page_navigation_without_arrows(self):
+    def test_surveyor_seai_pdf_library_is_separately_highlighted(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('class="seai-pdf-library-heading"', APP_JS)
+        self.assertIn('class="seai-pdf-library-count"', APP_JS)
+        self.assertIn(".survey-room-seai-documents { display: grid;", css)
+        self.assertIn(
+            'html[data-theme="dark"] .survey-room-seai-documents {',
+            css,
+        )
+        self.assertIn("Browse application records, survey plans", APP_JS)
+
+    def test_pdf_annotator_keeps_scroll_and_adds_page_navigation_controls(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="pdf-annotator-text-size"', html)
+        self.assertIn('<option value="32">XXL</option>', html)
+        self.assertIn('font_size: textSize / annotator.fitWidth', APP_JS)
         self.assertIn('id="pdf-annotator-page-count"', html)
-        self.assertNotIn('id="pdf-annotator-previous"', html)
-        self.assertNotIn('id="pdf-annotator-next"', html)
+        self.assertIn('id="pdf-annotator-page-number"', html)
+        self.assertIn('addEventListener("submit", jumpToPdfPage)', APP_JS)
+        self.assertIn('id="pdf-annotator-previous"', html)
+        self.assertIn('id="pdf-annotator-next"', html)
+        self.assertIn('role="progressbar"', html)
+        self.assertIn('addEventListener("click"', APP_JS[APP_JS.index('$("#pdf-annotator-previous")'):])
         self.assertIn('addEventListener("wheel", scrollPdfPage', APP_JS)
-        self.assertIn("Scroll to change pages", APP_JS)
+        self.assertIn("Scroll or use arrows to browse", html)
         self.assertIn("event.preventDefault();", APP_JS)
         start = APP_JS.index("function scrollPdfPage(event)")
         end = APP_JS.index("function openHouseDocumentAnnotator", start)
@@ -4170,6 +4269,42 @@ class UiWiringTests(unittest.TestCase):
         self.assertNotIn("seai-card-variation-save", result.stdout)
         self.assertIn("Attic (Loft) Insulation", result.stdout)
         self.assertIn("Internal Wall Insulation", result.stdout)
+        missing_result = subprocess.run(
+            [
+                "node",
+                "-e",
+                'const escapeHtml=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;");\n'
+                + APP_JS[start:end]
+                + '\nconsole.log(seaiInsulationSummaryHtml({_demo_data:true,Measures:[{"Name":"External Wall Insulation","Survey Quantity":"94","Survey Qty including Variation":"104"}]},"DEMO-FIC-001"));',
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=20,
+        )
+        self.assertEqual(missing_result.returncode, 0, missing_result.stderr)
+        self.assertIn("94 m²", missing_result.stdout)
+        self.assertIn("104 m²", missing_result.stdout)
+        reference_result = subprocess.run(
+            [
+                "node",
+                "-e",
+                'const escapeHtml=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;");\n'
+                + APP_JS[start:end]
+                + '\nconsole.log(applicationIdLabelHtml({seai_summary:{"Application Details":{"Application ID":"REF-123","Applicant Name":"Jane Doe"},"Property Details":{"Eircode":"T58 V4X9","Address Line 1":"1 Main Street"}}}));'
+                + '\nconsole.log(houseCardTitle({seai_summary:{"Application Details":{"Application ID":"REF-123"}}}, "HOUSE-1"), houseCardTitle({}, "HOUSE-1"));'
+                + '\nconsole.log(JSON.stringify(applicationIdLabelHtml({})));',
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=20,
+        )
+        self.assertEqual(reference_result.returncode, 0, reference_result.stderr)
+        self.assertIn("REF-123 HOUSE-1", reference_result.stdout)
+        self.assertIn("Jane Doe", reference_result.stdout)
+        self.assertIn("T58 V4X9", reference_result.stdout)
+        self.assertIn("1 Main Street", reference_result.stdout)
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn('.house-insulation-row > [role="cell"] { display: flex; flex-direction: column; align-items: stretch;', css)
         self.assertIn(".house-insulation-missing { display: flex; flex: 1 0 auto; align-items: flex-start; border: 1px solid #ead8a6;", css)
@@ -4445,10 +4580,13 @@ console.log(JSON.stringify([
         self.assertIn('document.getElementById("per").value=perimeter??""', CALC_HTML)
 
     def test_saved_survey_is_marked_and_has_a_review_action(self):
-        self.assertIn("function surveyStatusBadge(survey, completedAt = \"\")", APP_JS)
+        self.assertIn("function surveyStatusBadge(isComplete, completedAt = \"\")", APP_JS)
+        self.assertIn("function surveyIsComplete(house)", APP_JS)
         self.assertIn('class="status-pill survey-complete">Survey completed', APP_JS)
-        self.assertIn('${h.survey ? "Review survey" : "Surveyor room"}', APP_JS)
-        self.assertIn('${h.survey ? "survey-reviewed" : "survey-needed"}', APP_JS)
+        self.assertIn('${surveyIsComplete(h) ? "Review survey" : "Surveyor room"}', APP_JS)
+        self.assertIn('${surveyIsComplete(h) ? "survey-reviewed" : "survey-needed"}', APP_JS)
+        self.assertTrue(server._survey_has_valid_perimeter({"perimeter_m": 10}))
+        self.assertFalse(server._survey_has_valid_perimeter({"notes": "saved only"}))
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(".house-card .house-card-actions .house-survey-open.survey-reviewed::before", css)
         self.assertIn(".status-pill.survey-complete", css)

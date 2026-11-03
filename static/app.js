@@ -1527,26 +1527,32 @@ function playSurveyorNewInformationAnimation() {
     surveyorAnimationTimeout = 0;
   }, 6500);
 }
-function surveyCountText(survey) {
-  return survey ? "Survey recorded" : "Not surveyed";
+function surveyIsComplete(house) {
+  if (typeof house?.survey_completed === "boolean") {
+    return house.survey_completed;
+  }
+  const perimeter = Number(house?.survey?.perimeter_m);
+  return Number.isFinite(perimeter) && perimeter > 0 && perimeter <= 10000;
 }
-function updateSurveyStatusDisplay(survey) {
-  const isRecorded = Boolean(survey);
+function surveyCountText(isComplete) {
+  return isComplete ? "Survey recorded" : "Not surveyed";
+}
+function updateSurveyStatusDisplay(isComplete) {
   const summary = $("#survey-room-summary .survey-room-summary-survey strong");
   if (summary) {
-    summary.textContent = surveyCountText(survey);
-    summary.className = isRecorded ? "survey-recorded" : "survey-not-surveyed";
+    summary.textContent = surveyCountText(isComplete);
+    summary.className = isComplete ? "survey-recorded" : "survey-not-surveyed";
   }
   const status = $("#survey-room-status");
   if (status) {
-    status.classList.toggle("survey-complete", isRecorded);
-    status.classList.toggle("survey-not-surveyed", !isRecorded);
+    status.classList.toggle("survey-complete", isComplete);
+    status.classList.toggle("survey-not-surveyed", !isComplete);
     status.classList.remove("ready");
-    status.textContent = surveyCountText(survey);
+    status.textContent = surveyCountText(isComplete);
   }
 }
-function surveyStatusBadge(survey, completedAt = "") {
-  return survey
+function surveyStatusBadge(isComplete, completedAt = "") {
+  return isComplete
     ? `<span class="status-pill survey-complete">Survey completed${completedAt ? ` · ${escapeHtml(formatAuditDate(completedAt))}` : ""}</span>`
     : '<span class="status-pill survey-not-surveyed">Not surveyed yet</span>';
 }
@@ -1557,33 +1563,22 @@ const SEAI_INSULATION_GROUPS = [
   ["Cavity Wall Insulation", /cavity wall insulation/i],
 ];
 function seaiInsulationSummaryHtml(details, houseId = "") {
-  const measures = Array.isArray(details?.Measures) ? details.Measures : [];
-  const demoQuantities = [94, 42, 78, 64];
-  const demoMeasures = SEAI_INSULATION_GROUPS.map(([label], index) => {
-    const seed = houseId
-      ? houseId.charCodeAt(index % houseId.length)
-      : index * 7;
-    const surveyQuantity = demoQuantities[index] + (seed % 15) - 7;
-    return {
-      Name: label,
-      "Survey Quantity": surveyQuantity,
-      "Survey Qty including Variation":
-        surveyQuantity + Math.max(3, Math.round(surveyQuantity * 0.08)),
-      is_demo: true,
-    };
-  });
+  const measures = Array.isArray(details?.Measures)
+    ? details.Measures
+    : [];
   if (!measures.length && !houseId) return "";
-  const hasDemoMeasures = SEAI_INSULATION_GROUPS.some(([, matcher]) =>
-    !measures.some((measure) => matcher.test(String(measure.Name || ""))),
+  const hasRecordedInsulation = SEAI_INSULATION_GROUPS.some(([, matcher]) =>
+    measures.some((measure) => matcher.test(String(measure.Name || ""))),
   );
   return `<section class="house-insulation-summary" aria-label="SEAI insulation measures">
-    <h3>${measures.length ? "SEAI insulation measures" : "Sample insulation details"}</h3>
-    ${hasDemoMeasures ? '<p class="house-insulation-demo-note">DEMO DATA - sample quantities only; replace with verified SEAI information.</p>' : ""}
+    <h3>SEAI insulation measures</h3>
     <div class="house-insulation-table" role="table" aria-label="Recorded survey quantities">
       <div class="house-insulation-header" role="row"><span role="columnheader">Measure</span><span role="columnheader">Survey qty</span><span role="columnheader">Including variation</span></div>
-      ${SEAI_INSULATION_GROUPS.map(([label, matcher], index) => {
+      ${SEAI_INSULATION_GROUPS.map(([label, matcher]) => {
         const matching = measures.filter((measure) => matcher.test(String(measure.Name || "")));
-        const displayedMeasures = matching.length ? matching : [demoMeasures[index]];
+        const displayedMeasures = matching.length
+          ? matching
+          : [{ Name: "Not recorded in SEAI details" }];
         const value = (measure, key) => String(measure[key] ?? "").trim() || "—";
         const quantity = (measure, key) => {
           const raw = value(measure, key);
@@ -1591,12 +1586,12 @@ function seaiInsulationSummaryHtml(details, houseId = "") {
           const numeric = Number(raw);
           return Number.isFinite(numeric) ? `${raw} m²` : raw;
         };
-        const measureLabel = (measure) =>
-          `${measure.is_demo ? "DEMO SAMPLE - " : ""}${measure.Name || ""}`;
-        return `<div class="house-insulation-row" role="row"><strong role="rowheader">${escapeHtml(label)}</strong><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Quantity"))}<small>${escapeHtml(measureLabel(measure))}</small></span>`).join("")}</div><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Qty including Variation"))}<small>${escapeHtml(measureLabel(measure))}</small></span>`).join("")}</div></div>`;
+        const measureLabel = (measure) => measure.Name || "";
+        const smallTag = (measure) => `<small${!matching.length || String(measure.Name || "").trim().toLowerCase() === label.toLowerCase() ? ' class="is-redundant"' : ""}>${escapeHtml(measureLabel(measure))}</small>`;
+        return `<div class="house-insulation-row${matching.length ? "" : " is-missing"}" role="row"><strong role="rowheader">${escapeHtml(label)}</strong><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Quantity"))}${smallTag(measure)}</span>`).join("")}</div><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Qty including Variation"))}${smallTag(measure)}</span>`).join("")}</div></div>`;
       }).join("")}
     </div>
-    <small>${hasDemoMeasures ? "Sample figures are for layout/testing only and are not verified property details." : "Insulation quantities are shown in m² as recorded in the SEAI application."}</small>
+    <small>${hasRecordedInsulation ? "Quantities are shown as recorded in the available SEAI application details. — means not recorded." : "No verified SEAI insulation quantities are available for this house. — means not recorded."}</small>
   </section>`;
 }
 function seaiDetailValue(value) {
@@ -1604,30 +1599,91 @@ function seaiDetailValue(value) {
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
-function seaiDetailSectionHtml(title, value, readOnly = false) {
+function findSeaiApplicationId(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 5) return "";
+  for (const [key, item] of Object.entries(value)) {
+    if (/^application[\s_]*id$/i.test(key) && item && typeof item !== "object") return String(item).trim();
+  }
+  for (const item of Object.values(value)) {
+    const found = findSeaiApplicationId(item, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+function seaiCardDetails(house) {
+  return house?.seai_summary || house?.seai_details || null;
+}
+function houseCardTitle(house, fallbackHtml) {
+  const details = seaiCardDetails(house);
+  const id = details && typeof details === "object" ? findSeaiApplicationId(details) : "";
+  return id ? escapeHtml(id) : fallbackHtml;
+}
+function applicationIdLabelHtml(house, fallback = "") {
+  const details = seaiCardDetails(house);
+  const application = details?.["Application Details"];
+  const property = details?.["Property Details"];
+  const applicationDetails = application && typeof application === "object" ? application : {};
+  const propertyDetails = property && typeof property === "object" ? property : {};
+  const text = (value) => (value === null || value === undefined ? "" : String(value).trim());
+  const applicationId = text(applicationDetails["Application ID"] || (details && typeof details === "object" ? findSeaiApplicationId(details) : ""));
+  const line = [applicationDetails["Applicant Name"], propertyDetails["Address Line 1"], propertyDetails.Eircode]
+    .map(text)
+    .filter(Boolean)
+    .join(" · ");
+  if (!line) return fallback ? `<p class="house-seai-line">${escapeHtml(fallback)}</p>` : "";
+  return `<div class="house-app-id-label" aria-label="SEAI reference information">${line ? `<span class="house-seai-line">${escapeHtml(line)}</span>` : ""}</div>`;
+}
+function seaiDetailSectionHtml(title, value, readOnly = false, isOpen = false) {
   const rows = Array.isArray(value) ? value : [value];
   const fields = [...new Set(rows.flatMap((row) =>
     row && typeof row === "object" && !Array.isArray(row) ? Object.keys(row) : [],
   ))];
-  const body = !rows.length
+  const isRecord = !Array.isArray(value) && value && typeof value === "object";
+  const body = isRecord
+    ? `<dl class="survey-room-seai-fields seai-record-grid">${fields.map((field) => `<div><dt>${escapeHtml(field)}</dt><dd>${escapeHtml(seaiDetailValue(value[field]))}</dd></div>`).join("")}</dl>`
+    : !rows.length
     ? '<p class="survey-room-seai-note">No records captured.</p>'
     : fields.length
     ? `<div class="table-wrap survey-room-seai-table"><table><thead><tr>${fields.map((field) => `<th scope="col">${escapeHtml(field)}</th>`).join("")}</tr></thead><tbody>${rows.map((row, measureIndex) => `<tr>${fields.map((field) => {
       if (!readOnly && title === "Measures" && field === "Survey Qty including Variation") {
         const quantity = String(row?.[field] ?? "");
-        return `<td><div class="seai-variation-cell"><span class="seai-variation-value">${escapeHtml(quantity || "Not recorded")}</span><button class="button button-secondary seai-variation-edit" type="button" aria-label="Edit survey quantity including variation for ${escapeHtml(row?.Name || `measure ${measureIndex + 1}`)}">Edit</button><div class="seai-variation-editor" hidden><input class="seai-variation-input" type="number" min="0" max="1000000000" step="any" inputmode="decimal" aria-label="Survey quantity including variation for ${escapeHtml(row?.Name || `measure ${measureIndex + 1}`)}" value="${escapeHtml(quantity)}"><button class="button button-secondary seai-variation-save" type="button" data-seai-measure-index="${measureIndex}">Save</button></div></div></td>`;
+        return `<td><div class="seai-variation-cell"><span class="seai-variation-value">${escapeHtml(quantity || "Not recorded")}</span><button class="button button-secondary seai-variation-edit" type="button" aria-label="Edit survey quantity including variation for ${escapeHtml(row?.Name || `measure ${measureIndex + 1}`)}">&#9998; Edit</button><div class="seai-variation-editor" hidden><input class="seai-variation-input" type="number" min="0" max="1000000000" step="any" inputmode="decimal" aria-label="Survey quantity including variation for ${escapeHtml(row?.Name || `measure ${measureIndex + 1}`)}" value="${escapeHtml(quantity)}"><button class="button button-secondary seai-variation-save" type="button" data-seai-measure-index="${measureIndex}">Save</button><button class="button button-secondary seai-variation-cancel" type="button" aria-label="Cancel editing">&#10005;</button></div></div></td>`;
       }
       return `<td>${escapeHtml(seaiDetailValue(row?.[field]))}</td>`;
     }).join("")}</tr>`).join("")}</tbody></table></div>`
     : `<dl class="survey-room-seai-fields">${rows.map((row, index) => `<div><dt>${escapeHtml(fields.length ? fields[index] : title)}</dt><dd>${escapeHtml(seaiDetailValue(row))}</dd></div>`).join("")}</dl>`;
-  const isMeasures = title === "Measures";
-  return `<details class="survey-room-seai-section${isMeasures ? " survey-room-seai-measures" : ""}"${isMeasures ? " open" : ""}><summary>${escapeHtml(title)} <span>${rows.length}</span></summary>${title === "Files"   ? `<p class="survey-room-seai-note">${readOnly ? "Attachment details are shown as imported metadata." : "PDFs in the Application, Survey, and Variation categories can be opened in the SEAI PDFs section below. Other attachment types are shown as metadata only."}</p>` : ""}${body}</details>`;
+  const sectionClass = title === "Measures"
+    ? " survey-room-seai-measures"
+    : title === "Variance"
+      ? " survey-room-seai-variance"
+      : title === "Notes"
+        ? " survey-room-seai-notes"
+        : "";
+  const sectionIcons = { Measures: "&#x1F4D0;", Variance: "&#x21C4;", Notes: "&#x1F4DD;", Files: "&#x1F4CE;", Property: "&#x1F3E0;", Contractor: "&#x1F477;", Tests: "&#x1F9EA;" };
+  const itemCount = isRecord ? fields.length : rows.length;
+  const countLabel = itemCount === 1 ? "1 record" : `${itemCount} records`;
+  return `<details class="survey-room-seai-section${sectionClass}"${isOpen ? " open" : ""}><summary><span class="seai-sec-icon" aria-hidden="true">${sectionIcons[title] || "&#x25A4;"}</span><span class="seai-sec-title">${escapeHtml(title)}</span><span class="seai-sec-count">${countLabel}</span></summary>${title === "Files"   ? `<p class="survey-room-seai-note">${readOnly ? "Attachment details are shown as imported metadata." : "PDFs in the Application, Survey, and Variation categories can be opened in the SEAI PDFs section below. Other attachment types are shown as metadata only."}</p>` : ""}${body}</details>`;
 }
-function seaiApplicationRecordHtml(details, readOnly = false) {
+function seaiApplicationRecordHtml(details, readOnly = false, openTitles = null) {
   if (!details || typeof details !== "object") return "";
-  return Object.entries(details)
-    .map(([title, value]) => seaiDetailSectionHtml(title, value, readOnly))
+  const isDemoData = details._demo_data === true;
+  const sections = Object.entries(details)
+    .filter(([title]) => title !== "_demo_data")
+    .map(([title, value], index) =>
+      seaiDetailSectionHtml(
+        title,
+        value,
+        readOnly,
+        openTitles
+          ? openTitles.includes(title)
+          : false,
+      ),
+    )
     .join("");
+  const demoNotice = isDemoData
+    ? '<p class="house-insulation-demo-note" role="note">DEMO DATA - synthetic sample measures for layout and testing only; not copied from an SEAI applicant or live records.</p>'
+    : "";
+  return `${demoNotice}${sections}`;
 }
 async function saveSeaiMeasureVariation(button) {
   const index = Number(button.dataset.seaiMeasureIndex);
@@ -1652,8 +1708,11 @@ async function saveSeaiMeasureVariation(button) {
     ]) {
       if (house.id === houseId) house.seai_details = result.seai_details;
     }
-    $("#survey-room-seai-content").innerHTML =
-      seaiApplicationRecordHtml(result.seai_details);
+    const content = $("#survey-room-seai-content");
+    const openTitles = $$("details[open] > summary .seai-sec-title", content).map(
+      (title) => title.textContent,
+    );
+    content.innerHTML = seaiApplicationRecordHtml(result.seai_details, false, openTitles);
     showToast(`SEAI variation quantity for ${houseId} saved.`);
   } catch (error) {
     showToast(error.message, true);
@@ -1700,7 +1759,7 @@ async function loadSurveyorHouses({ quiet = false } = {}) {
 }
 function renderSurveyorHouses() {
   const query = $("#house-search").value.trim().toLocaleLowerCase();
-  const completed = surveyHouses.filter((house) => house.survey).length;
+  const completed = surveyHouses.filter(surveyIsComplete).length;
   $("#surveyor-stat-assigned").textContent = surveyHouses.length;
   $("#surveyor-stat-needed").textContent = surveyHouses.length - completed;
   $("#surveyor-stat-complete").textContent = completed;
@@ -1715,7 +1774,9 @@ function renderSurveyorHouses() {
   const rows = surveyHouses
     .filter((house) =>
       surveyorStatusFilter === "all" ||
-      (surveyorStatusFilter === "completed" ? Boolean(house.survey) : !house.survey),
+      (surveyorStatusFilter === "completed"
+        ? surveyIsComplete(house)
+        : !surveyIsComplete(house)),
     )
     .filter((house) =>
       [house.id, house.owner_name, house.address, house.postcode]
@@ -1726,11 +1787,11 @@ function renderSurveyorHouses() {
     );
   $("#houses-list").classList.remove("house-grid-compact");
   $("#houses-list").classList.add("house-grid-ready");
-  $("#houses-list").innerHTML = rows.length ? rows.map((h) => `<article class="card house-card surveyor-house-card${h.survey ? " is-surveyed" : ""}" data-house-id="${escapeHtml(h.id)}">
-    <div class="house-top"><span class="house-avatar" aria-hidden="true">&#8962;</span><div class="house-meta"><h2>${escapeHtml(h.id)}</h2><p>${escapeHtml([h.owner_name, h.address, h.postcode].filter(Boolean).join(" · ") || "Address not provided")}</p></div><div class="house-status-stack">${surveyStatusBadge(h.survey, h.survey_updated_at)}</div></div>
-    <div class="surveyor-house-update"><span class="surveyor-update-indicator ${h.survey ? "is-complete" : ""}" aria-hidden="true"></span><span>${h.survey ? `Survey saved${h.survey_updated_by ? ` by ${escapeHtml(h.survey_updated_by)}` : ""}` : "Ready for your survey"}</span></div>
-    <button class="button ${h.survey ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="Open Surveyor room for ${escapeHtml(h.id)}">${h.survey ? "Review survey" : "Start survey"} <span aria-hidden="true">→</span></button>
-    ${seaiInsulationSummaryHtml(h.seai_details, h.id)}
+  $("#houses-list").innerHTML = rows.length ? rows.map((h) => `<article class="card house-card surveyor-house-card${surveyIsComplete(h) ? " is-surveyed" : ""}" data-house-id="${escapeHtml(h.id)}">
+    <div class="house-top"><span class="house-avatar" aria-hidden="true">&#8962;</span><div class="house-meta"><h2>${houseCardTitle(h, escapeHtml(h.id))}</h2>${applicationIdLabelHtml(h, [h.owner_name, h.address, h.postcode].filter(Boolean).join(" · ") || "Address not provided")}</div></div>
+    <div class="surveyor-house-update"><span class="surveyor-update-indicator ${surveyIsComplete(h) ? "is-complete" : ""}" aria-hidden="true"></span><span>${surveyIsComplete(h) ? `Survey saved${h.survey_updated_by ? ` by ${escapeHtml(h.survey_updated_by)}` : ""}` : "Ready for your survey"}</span>${surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at)}</div>
+    <button class="button ${surveyIsComplete(h) ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="Open Surveyor room for ${escapeHtml(h.id)}">${surveyIsComplete(h) ? "Review survey" : "Start survey"} <span aria-hidden="true">→</span></button>
+    ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
   </article>`).join("") : `<div class="surveyor-empty-state"><span class="surveyor-empty-icon" aria-hidden="true">⌂</span><strong>${query ? "No matching houses" : surveyHouses.length ? "No houses in this filter" : "No houses assigned yet"}</strong><p>${query ? "Try a different house ID, owner, address or postcode." : surveyHouses.length ? "Choose another filter to see your other assigned houses." : "When a house is assigned to you and marked Ready for start, it will appear here."}</p></div>`;
 }
 function renderSupervisorAssignmentSummary(houses) {
@@ -1847,8 +1908,8 @@ function renderSupervisorHouses() {
             <div class="house-top">
               <span class="house-avatar" aria-hidden="true">&#8962;</span>
               <div class="house-meta">
-                <h2>${houseId}</h2>
-                <p>${escapeHtml([house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "Address not provided")}</p>
+                <h2>${houseCardTitle(house, houseId)}</h2>
+                ${applicationIdLabelHtml(house, [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "Address not provided")}
               </div>
               <div class="house-status-stack"><span class="status-pill ${house.is_finished ? "closed" : "active"}">${status}</span></div>
             </div>
@@ -1989,18 +2050,18 @@ function openHouseSurvey(houseId) {
       house[`plan_${trade}_notes`] || "";
   }
   const houseNotesForm = $("#surveyor-house-notes-form");
+  const canEditHouseNotes = hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor");
   houseNotesForm.dataset.houseId = houseId;
   houseNotesForm.elements.notes.value = house.notes || "";
-  houseNotesForm.classList.toggle("hidden", !isReady);
+  houseNotesForm.classList.toggle("hidden", !isReady || !canEditHouseNotes);
   const survey = house.survey || {};
   const surveyNotesForm = $("#surveyor-survey-notes-form");
   surveyNotesForm.dataset.houseId = houseId;
-  surveyNotesForm.elements.notes.value = "";
+  surveyNotesForm.elements.notes.value = house.survey?.notes || "";
   surveyNotesForm.classList.toggle("hidden", !isReady);
+  syncNoteDeleteButtons();
   const hasHouseNotes = Boolean(house.notes?.trim());
-  const hasSurveyNote = Boolean(survey.notes?.trim());
   const houseNoteActionClass = hasHouseNotes ? "note-action-edit" : "note-action-add";
-  const surveyNoteActionClass = hasSurveyNote ? "note-action-edit" : "note-action-add";
   for (const key of ["windows", "doors", "house_corners"]) {
     const target = $("#survey-" + key);
     target.replaceChildren();
@@ -2016,18 +2077,13 @@ function openHouseSurvey(houseId) {
     : "PRE-START HOUSE SURVEY";
   $("#survey-room-status").classList.toggle("hidden", isNotStarted);
   $("#survey-meta").textContent = house.survey_updated_by ? `Last saved by ${house.survey_updated_by}${house.survey_updated_at ? ` - ${formatAuditDateTime(house.survey_updated_at)}` : ""}` : "Not surveyed yet";
-  updateSurveyStatusDisplay(house.survey);
+  updateSurveyStatusDisplay(surveyIsComplete(house));
   $("#survey-room-subtitle").textContent = [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "No house details recorded";
   $("#survey-room-summary").innerHTML = `
-    <div><span>House ID</span><strong>${escapeHtml(house.id)}</strong></div>
-    <div><span>Owner</span><strong>${escapeHtml(house.owner_name || "Not recorded")}</strong></div>
-    <div><span>Eircode / postcode</span><strong>${escapeHtml(house.postcode || "Not recorded")}</strong></div>
-    <div><span>Address</span><strong>${escapeHtml(house.address || "Not recorded")}</strong></div>
-    <div class="survey-room-summary-survey"><span>Survey status</span><strong class="${house.survey ? "survey-recorded" : "survey-not-surveyed"}">${escapeHtml(surveyCountText(house.survey))}</strong></div>
-    <div class="survey-room-house-notes"><div class="survey-room-house-notes-heading"><span>House notes</span>${isReady ? `<button class="text-button ${houseNoteActionClass}" type="button" data-edit-house-notes>${hasHouseNotes ? "Edit note" : "Add note"}</button>` : ""}</div><strong id="survey-room-summary-house-notes">${escapeHtml(house.notes || "No house notes")}</strong></div>
-    <div class="survey-room-house-notes survey-room-survey-notes"><div class="survey-room-house-notes-heading"><span>Survey note</span>${isReady ? `<button class="text-button ${surveyNoteActionClass}" type="button" data-edit-survey-notes>${hasSurveyNote ? "Edit note" : "Add note"}</button>` : ""}</div><strong id="survey-room-summary-survey-notes">${escapeHtml(survey.notes || "No survey note")}</strong></div>`;
+    <div class="survey-room-house-notes"><div class="survey-room-house-notes-heading"><span>House notes</span>${isReady && canEditHouseNotes ? `<button class="text-button ${houseNoteActionClass}" type="button" data-edit-house-notes>${hasHouseNotes ? "Edit note" : "Add note"}</button>` : ""}</div><strong id="survey-room-summary-house-notes">${escapeHtml(house.notes || "No house notes")}</strong></div>`;
   $(".survey-room-summary-card").classList.toggle("hidden", isNotStarted);
-  $("#survey-room-seai-content").innerHTML = seaiApplicationRecordHtml(house.seai_details);
+  $("#survey-room-notes").classList.toggle("hidden", !isReady);
+  $("#survey-room-seai-content").innerHTML = seaiApplicationRecordHtml(house.seai_details, false, []);
   $("#survey-room-seai-documents").innerHTML = "";
   const seaiDetailsCard = $("#survey-room-seai-details");
   $(".card-heading h2", seaiDetailsCard).textContent = isNotStarted
@@ -2064,6 +2120,7 @@ function openHouseSurvey(houseId) {
   $("#house-detail").classList.add("hidden");
   $("#surveyor-room").classList.remove("hidden");
   setTab("houses");
+  updateSurveyRoomNavActive();
   if ((hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor"))) {
     loadSeaiDocuments(houseId, state.surveyRoomRequest, isReady);
   } else {
@@ -2077,6 +2134,50 @@ function openHouseSurvey(houseId) {
     ? "View-only PDFs. Uploading, annotations, and sharing are disabled while the house is Not started."
     : "PDF plans and documents shared with the surveyor. Share adds the saved survey note on a separate final page.";
   loadHouseDocuments(houseId, state.surveyRoomRequest, isReady);
+}
+function scrollToSurveyRoomSection(target) {
+  const nav = $(".survey-room-nav");
+  const offset = (nav ? nav.offsetHeight : 0) + 16;
+  const top = target.getBoundingClientRect().top + window.scrollY - offset;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  window.scrollTo({ top, behavior: reduce ? "auto" : "smooth" });
+  if (target.tagName === "FORM") {
+    target.querySelector("textarea")?.focus({ preventScroll: true });
+  }
+  target.classList.remove("survey-room-flash");
+  void target.offsetWidth;
+  target.classList.add("survey-room-flash");
+  setTimeout(() => target.classList.remove("survey-room-flash"), 1400);
+}
+function updateSurveyRoomNavActive() {
+  const room = $("#surveyor-room");
+  if (!room || room.classList.contains("hidden")) return;
+  const nav = $(".survey-room-nav", room);
+  if (!nav) return;
+  const line = nav.offsetHeight + 40;
+  let active = null;
+  $$("a:not(.hidden)", nav).forEach((link) => {
+    const target = $(link.getAttribute("href"));
+    if (target && target.getBoundingClientRect().top <= line) active = link;
+  });
+  const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+  if (atBottom) active = $$("a:not(.hidden)", nav).pop() || active;
+  $$("a", nav).forEach((link) => {
+    const isActive = link === active;
+    link.classList.toggle("active", isActive);
+    if (isActive) link.setAttribute("aria-current", "true");
+    else link.removeAttribute("aria-current");
+  });
+  if (active && nav.scrollWidth > nav.clientWidth) {
+    const left = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2;
+    nav.scrollTo({ left, behavior: "smooth" });
+  }
+}
+function syncNoteDeleteButtons() {
+  for (const form of [$("#surveyor-house-notes-form"), $("#surveyor-survey-notes-form")]) {
+    const button = form?.querySelector("[data-delete-note]");
+    if (button) button.disabled = !form.elements.notes.value.trim();
+  }
 }
 async function submitSurveyorHouseNotes(event) {
   event.preventDefault();
@@ -2103,9 +2204,10 @@ async function submitSurveyorHouseNotes(event) {
     $("#survey-room-summary-house-notes").textContent =
       hasNotes ? result.notes : "No house notes";
     setNoteAction($("[data-edit-house-notes]"), hasNotes);
-    form.elements.notes.value = "";
+    form.elements.notes.value = result.notes || "";
+    syncNoteDeleteButtons();
     planStale.add("ready");
-    showToast(`House notes for ${houseId} saved.`);
+    showToast(hasNotes ? `House notes for ${houseId} saved.` : `House notes for ${houseId} deleted.`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -2195,18 +2297,17 @@ async function submitSurveyorSurveyNotes(event) {
     ].filter((item) => item.id === houseId);
     matchingHouses.forEach((house) => {
       house.survey = { ...(house.survey || {}), ...result.survey };
+      house.survey_completed = result.survey_completed;
       house.survey_updated_by = result.updated_by;
       house.survey_updated_at = result.updated_at;
     });
     const hasNotes = Boolean(result.notes?.trim());
-    $("#survey-room-summary-survey-notes").textContent =
-      hasNotes ? result.notes : "No survey note";
-    setNoteAction($("[data-edit-survey-notes]"), hasNotes);
     $("#survey-meta").textContent =
       `Survey note saved by ${result.updated_by} - ${formatAuditDateTime(result.updated_at)}`;
-    updateSurveyStatusDisplay(result.survey);
-    form.elements.notes.value = "";
-    showToast(`Survey note for ${houseId} saved.`);
+    updateSurveyStatusDisplay(result.survey_completed);
+    form.elements.notes.value = result.notes || "";
+    syncNoteDeleteButtons();
+    showToast(hasNotes ? `Survey note for ${houseId} saved.` : `Survey note for ${houseId} deleted.`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -2277,11 +2378,20 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
       <button class="button button-primary" type="button" data-seai-share-selected disabled>Share selected pages</button>
       <button class="button button-secondary" type="button" data-seai-share-clear disabled>Clear</button></div>
     </div>` : "";
-    list.innerHTML = result.documents.length
-      ? `${toolbar}<h3>SEAI PDFs</h3>${allCategories.map((category) => {
-        const documents = result.documents.filter((document) => document.category === category);
-        if (!documents.length) return "";
-        return `<section class="seai-document-category"><h4>${escapeHtml(category)}</h4>${documents.map((document) => `
+    const libraryHeader = `<div class="seai-pdf-library-heading">
+      <span class="seai-pdf-library-icon" aria-hidden="true">PDF</span>
+      <div><span class="seai-pdf-library-eyebrow">DOCUMENT LIBRARY</span><h3>SEAI PDFs</h3>
+      <p>Browse application records, survey plans and variation documents.</p></div>
+      <span class="seai-pdf-library-count">${result.documents.length} ${result.documents.length === 1 ? "file" : "files"}</span>
+    </div>`;
+    list.innerHTML = `${libraryHeader}${toolbar}${result.documents.length
+      ? allCategories.map((category) => {
+          const documents = result.documents.filter((document) => document.category === category);
+          if (!documents.length) return "";
+          const hint = seaiPdfCategoryHints[category]
+            ? `<p class="survey-room-seai-note">${escapeHtml(seaiPdfCategoryHints[category])}</p>`
+          : "";
+          return `<details class="survey-room-seai-section survey-room-seai-pdfs seai-document-category"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4C4;</span><span class="seai-sec-title">${escapeHtml(category)} PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 record" : `${documents.length} records`}</span></summary>${hint}<div class="seai-document-entries">${documents.map((document) => `
           <div class="seai-document-entry ${document.is_annotated ? "is-annotated" : "is-original"}">
             <span class="house-document-icon" aria-hidden="true">PDF</span>
             <span class="seai-document-name"><span class="seai-document-status ${document.is_annotated ? "annotated" : "original"}">${document.is_annotated ? "ANNOTATED COPY" : "ORIGINAL PDF"}</span>${escapeHtml(document.filename)}<small>${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
@@ -2289,9 +2399,9 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
             ${canModify
     ? `<button class="button button-secondary seai-document-view" type="button" data-document-id="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}" data-document-category="${escapeHtml(category)}">Open &amp; annotate</button>`
     : `<a class="button button-secondary" href="/api/seai-documents/${Number(document.id)}/file" target="_blank" rel="noreferrer">View PDF</a>`}
-          </div>`).join("")}</section>`;
-      }).join("")}`
-      : `${toolbar}<p class="muted seai-documents-empty">No SEAI PDF attachments are available for this house.</p>`;
+          </div>`).join("")}</div></details>`;
+      }).join("")
+      : '<p class="muted seai-documents-empty">No SEAI PDF attachments are available for this house.</p>'}`;
     updateSeaiShareToolbar();
   } catch (error) {
     if (requestId === state.surveyRoomRequest) {
@@ -2564,7 +2674,27 @@ function drawPdfAnnotations() {
   $("#pdf-annotator-save").disabled =
     annotator.annotations.length === 0 || annotator.saving;
   $("#pdf-annotator-page-count").textContent =
-    `Page ${annotator.page} of ${annotator.pageCount || 1} · Scroll to change pages`;
+    annotator.loading
+      ? `Loading page ${annotator.page} of ${annotator.pageCount || 1}…`
+      : `Page ${annotator.page} of ${annotator.pageCount || 1}`;
+  const pageInput = $("#pdf-annotator-page-number");
+  pageInput.value = String(annotator.page);
+  pageInput.max = String(annotator.pageCount || 1);
+  pageInput.disabled = annotator.loading;
+  $("#pdf-annotator-page-jump button[type='submit']").disabled = annotator.loading;
+  $("#pdf-annotator-page-navigation").setAttribute(
+    "aria-busy",
+    String(annotator.loading),
+  );
+  $("#pdf-annotator-page-total").textContent = String(annotator.pageCount || 1);
+  $("#pdf-annotator-previous").disabled = annotator.loading || annotator.page <= 1;
+  $("#pdf-annotator-next").disabled =
+    annotator.loading || annotator.page >= (annotator.pageCount || 1);
+  const progress = $(".pdf-annotator-progress");
+  progress.setAttribute("aria-valuemax", String(annotator.pageCount || 1));
+  progress.setAttribute("aria-valuenow", String(annotator.page));
+  $("#pdf-annotator-progress-fill").style.width =
+    `${(annotator.page / (annotator.pageCount || 1)) * 100}%`;
 }
 function drawPdfStrokeSegment(annotation, start, end) {
   const canvas = $("#pdf-annotator-canvas");
@@ -2592,8 +2722,14 @@ async function loadHouseDocumentPage(pageNumber) {
   if (pageNumber < 1 || pageNumber > annotator.pageCount || annotator.loading) return;
   annotator.page = pageNumber;
   annotator.loading = true;
+  $("#pdf-annotator-page-count").textContent =
+    `Loading page ${pageNumber} of ${annotator.pageCount}…`;
+  $("#pdf-annotator-page-navigation").setAttribute("aria-busy", "true");
+  $("#pdf-annotator-page-number").disabled = true;
+  $("#pdf-annotator-page-jump button[type='submit']").disabled = true;
+  $("#pdf-annotator-previous").disabled = true;
+  $("#pdf-annotator-next").disabled = true;
   $("#pdf-annotator-error").classList.add("hidden");
-  $("#pdf-annotator-page-count").textContent = `Loading page ${pageNumber}…`;
   drawPdfAnnotations();
   try {
     const documentPath = annotator.documentType === "seai"
@@ -2637,6 +2773,9 @@ async function loadHouseDocumentPage(pageNumber) {
       drawPdfAnnotations();
     };
     annotator.pageCount = pageCount;
+    $("#pdf-annotator-page-number").max = String(pageCount);
+    $("#pdf-annotator-page-total").textContent = String(pageCount);
+    $(".pdf-annotator-progress").setAttribute("aria-valuemax", String(pageCount));
     image.src = previewUrl;
   } catch (error) {
     annotator.loading = false;
@@ -2669,6 +2808,20 @@ function scrollPdfPage(event) {
   annotator.wheelDelta = 0;
   annotator.wheelLocked = true;
   loadHouseDocumentPage(nextPage);
+}
+function jumpToPdfPage(event) {
+  event.preventDefault();
+  const annotator = state.pdfAnnotator;
+  const pageInput = $("#pdf-annotator-page-number");
+  if (!annotator || annotator.loading || !pageInput.reportValidity()) return;
+  const pageNumber = Number(pageInput.value);
+  if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > annotator.pageCount) {
+    pageInput.setCustomValidity(`Enter a page number from 1 to ${annotator.pageCount}.`);
+    pageInput.reportValidity();
+    return;
+  }
+  pageInput.setCustomValidity("");
+  if (pageNumber !== annotator.page) loadHouseDocumentPage(pageNumber);
 }
 function openHouseDocumentAnnotator(button) {
   openPdfAnnotator(button, "house");
@@ -2712,6 +2865,7 @@ function openPdfAnnotator(button, documentType) {
   $("#pdf-annotator-size").value = "2.5";
   $("#pdf-annotator-zoom-level").textContent = "100%";
   $("#pdf-annotator-text").value = "";
+  $("#pdf-annotator-text-size").value = "16";
   $("#pdf-annotator-text-panel").classList.add("hidden");
   $$(".pdf-tool-button").forEach((toolButton) => {
     const active = toolButton.dataset.pdfTool === "pen";
@@ -2980,13 +3134,14 @@ async function submitHouseSurvey(event) {
     const result = await request("/api/house-survey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ house_id: form.dataset.houseId, survey }) });
     const updatedAt = result.updated_at;
     $("#survey-meta").textContent = `Last saved by ${state.user.display_name} - ${formatAuditDateTime(updatedAt)}`;
-    updateSurveyStatusDisplay(survey);
     const currentHouse = [...surveyHouses, ...Object.values(planCache).flat()].find((house) => house.id === form.dataset.houseId);
     if (currentHouse) {
       currentHouse.survey = survey;
+      currentHouse.survey_completed = Boolean(result.survey_completed);
       currentHouse.survey_updated_by = state.user.display_name;
       currentHouse.survey_updated_at = updatedAt;
     }
+    updateSurveyStatusDisplay(Boolean(result.survey_completed));
     planStale.add("ready");
     showToast(`Survey for ${form.dataset.houseId} saved.`);
     state.houseStatusFilter = "ready";
@@ -3065,20 +3220,20 @@ async function renderNotStartedHouses(query, mode = "not_started") {
               .join(" · ");
             const isReadyArrival = isAssign && isReady && state.readyHouseArrivalId === h.id;
             return `<article class="card house-card ${isAssign ? "assign-house-card " : ""}${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}${isReadyArrival ? " assign-ready-arrival" : ""}" data-house-id="${id}"${isReadyArrival ? ' data-ready-arrival="true"' : ""}>
-          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${id}</h2><p>${escapeHtml(locationDetails || "No address recorded")}</p>${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${isReady ? houseAuditHtml(h, true) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(h.survey, h.survey_updated_at) : ""}</div></div>
+          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(h, id)}</h2>${applicationIdLabelHtml(h, locationDetails || "No address recorded")}${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${isReady ? houseAuditHtml(h, true) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at) : ""}</div></div>
           <div class="house-body" data-house-id="${id}"${!isReady ? ' tabindex="0" role="region" aria-label="House status"' : ""}>
             ${houseWorkflowHtml(workflowStep, !isReady)}
-            ${seaiInsulationSummaryHtml(h.seai_details, h.id)}
+            ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
           </div>
         <div class="house-card-actions">
         ${isAssign ? `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">View SEAI details <span aria-hidden="true">→</span></button>` : ""}
         ${isAssign && isReady ? `
-          <button class="text-button assign-house-activate" type="button" data-house-id="${id}"${h.has_assigned_surveyor && h.survey && h.has_surveyed_perimeter ? "" : ` disabled title="${!h.has_assigned_surveyor ? "Assign a Surveyor first." : !h.survey ? "Waiting for the assigned Surveyor to complete the survey." : "A valid surveyed perimeter is required."}"`}>＋ Activate house</button>
+          <button class="text-button assign-house-activate" type="button" data-house-id="${id}"${h.has_assigned_surveyor && surveyIsComplete(h) && h.has_surveyed_perimeter ? "" : ` disabled title="${!h.has_assigned_surveyor ? "Assign a Surveyor first." : !surveyIsComplete(h) ? "Waiting for the assigned Surveyor to complete the survey." : "A valid surveyed perimeter is required."}"`}>＋ Activate house</button>
           <button class="text-button assign-house-team" type="button" data-house-id="${id}">${h.has_assigned_surveyor ? "Change Surveyor" : "Assign Surveyor"}</button>
         ` : `
           ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : `
-              <button class="text-button seai-activate" type="button" data-house-id="${id}"${h.survey ? "" : ' disabled title="Complete a survey before activation."'}>${h.survey ? "&#43; Activate house" : "Survey required to activate"}</button>
-            ${canSurveyHouses ? `<button class="text-button house-survey-open ${h.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${h.survey ? "Review completed survey" : "Open surveyor room"}">${h.survey ? "Review survey" : "Surveyor room"}</button>` : ""}
+              <button class="text-button seai-activate" type="button" data-house-id="${id}"${surveyIsComplete(h) ? "" : ' disabled title="Complete a survey before activation."'}>${surveyIsComplete(h) ? "&#43; Activate house" : "Survey required to activate"}</button>
+            ${canSurveyHouses ? `<button class="text-button house-survey-open ${surveyIsComplete(h) ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${surveyIsComplete(h) ? "Review completed survey" : "Open surveyor room"}">${surveyIsComplete(h) ? "Review survey" : "Surveyor room"}</button>` : ""}
             ${hasAccessProfile(state.user, "assign") ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}
             ${houseMapButtonHtml(h.id)}
             `}
@@ -3161,7 +3316,7 @@ async function renderAssignSeaiHouses(query) {
               ? "finished"
               : "pending";
         return `<article class="card house-card house-plan-pending" data-house-id="${escapeHtml(house.id)}">
-          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "No address recorded")}</p></div><span class="status-pill ${statusClass}">${status}</span></div>
+          <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "No address recorded")}</div><span class="status-pill ${statusClass}">${status}</span></div>
         </article>`;
       }).join("")
     : `<p class="muted">${query ? "No matching houses." : "No houses from SEAI are available."}</p>`;
@@ -3544,7 +3699,8 @@ function mapHouseActions(house) {
     return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open survey-needed" type="button" data-house-id="${id}">View Surveyor room</button>` : ""}`;
   }
   if (house.status === "ready") {
-    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${house.survey ? "" : " disabled"}>＋ Activate house</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open ${house.survey ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${house.survey ? "Review completed survey" : "Open surveyor room"}">${house.survey ? "Review survey" : "Surveyor room"}</button>` : ""}<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`;
+    const surveyCompleted = surveyIsComplete(house);
+    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${surveyCompleted ? "" : " disabled"}>＋ Activate house</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open ${surveyCompleted ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${surveyCompleted ? "Review completed survey" : "Open surveyor room"}">${surveyCompleted ? "Review survey" : "Surveyor room"}</button>` : ""}<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`;
   }
   if (house.status === "closed") {
     return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
@@ -3902,7 +4058,7 @@ function renderHouses() {
     const assignedTeams = houseTeams.get(house.id) || [];
     return `
       <article class="card house-card ${isAssign ? "assign-house-card " : ""}${house.is_finished ? "house-finished" : "house-active"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${escapeHtml(house.id)}</h2><p>${escapeHtml([house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}</p>${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-body" data-house-id="${escapeHtml(house.id)}">${houseWorkflowHtml(house.is_finished ? 4 : 3)}${canViewMaterials ? `<div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) || house.is_finished ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${!house.is_finished && held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>` : ""}
@@ -4351,6 +4507,49 @@ async function loadHouseDetail(houseId) {
   }
 }
 
+function seaiPdfSize(bytes) {
+  const size = Number(bytes) || 0;
+  return size >= 1_000_000 ? `${(size / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1000))} KB`;
+}
+const seaiPdfCategoryHints = {
+  Application: "Letters and forms issued with the application.",
+  Survey: "Surveyor report and sketches.",
+  Variation: "Installer plans supporting variations.",
+};
+function seaiPdfSectionsHtml(documents) {
+  const hints = seaiPdfCategoryHints;
+  return ["Application", "Survey", "Variation"].map((category) => {
+    const items = documents.filter(
+      (document) => document.category === category && !document.is_annotated,
+    );
+    if (!items.length) return "";
+    return `<details class="survey-room-seai-section survey-room-seai-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4C4;</span><span class="seai-sec-title">${escapeHtml(category)} PDFs</span><span class="seai-sec-count">${items.length === 1 ? "1 record" : `${items.length} records`}</span></summary><p class="survey-room-seai-note">${escapeHtml(hints[category])}</p><ul class="survey-room-seai-pdf-list">${items.map((document) => {
+      const url = `/api/seai-documents/${Number(document.id)}/file`;
+      const name = escapeHtml(document.filename);
+      return `<li><span class="house-document-icon" aria-hidden="true">PDF</span><span class="seai-document-name" title="${name}"><strong>${name}</strong><small>${seaiPdfSize(document.size_bytes)}</small></span><span class="seai-pdf-actions"><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer" aria-label="View ${name}">View</a><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}">Download</a></span></li>`;
+    }).join("")}</ul></details>`;
+  }).join("");
+}
+async function loadAssignSeaiPdfSections(houseId, requestId) {
+  try {
+    const result = await request(
+      `/api/seai-documents?house_id=${encodeURIComponent(houseId)}`,
+    );
+    if (
+      requestId !== state.assignSeaiHouseRequest ||
+      state.assignSeaiHouseViewId !== houseId
+    ) {
+      return;
+    }
+    const html = seaiPdfSectionsHtml(result.documents || []);
+    if (!html) return;
+    $("#assign-seai-house-record").insertAdjacentHTML("beforeend", html);
+    $("#assign-seai-house-empty").classList.add("hidden");
+  } catch {
+    // PDFs are limited to administrators and surveyors; other users just see the details.
+  }
+}
+
 async function loadAssignSeaiHouseRecord(houseId, requestId) {
   try {
     const result = await request(
@@ -4372,9 +4571,15 @@ async function loadAssignSeaiHouseRecord(houseId, requestId) {
     status.classList.toggle("active", result.is_active);
     status.classList.toggle("ready", !result.is_active);
     status.textContent = result.is_active ? "Active" : "Ready for start";
+    $("#assign-seai-house-detail .page-subtitle").textContent =
+      result.seai_details?._demo_data === true
+        ? "Synthetic sample application information for layout and testing."
+        : "Read-only information saved from the SEAI portal.";
     const detailsHtml = seaiApplicationRecordHtml(result.seai_details, true);
     $("#assign-seai-house-record").innerHTML = detailsHtml;
     $("#assign-seai-house-empty").classList.toggle("hidden", Boolean(detailsHtml));
+    $("#assign-seai-toolbar").classList.toggle("hidden", !detailsHtml);
+    loadAssignSeaiPdfSections(houseId, requestId);
   } catch (error) {
     if (requestId !== state.assignSeaiHouseRequest) return;
     showToast(error.message, true);
@@ -4398,9 +4603,12 @@ function openAssignSeaiHouseRecord(houseId) {
     ? "← Back to map"
     : "← Back to dashboard";
   $("#assign-seai-house-detail-title").textContent = houseId;
+  $("#assign-seai-house-detail .page-subtitle").textContent =
+    "Loading saved application details…";
   $("#assign-seai-house-record").innerHTML =
     '<p class="muted">Loading imported SEAI information…</p>';
   $("#assign-seai-house-empty").classList.add("hidden");
+  $("#assign-seai-toolbar").classList.add("hidden");
   loadAssignSeaiHouseRecord(houseId, requestId);
 }
 
@@ -5378,6 +5586,11 @@ async function toggleHouseFinished(event) {
     openHouseSurvey(surveyButton.dataset.houseId);
     return;
   }
+  const surveyorCard = event.target.closest("#houses-list .surveyor-house-card");
+  if (surveyorCard?.querySelector(".surveyor-house-action") && !event.target.closest("button, a, input, select, textarea, summary, label")) {
+    surveyorCard.querySelector(".surveyor-house-action")?.click();
+    return;
+  }
   const readyButton = event.target.closest(".plan-ready-toggle");
   if (readyButton) {
     toggleHouseReady(readyButton.dataset.houseId, readyButton.dataset.ready === "true");
@@ -6174,6 +6387,24 @@ function bindEvents() {
   });
   $("#account-sign-out").addEventListener("click", signOut);
   $("#auth-form").addEventListener("submit", submitAuthentication);
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-seai-toggle-all]");
+    const scope = button && $(button.closest("[data-seai-scope]")?.dataset.seaiScope || "");
+    if (!scope) return;
+    const open = button.dataset.seaiToggleAll === "open";
+    $$("details.survey-room-seai-section", scope).forEach((section) => {
+      section.open = open;
+    });
+  });
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest?.(".survey-room-nav a");
+    if (!link) return;
+    const target = $(link.getAttribute("href"));
+    if (!target) return;
+    event.preventDefault();
+    scrollToSurveyRoomSection(target);
+  });
+  window.addEventListener("scroll", updateSurveyRoomNavActive, { passive: true });
   $("#auth-form").addEventListener("click", toggleAuthPinVisibility);
   $("#auth-form").addEventListener("focusin", handleAuthCatFocus);
   $("#auth-form").addEventListener("input", handleAuthCatTyping);
@@ -6542,6 +6773,16 @@ function bindEvents() {
   $("#pdf-annotator-page-selection").addEventListener("change", (event) => {
     updateSeaiPageSelection(event.currentTarget.checked);
   });
+  $("#pdf-annotator-page-number").addEventListener("input", (event) => {
+    event.currentTarget.setCustomValidity("");
+  });
+  $("#pdf-annotator-page-jump").addEventListener("submit", jumpToPdfPage);
+  $("#pdf-annotator-previous").addEventListener("click", () => {
+    if (state.pdfAnnotator) loadHouseDocumentPage(state.pdfAnnotator.page - 1);
+  });
+  $("#pdf-annotator-next").addEventListener("click", () => {
+    if (state.pdfAnnotator) loadHouseDocumentPage(state.pdfAnnotator.page + 1);
+  });
   $("#house-document-share-send").addEventListener("click", sendPreparedHouseShare);
   $("#house-document-share-email").addEventListener("click", emailPreparedHouseShare);
   $("#house-document-share-whatsapp").addEventListener("click", whatsappPreparedHouseShare);
@@ -6569,7 +6810,7 @@ function bindEvents() {
       const textTool = annotator.tool === "text";
       $("#pdf-annotator-text-panel").classList.toggle("hidden", !textTool);
       $("#pdf-annotator-help").textContent = textTool
-        ? "Type a short note above, then tap the page to place it."
+        ? "Choose your note size, type the text, then tap the page to place it."
         : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.";
       if (textTool) $("#pdf-annotator-text").focus();
     }),
@@ -6624,9 +6865,14 @@ function bindEvents() {
     const color = $("#pdf-annotator-color").value;
     if (annotator.tool === "text") {
       const text = $("#pdf-annotator-text").value.trim();
+      const textSize = Number($("#pdf-annotator-text-size").value);
       if (!text) {
         $("#pdf-annotator-text").focus();
         showToast("Type a note before tapping the PDF.", true);
+        return;
+      }
+      if (!Number.isFinite(textSize) || textSize < 12 || textSize > 32) {
+        showToast("Choose a text size between 12 and 32.", true);
         return;
       }
       annotator.annotations.push({
@@ -6635,7 +6881,7 @@ function bindEvents() {
         color,
         point,
         text,
-        font_size: 16 / annotator.fitWidth,
+        font_size: textSize / annotator.fitWidth,
       });
       drawPdfAnnotations();
       return;
@@ -6777,6 +7023,18 @@ function bindEvents() {
       input.select();
       return;
     }
+    const cancelVariation = event.target.closest(".seai-variation-cancel");
+    if (cancelVariation) {
+      const cell = cancelVariation.closest(".seai-variation-cell");
+      const input = cell.querySelector(".seai-variation-input");
+      input.value = input.defaultValue;
+      cell.querySelector(".seai-variation-editor").hidden = true;
+      cell.querySelector(".seai-variation-value").hidden = false;
+      const edit = cell.querySelector(".seai-variation-edit");
+      edit.hidden = false;
+      edit.focus();
+      return;
+    }
     const saveVariation = event.target.closest(".seai-variation-save");
     if (saveVariation) {
       saveSeaiMeasureVariation(saveVariation);
@@ -6791,19 +7049,31 @@ function bindEvents() {
       form.elements.notes.focus();
       return;
     }
-    const editSurveyNotes = event.target.closest("[data-edit-survey-notes]");
-    if (editSurveyNotes) {
-      const notes = $("#survey-room-summary-survey-notes").textContent;
-      const form = $("#surveyor-survey-notes-form");
-      form.elements.notes.value = notes === "No survey note" ? "" : notes;
-      form.elements.notes.scrollIntoView({ behavior: "smooth", block: "center" });
-      form.elements.notes.focus();
-      return;
-    }
     const add = event.target.closest(".survey-add-row");
     if (add) surveyRow(add.dataset.surveyList);
     const remove = event.target.closest(".survey-remove");
     if (remove) remove.closest(".survey-row").remove();
+  });
+  $("#surveyor-room").addEventListener("input", (event) => {
+    if (event.target.matches(".surveyor-house-notes-form textarea")) syncNoteDeleteButtons();
+  });
+  $("#surveyor-room").addEventListener("click", (event) => {
+    const del = event.target.closest("[data-delete-note]");
+    if (!del) return;
+    const form = del.closest("form");
+    if (!window.confirm("Delete this note?")) return;
+    form.elements.notes.value = "";
+    form.requestSubmit();
+  });
+  $("#surveyor-room").addEventListener("keydown", (event) => {
+    const input = event.target.closest?.(".seai-variation-input");
+    if (!input) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      input.closest(".seai-variation-editor").querySelector(".seai-variation-save").click();
+    } else if (event.key === "Escape") {
+      input.closest(".seai-variation-cell").querySelector(".seai-variation-cancel").click();
+    }
   });
   $("#house-snag-list").addEventListener("click", (event) => {
     const remove = event.target.closest(".snag-del");

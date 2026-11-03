@@ -250,7 +250,7 @@ class NavigationBrowserTests(unittest.TestCase):
                 INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
                 VALUES ('DASHBOARD-2', ?, '', 'Dashboard Surveyor', '2026-10-29T10:30:00')
                 """,
-                (json.dumps({"windows": [], "doors": [], "house_corners": []}),),
+                (json.dumps({"windows": [], "doors": [], "house_corners": [], "perimeter_m": 20}),),
             )
 
         self.page.locator("#account-button").click()
@@ -288,6 +288,19 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator("#surveyor-stat-assigned").inner_text(), "2")
         self.assertEqual(self.page.locator("#surveyor-stat-needed").inner_text(), "1")
         self.assertEqual(self.page.locator("#surveyor-stat-complete").inner_text(), "1")
+        self.assertTrue(
+            self.page.evaluate(
+                """() => surveyHouses.find(house => house.id === "DASHBOARD-2")
+                  ?.survey_completed"""
+            )
+        )
+        self.assertTrue(
+            self.page.evaluate(
+                """() => surveyIsComplete(
+                  surveyHouses.find(house => house.id === "DASHBOARD-2")
+                )"""
+            )
+        )
         self.assertTrue(self.page.locator(".nav-item[data-tab='overview']").is_hidden())
         self.page.evaluate(
             """() => {
@@ -303,7 +316,7 @@ class NavigationBrowserTests(unittest.TestCase):
         with server.connect_db() as db:
             db.execute(
                 "UPDATE house_surveys SET data = ? WHERE house_id = 'DASHBOARD-2'",
-                (json.dumps({"windows": [{"w": 1.2, "h": 1.1, "qty": 2}], "doors": [], "house_corners": []}),),
+                (json.dumps({"windows": [{"w": 1.2, "h": 1.1, "qty": 2}], "doors": [], "house_corners": [], "perimeter_m": 20}),),
             )
         self.page.evaluate("loadSurveyorHouses()")
         self.assertTrue(self.page.locator(".surveyor-brand").evaluate(
@@ -323,7 +336,7 @@ class NavigationBrowserTests(unittest.TestCase):
         with server.connect_db() as db:
             db.execute(
                 "UPDATE house_surveys SET data = ? WHERE house_id = 'DASHBOARD-2'",
-                (json.dumps({"windows": [{"w": 1.6, "h": 1.5, "qty": 1}], "doors": [], "house_corners": []}),),
+                (json.dumps({"windows": [{"w": 1.6, "h": 1.5, "qty": 1}], "doors": [], "house_corners": [], "perimeter_m": 20}),),
             )
         self.page.evaluate("loadSurveyorHouses()")
         self.page.wait_for_function("window.surveyorMouseAnimationStarts === 2")
@@ -342,7 +355,7 @@ class NavigationBrowserTests(unittest.TestCase):
         with server.connect_db() as db:
             db.execute(
                 "UPDATE house_surveys SET data = ? WHERE house_id = 'DASHBOARD-2'",
-                (json.dumps({"windows": [{"w": 1.4, "h": 1.3, "qty": 1}], "doors": [], "house_corners": []}),),
+                (json.dumps({"windows": [{"w": 1.4, "h": 1.3, "qty": 1}], "doors": [], "house_corners": [], "perimeter_m": 20}),),
             )
         self.page.reload()
         self.page.get_by_role("heading", name="My survey dashboard").wait_for()
@@ -355,8 +368,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(card.is_visible())
         insulation = card.locator(".house-insulation-summary")
         self.assertTrue(insulation.is_visible())
-        self.assertIn("Sample insulation details", insulation.inner_text())
-        self.assertIn("DEMO SAMPLE", insulation.inner_text())
+        self.assertIn("No verified SEAI insulation quantities are available", insulation.inner_text())
+        self.assertNotIn("DEMO SAMPLE", insulation.inner_text())
         self.assertEqual(insulation.locator(".house-insulation-row").count(), 4)
         self.assertEqual(
             " ".join(card.locator(".surveyor-house-action").inner_text().split()),
@@ -431,6 +444,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#surveyor-work-plan-form").is_visible())
         self.assertTrue(self.page.locator("#house-survey-form").is_visible())
         self.assertTrue(self.page.locator("#go-overview").is_hidden())
+        self.assertFalse(self.page.locator("#surveyor-survey-notes-form").is_visible())
         dark_styles = self.page.locator("#surveyor-room").evaluate(
             """root => Object.fromEntries([
               ['nav', '.survey-room-nav'],
@@ -452,7 +466,6 @@ class NavigationBrowserTests(unittest.TestCase):
         room_buttons = self.page.locator("#surveyor-room").evaluate(
             """root => Object.fromEntries([
               ['addRow', '.survey-add-row'],
-              ['saveNotes', '#surveyor-house-notes-form .survey-room-notes-actions > .button'],
               ['saveSurvey', '.survey-room-form .dialog-actions > .button-primary']
             ].map(([key, selector]) => {
               const button = root.querySelector(selector);
@@ -465,7 +478,6 @@ class NavigationBrowserTests(unittest.TestCase):
             }))"""
         )
         self.assertGreaterEqual(room_buttons["addRow"]["height"], 40)
-        self.assertGreaterEqual(room_buttons["saveNotes"]["height"], 44)
         self.assertGreaterEqual(room_buttons["saveSurvey"]["height"], 44)
         self.assertEqual(room_buttons["addRow"]["background"], "rgb(32, 55, 42)")
         self.assertEqual(room_buttons["saveSurvey"]["background"], "rgb(35, 133, 91)")
@@ -489,7 +501,6 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(room_layout["navWrap"], "nowrap")
         self.assertEqual(room_layout["navOverflow"], "auto")
         self.assertGreaterEqual(room_layout["navLinkHeight"], 40)
-        self.assertEqual(len(room_layout["summaryColumns"].split()), 2)
         self.assertEqual(room_layout["topbarPadding"], "8px")
         self.assertEqual(room_layout["topbarHeight"], "64px")
         self.assertLessEqual(
@@ -690,6 +701,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator("#assign-seai-house-record .survey-room-seai-section").filter(
             has_text="Application",
         ).locator("summary").click()
+        self.page.locator("#assign-seai-house-record .survey-room-seai-measures summary").click()
         self.assertIn(
             "SEAI Owner",
             self.page.locator("#assign-seai-house-record").inner_text(),
@@ -870,10 +882,13 @@ class NavigationBrowserTests(unittest.TestCase):
                 ).count()
             )
         self.assertIn(
-            "DEMO DATA",
-            pending_card.locator(".house-insulation-demo-note").inner_text(),
+            "No verified SEAI insulation quantities are available",
+            pending_card.locator(".house-insulation-summary").text_content(),
         )
-        self.assertIn("m²", pending_card.locator(".house-insulation-summary").inner_text())
+        self.assertNotIn(
+            "DEMO DATA",
+            pending_card.locator(".house-insulation-summary").inner_text(),
+        )
         pending_action_rows = pending_card.evaluate(
             """card => {
               const details = card.querySelector('.assign-seai-details').getBoundingClientRect();
@@ -1038,7 +1053,7 @@ class NavigationBrowserTests(unittest.TestCase):
             db.execute(
                 """
                 INSERT INTO house_surveys(house_id, data, updated_by, updated_at)
-                VALUES ('WORKLOAD-COMPLETE', '{}', 'House Surveyor', '2026-10-29T12:00:00')
+                VALUES ('WORKLOAD-COMPLETE', '{"perimeter_m": 20}', 'House Surveyor', '2026-10-29T12:00:00')
                 """
             )
 
@@ -1097,8 +1112,26 @@ class NavigationBrowserTests(unittest.TestCase):
                     "MAP-ASSIGN-PENDING",
                     json.dumps(
                         {
+                            "_demo_data": True,
                             "Application": [
                                 {"Application ID": "MAP-ASSIGN-PENDING"}
+                            ],
+                            "Measures": [
+                                {
+                                    "Name": "Radiator",
+                                    "Survey Quantity": "6",
+                                    "Survey Qty including Variation": "7",
+                                    "Inspection Quantity": "6",
+                                    "Invoice Quantity": "6",
+                                }
+                            ],
+                            "Variance": [
+                                {
+                                    "Variance ID": "DEMO-VAR-001-01",
+                                    "Measure": "Radiator",
+                                    "Value": "1",
+                                    "Comment": "Synthetic demo note for UI test.",
+                                }
                             ]
                         }
                     ),
@@ -1183,6 +1216,43 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_function(
             """() => document.querySelector('#assign-seai-house-record')
               ?.textContent.includes('MAP-ASSIGN-PENDING')"""
+        )
+        self.assertIn(
+            "DEMO DATA - synthetic sample measures",
+            self.page.locator("#assign-seai-house-record").inner_text(),
+        )
+        self.assertIn(
+            "Synthetic sample application information",
+            self.page.locator("#assign-seai-house-detail .page-subtitle").inner_text(),
+        )
+        sections = self.page.locator(
+            "#assign-seai-house-record .survey-room-seai-section"
+        )
+        self.assertEqual(sections.count(), 3)
+        self.assertIsNone(sections.nth(0).get_attribute("open"))
+        measures_section = self.page.locator(
+            "#assign-seai-house-record .survey-room-seai-measures"
+        )
+        variance_section = self.page.locator(
+            "#assign-seai-house-record .survey-room-seai-variance"
+        )
+        self.assertIsNone(measures_section.get_attribute("open"))
+        self.assertIsNone(variance_section.get_attribute("open"))
+        measures_section.locator("summary").click()
+        self.assertEqual(measures_section.get_attribute("open"), "")
+        self.assertIn(
+            "Invoice Quantity",
+            self.page.locator("#assign-seai-house-record").inner_text(),
+        )
+        variance_section.locator("summary").click()
+        self.assertEqual(variance_section.get_attribute("open"), "")
+        self.assertIn(
+            "Variance ID",
+            self.page.locator("#assign-seai-house-record").inner_text(),
+        )
+        self.assertIn(
+            "DEMO-VAR-001-01",
+            self.page.locator("#assign-seai-house-record").inner_text(),
         )
         self.page.locator("#assign-seai-house-back").click()
         self.page.locator("#house-map-view").wait_for(state="visible")
@@ -1519,7 +1589,9 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         surveyor_option.check()
         self.assertTrue(
-            self.page.get_by_text("Surveyor One", exact=True).is_visible()
+            self.page.locator(
+                "#house-assignment-surveyor"
+            ).get_by_text("Surveyor One", exact=True).is_visible()
         )
         self.assertTrue(self.page.get_by_text("@test-surveyor-one", exact=True).is_visible())
         self.assertTrue(surveyor_option.is_checked())
@@ -4012,7 +4084,7 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.page.set_viewport_size({"width": 1280, "height": 800})
         self.assertNotEqual(
-            action_buttons.filter(has_text="Activate house").evaluate(
+            ready_card.locator(".seai-activate").evaluate(
                 "(button) => getComputedStyle(button).gridColumn"
             ),
             "1 / -1",
@@ -4046,18 +4118,9 @@ class NavigationBrowserTests(unittest.TestCase):
             status.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(255, 244, 223)",
         )
-        summary_status = self.page.locator(
-            "#survey-room-summary .survey-room-summary-survey strong"
-        )
-        self.assertEqual(summary_status.inner_text(), "Not surveyed")
-        self.assertIn("survey-not-surveyed", summary_status.get_attribute("class"))
         nav = self.page.locator(".survey-room-nav")
         self.assertEqual(nav.locator("a").count(), 6)
         nav.locator('a[href="#survey-room-work-plan"]').click()
-        self.assertEqual(
-            self.page.evaluate("window.location.hash"),
-            "#survey-room-work-plan",
-        )
         self.assertEqual(
             self.page.locator("#house-survey-title").inner_text(),
             "SURVEY-ROOM-TEST · Surveyor room",
@@ -4125,75 +4188,28 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(229, 244, 238)",
         )
         self.assertEqual(
-            self.page.locator(
-                "#survey-room-summary .survey-room-summary-survey strong"
-            ).inner_text(),
-            "Survey recorded",
+            self.page.locator("#survey-room-summary > div").count(),
+            1,
         )
-        notes = self.page.locator("#surveyor-house-notes-form textarea")
-        self.assertTrue(notes.is_visible())
-        house_note_action = self.page.locator("[data-edit-house-notes]")
-        self.assertEqual(house_note_action.inner_text(), "Add note")
-        self.assertIn("note-action-add", house_note_action.get_attribute("class"))
-        survey_note_action = self.page.locator("[data-edit-survey-notes]")
-        self.assertEqual(survey_note_action.inner_text(), "Add note")
-        self.assertIn("note-action-add", survey_note_action.get_attribute("class"))
-        add_note_color = house_note_action.evaluate(
-            "element => getComputedStyle(element).backgroundColor"
-        )
-        self.assertEqual(add_note_color, "rgb(49, 94, 170)")
         self.assertEqual(
-            survey_note_action.evaluate(
-                "element => getComputedStyle(element).backgroundColor"
-            ),
-            add_note_color,
+            self.page.locator(".survey-room-summary-card h2").inner_text(),
+            "Assigned house information (reference copy)",
         )
-        notes.fill("Surveyor should call before access.")
-        self.page.locator("#surveyor-house-notes-form button[type='submit']").click()
-        self.page.get_by_text("House notes for SURVEY-ROOM-TEST saved.").wait_for()
-        self.assertEqual(house_note_action.inner_text(), "Edit note")
-        self.assertIn("note-action-edit", house_note_action.get_attribute("class"))
-        self.page.wait_for_function(
-            "() => getComputedStyle(document.querySelector('[data-edit-house-notes]')).backgroundColor === 'rgb(166, 91, 22)'"
+        self.assertFalse(self.page.locator("#surveyor-house-notes-form").is_visible())
+        self.assertEqual(self.page.locator("[data-edit-house-notes]").count(), 1)
+        surveyor_house_notes = self.page.locator(
+            "#survey-room-summary-house-notes"
         )
-        edit_note_color = house_note_action.evaluate(
-            "element => getComputedStyle(element).backgroundColor"
-        )
-        self.assertNotEqual(edit_note_color, add_note_color)
-        self.page.wait_for_function(
-            "() => document.querySelector('#surveyor-house-notes-form textarea').value === ''"
-        )
-        self.assertEqual(notes.input_value(), "")
+        self.assertEqual(surveyor_house_notes.inner_text(), "No house notes")
+        survey_notes_card = self.page.locator("#survey-room-notes")
+        self.assertFalse(survey_notes_card.is_visible())
+        self.assertFalse(self.page.locator(".survey-room-nav a[href='#survey-room-notes']").is_visible())
         with server.connect_db() as db:
             saved_notes = db.execute(
                 "SELECT notes FROM provided_houses WHERE id = 'SURVEY-ROOM-TEST'"
             ).fetchone()["notes"]
-        self.assertEqual(saved_notes, "Surveyor should call before access.")
-        self.page.locator("[data-edit-house-notes]").click()
-        self.assertEqual(notes.input_value(), "Surveyor should call before access.")
-        notes.fill("Updated access note.")
-        self.page.locator("#surveyor-house-notes-form button[type='submit']").click()
-        self.page.get_by_text("House notes for SURVEY-ROOM-TEST saved.").wait_for()
-        self.page.wait_for_function(
-            "() => document.querySelector('#surveyor-house-notes-form textarea').value === ''"
-        )
-        self.assertEqual(notes.input_value(), "")
-        with server.connect_db() as db:
-            saved_notes = db.execute(
-                "SELECT notes FROM provided_houses WHERE id = 'SURVEY-ROOM-TEST'"
-            ).fetchone()["notes"]
-        self.assertEqual(saved_notes, "Updated access note.")
+        self.assertEqual(saved_notes, "")
         self.page.locator("#back-from-surveyor-room").click()
-        self.page.wait_for_function(
-            "() => document.querySelector('[data-edit-house-notes]')?.classList.contains('note-action-edit')"
-        )
-        self.assertEqual(house_note_action.inner_text(), "Edit note")
-        self.assertEqual(
-            house_note_action.evaluate(
-                "element => getComputedStyle(element).backgroundColor"
-            ),
-            "rgb(166, 91, 22)",
-        )
         self.page.locator(
             '.house-survey-open[data-house-id="SURVEY-ROOM-TEST"]'
         ).click()
@@ -4229,11 +4245,56 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(
             self.page.locator("#pdf-annotator-page-count").inner_text(),
-            "Page 1 of 2 · Scroll to change pages",
+            "Page 1 of 2",
         )
+        self.assertEqual(
+            self.page.locator(".pdf-annotator-progress").get_attribute("aria-valuemax"),
+            "2",
+        )
+        self.assertEqual(
+            self.page.locator(".pdf-annotator-progress").get_attribute("aria-valuenow"),
+            "1",
+        )
+        self.assertTrue(self.page.locator("#pdf-annotator-previous").is_disabled())
+        self.assertFalse(self.page.locator("#pdf-annotator-next").is_disabled())
         self.assertEqual(
             self.page.locator("#pdf-annotator-zoom-level").inner_text(),
             "100%",
+        )
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        page_navigation_bounds = self.page.locator(
+            "#pdf-annotator-page-navigation"
+        ).bounding_box()
+        self.assertGreater(page_navigation_bounds["width"], 0)
+        self.assertLessEqual(
+            page_navigation_bounds["x"] + page_navigation_bounds["width"],
+            390,
+        )
+        self.assertTrue(self.page.locator("#pdf-annotator-page-jump").is_visible())
+        self.page.set_viewport_size({"width": 768, "height": 1024})
+        self.page.locator("#pdf-annotator-page-number").fill("2")
+        self.page.locator("#pdf-annotator-page-jump button[type='submit']").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
+        )
+        self.page.locator("#pdf-annotator-page-number").fill("1")
+        self.page.locator("#pdf-annotator-page-jump button[type='submit']").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
+        )
+        self.page.locator("#pdf-annotator-next").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
+        )
+        self.assertEqual(
+            self.page.locator(".pdf-annotator-progress").get_attribute("aria-valuenow"),
+            "2",
+        )
+        self.assertFalse(self.page.locator("#pdf-annotator-previous").is_disabled())
+        self.assertTrue(self.page.locator("#pdf-annotator-next").is_disabled())
+        self.page.locator("#pdf-annotator-previous").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
         )
         self.page.locator("#pdf-annotator-zoom-in").click()
         self.assertEqual(
@@ -4250,11 +4311,11 @@ class NavigationBrowserTests(unittest.TestCase):
         viewport.hover()
         self.page.mouse.wheel(0, 40)
         self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2 · Scroll to change pages'"
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
         )
         self.page.mouse.wheel(0, -40)
         self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2 · Scroll to change pages'"
+            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
         )
         annotation_canvas = self.page.locator("#pdf-annotator-canvas")
         canvas_bounds = annotation_canvas.bounding_box()
@@ -4265,7 +4326,15 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertFalse(self.page.locator("#pdf-annotator-save").is_disabled())
         self.page.locator("[data-pdf-tool='text']").click()
         self.page.locator("#pdf-annotator-text").fill("Survey check")
+        self.page.locator("#pdf-annotator-text-size").select_option("24")
         annotation_canvas.click(position={"x": 160, "y": 200})
+        text_size = self.page.evaluate(
+            """() => {
+              const annotation = state.pdfAnnotator.annotations.at(-1);
+              return annotation.font_size * state.pdfAnnotator.fitWidth;
+            }"""
+        )
+        self.assertAlmostEqual(text_size, 24)
         self.page.locator("#pdf-annotator-undo").click()
         self.assertFalse(self.page.locator("#pdf-annotator-save").is_disabled())
         annotation_canvas.click(position={"x": 160, "y": 200})
@@ -4304,20 +4373,11 @@ class NavigationBrowserTests(unittest.TestCase):
         survey_note.fill("Survey details for sharing.")
         self.page.locator("#surveyor-survey-notes-form button[type='submit']").click()
         self.page.get_by_text("Survey note for SURVEY-ROOM-TEST saved.").wait_for()
-        self.assertEqual(survey_note_action.inner_text(), "Edit note")
-        self.assertIn("note-action-edit", survey_note_action.get_attribute("class"))
-        self.page.wait_for_function(
-            "() => document.querySelector('#surveyor-survey-notes-form textarea').value === ''"
-        )
-        self.assertEqual(survey_note.input_value(), "")
-        self.page.locator("[data-edit-survey-notes]").click()
         self.assertEqual(survey_note.input_value(), "Survey details for sharing.")
         survey_note.fill("Updated survey note for sharing.")
         self.page.locator("#surveyor-survey-notes-form button[type='submit']").click()
         self.page.get_by_text("Survey note for SURVEY-ROOM-TEST saved.").wait_for()
-        self.page.wait_for_function(
-            "() => document.querySelector('#surveyor-survey-notes-form textarea').value === ''"
-        )
+        self.assertEqual(survey_note.input_value(), "Updated survey note for sharing.")
         with server.connect_db() as db:
             saved_survey = db.execute(
                 "SELECT data FROM house_surveys WHERE house_id = 'SURVEY-ROOM-TEST'"

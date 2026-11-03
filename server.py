@@ -1924,6 +1924,51 @@ def _record_house_status(db, house_id, status, changed_by):
     }
 
 
+def _find_seai_application_id(value, depth=0):
+    if not isinstance(value, (dict, list)) or depth > 5:
+        return ""
+    items = value.items() if isinstance(value, dict) else enumerate(value)
+    for key, item in items:
+        if (isinstance(key, str) and re.fullmatch(r"application[\s_]*id", key, re.I)
+                and item and not isinstance(item, (dict, list))):
+            return str(item).strip()
+    for _, item in (value.items() if isinstance(value, dict) else enumerate(value)):
+        found = _find_seai_application_id(item, depth + 1)
+        if found:
+            return found
+    return ""
+
+
+def _seai_card_summary(details):
+    if not isinstance(details, dict):
+        return None
+    application = details.get("Application Details")
+    prop = details.get("Property Details")
+    application = application if isinstance(application, dict) else {}
+    prop = prop if isinstance(prop, dict) else {}
+    application_id = application.get("Application ID") or _find_seai_application_id(details)
+    measures = []
+    for measure in details.get("Measures") or []:
+        if isinstance(measure, dict):
+            measures.append(
+                {
+                    key: measure.get(key)
+                    for key in ("Name", "Survey Quantity", "Survey Qty including Variation")
+                }
+            )
+    return {
+        "Application Details": {
+            "Application ID": application_id or "",
+            "Applicant Name": application.get("Applicant Name") or "",
+        },
+        "Property Details": {
+            "Eircode": prop.get("Eircode") or "",
+            "Address Line 1": prop.get("Address Line 1") or "",
+        },
+        "Measures": measures,
+    }
+
+
 def _house_audit_by_id(db):
     audit = {}
     for row in db.execute(
@@ -2539,6 +2584,14 @@ def _validate_survey_payload(payload):
     return survey
 
 
+def _survey_has_valid_perimeter(survey):
+    try:
+        perimeter = float(survey.get("perimeter_m"))
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return False
+    return math.isfinite(perimeter) and 0 < perimeter <= 10000
+
+
 def _dashboard(db):
     snags = _snags_by_house(db)
     house_audit = _house_audit_by_id(db)
@@ -2761,7 +2814,7 @@ def _surveyor_workload_summary(db):
     rows = db.execute(
         """
         SELECT u.id AS user_id, u.display_name, p.id AS house_id,
-               hs.house_id AS completed_house_id
+               hs.data AS survey_data
         FROM app_users u
         LEFT JOIN house_role_assignments assignment
           ON assignment.user_id = u.id AND assignment.role = 'surveyor'
@@ -2789,10 +2842,11 @@ def _surveyor_workload_summary(db):
         )
         if row["house_id"] is None:
             continue
-        if row["completed_house_id"] is None:
-            surveyor["pending_house_ids"].append(row["house_id"])
-        else:
+        survey_data = json.loads(row["survey_data"]) if row["survey_data"] else {}
+        if _survey_has_valid_perimeter(survey_data):
             surveyor["completed_count"] += 1
+        else:
+            surveyor["pending_house_ids"].append(row["house_id"])
     result = []
     for surveyor in surveyors.values():
         surveyor["pending_count"] = len(surveyor["pending_house_ids"])
@@ -3541,6 +3595,31 @@ class LegacyRouteHandlers:
                     ),
                 ).fetchall()
                 seai_details = {}
+                seai_summaries = {}
+                can_see_seai_summary = (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                    or _has_access_profile(user, "assign")
+                    or _has_access_profile(user, "supervisor")
+                )
+                if rows and can_see_seai_summary:
+                    has_seai_table = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'seai_applications'"
+                    ).fetchone()
+                    if has_seai_table:
+                        id_placeholders = ",".join("?" for _ in rows)
+                        for detail in db.execute(
+                            "SELECT application_id, detail_data_json FROM seai_applications "
+                            f"WHERE application_id IN ({id_placeholders})",
+                            [row["id"] for row in rows],
+                        ):
+                            try:
+                                summary = _seai_card_summary(json.loads(detail["detail_data_json"]))
+                            except (TypeError, ValueError):
+                                summary = None
+                            if summary:
+                                seai_summaries[detail["application_id"]] = summary
                 if (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")) and rows:
                     has_seai_applications = db.execute(
                         "SELECT 1 FROM sqlite_master WHERE type = 'table' "
@@ -3564,22 +3643,18 @@ class LegacyRouteHandlers:
             houses = []
             for row in rows:
                 house = dict(row)
+                if can_see_seai_summary:
+                    house["seai_summary"] = seai_summaries.get(row["id"])
                 if (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     house["seai_details"] = seai_details.get(row["id"])
                 raw_survey = house.pop("survey_data", None)
+                survey_data = json.loads(raw_survey) if raw_survey else {}
+                house["survey_completed"] = _survey_has_valid_perimeter(survey_data)
                 if _has_access_profile(user, "assign"):
                     house["survey"] = bool(raw_survey)
-                    survey_data = json.loads(raw_survey) if raw_survey else {}
-                    try:
-                        survey_perimeter = float(survey_data.get("perimeter_m"))
-                    except (AttributeError, TypeError, ValueError, OverflowError):
-                        survey_perimeter = 0
-                    house["has_surveyed_perimeter"] = (
-                        math.isfinite(survey_perimeter)
-                        and 0 < survey_perimeter <= 10000
-                    )
+                    house["has_surveyed_perimeter"] = house["survey_completed"]
                 else:
-                    house["survey"] = json.loads(raw_survey) if raw_survey else None
+                    house["survey"] = survey_data or None
                 house["snags"] = snags.get(row["id"], [])
                 house.update(
                     house_audit.get(
@@ -3729,7 +3804,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor") or _has_access_profile(user, "assign")):
                 self._send_json(
                     403,
                     {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
@@ -3794,7 +3869,7 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
+            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor") or _has_access_profile(user, "assign")):
                 self._send_json(
                     403,
                     {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
@@ -5051,13 +5126,17 @@ class LegacyRouteHandlers:
                         "house_id": house_id,
                         "saved": True,
                         "survey": survey,
+                        "survey_completed": _survey_has_valid_perimeter(survey),
                         "updated_at": updated_at,
                     },
                 )
                 return
             if path == "/api/house-notes":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
-                    raise ApiError(403, "Surveyor access is required to edit house notes.")
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to edit house notes.",
+                    )
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House notes must be a JSON object.")
@@ -5142,6 +5221,7 @@ class LegacyRouteHandlers:
                         "house_id": house_id,
                         "notes": note,
                         "survey": survey,
+                        "survey_completed": _survey_has_valid_perimeter(survey),
                         "updated_by": user["display_name"],
                         "updated_at": now,
                         "saved": True,
@@ -5277,6 +5357,7 @@ class LegacyRouteHandlers:
                 "/api/movements/batch",
                 "/api/house-checklist",
                 "/api/house-work-plan",
+                "/api/seai-measure-variation",
             }:
                 if not self._admin_required(user):
                     return
