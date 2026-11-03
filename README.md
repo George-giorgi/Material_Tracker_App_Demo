@@ -124,18 +124,21 @@ House detail and movement history remain available to administrators only.
 The Teams tab also lists employees assigned to houses at activation and shows
 their open and closed house counts; selecting a count opens those houses.
 
-## Oldest-house photo preview
+## Synthetic house preview
 
 After signing in as an administrator or surveyor, open
 `http://127.0.0.1:8001/oldest-house-test` to view a separate, read-only sample
-of the earliest application in the exported SEAI list. “Oldest” is based on
-application date, not the building's construction year. The sample photos are
-served locally, along with that application's six attached PDFs. The preview
-includes the captured application, property, contractor project manager, QA,
-measures, test result, variance, and notes sections. It does not import or
-change tracker house data. It contains sensitive applicant, property, contact,
-and notes information. Employee accounts cannot access this page, its photos,
-or its documents.
+application with synthetic property details, vector illustrations, and six
+fabricated PDFs. The preview does not import or change tracker house data.
+Employee accounts cannot access this page or its documents. Recreate the sample
+assets and the PDF bundle used by the demo seeder with:
+
+```powershell
+py tools\create_synthetic_demo_assets.py
+```
+
+The generator writes only fictional data. Keep real applicant records, photos,
+PDFs, contact sheets, and organization charts out of GitHub.
 
 ## County weather
 

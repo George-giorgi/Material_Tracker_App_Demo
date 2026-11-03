@@ -995,7 +995,7 @@ class TrackerTests(unittest.TestCase):
             status, _, _ = self.http_request(httpd, "GET", "/oldest-house-test")
             self.assertEqual(status, 401)
             status, _, _ = self.http_request(
-                httpd, "GET", "/oldest-house-test/photos/front.jpg"
+                httpd, "GET", "/oldest-house-test/photos/front.svg"
             )
             self.assertEqual(status, 401)
             status, _, _ = self.http_request(
@@ -1024,7 +1024,8 @@ class TrackerTests(unittest.TestCase):
             response = connection.getresponse()
             page = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("Oldest application in the list", page)
+            self.assertIn("Example application", page)
+            self.assertIn("owner@example.invalid", page)
             connection.close()
 
             connection = http.client.HTTPConnection(
@@ -1032,14 +1033,14 @@ class TrackerTests(unittest.TestCase):
             )
             connection.request(
                 "GET",
-                "/oldest-house-test/photos/front.jpg",
+                "/oldest-house-test/photos/front.svg",
                 headers={"Cookie": admin_cookie},
             )
             response = connection.getresponse()
             image = response.read()
             self.assertEqual(response.status, 200)
-            self.assertEqual(response.getheader("Content-Type"), "image/jpeg")
-            self.assertTrue(image.startswith(b"\xff\xd8"))
+            self.assertEqual(response.getheader("Content-Type"), "image/svg+xml")
+            self.assertIn(b"SYNTHETIC DEMO ILLUSTRATION", image)
             connection.close()
 
             for name in (
@@ -1107,7 +1108,7 @@ class TrackerTests(unittest.TestCase):
             status, error, _ = self.http_request(
                 httpd,
                 "GET",
-                "/oldest-house-test/photos/front.jpg",
+                "/oldest-house-test/photos/front.svg",
                 cookie=employee_cookie,
             )
             self.assertEqual(status, 403)

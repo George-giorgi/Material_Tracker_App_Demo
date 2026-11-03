@@ -3609,15 +3609,15 @@ class LegacyRouteHandlers:
                 return
             photo_name = path.rsplit("/", 1)[-1]
             photos = {
-                "front.jpg": STATIC_DIR / "oldest-house-test" / "front.jpg",
-                "rear.jpg": STATIC_DIR / "oldest-house-test" / "rear.jpg",
-                "gable.jpg": STATIC_DIR / "oldest-house-test" / "gable.jpg",
+                "front.svg": STATIC_DIR / "oldest-house-test" / "synthetic" / "photos" / "front.svg",
+                "rear.svg": STATIC_DIR / "oldest-house-test" / "synthetic" / "photos" / "rear.svg",
+                "gable.svg": STATIC_DIR / "oldest-house-test" / "synthetic" / "photos" / "gable.svg",
             }
             photo = photos.get(photo_name)
             if photo is None:
                 self._send_json(404, {"error": "Photo not found."})
                 return
-            self._send_file(photo, "image/jpeg")
+            self._send_file(photo, "image/svg+xml")
         elif path.startswith("/oldest-house-test/pdfs/"):
             user = self._login_required()
             if user is None:
@@ -3631,28 +3631,28 @@ class LegacyRouteHandlers:
             pdf_name = path.rsplit("/", 1)[-1]
             pdfs = {
                 "application-letter.pdf": (
-                    "Call Off Letter - WH570150.pdf",
-                    STATIC_DIR / "oldest-house-test" / "pdfs" / "application-letter.pdf",
+                    "Synthetic Demo Application.pdf",
+                    STATIC_DIR / "oldest-house-test" / "synthetic" / "pdfs" / "application-letter.pdf",
                 ),
                 "survey-report.pdf": (
-                    "Surveyor - WH570150 Survey Report_11zon.pdf",
-                    STATIC_DIR / "oldest-house-test" / "pdfs" / "survey-report.pdf",
+                    "Synthetic Survey Report.pdf",
+                    STATIC_DIR / "oldest-house-test" / "synthetic" / "pdfs" / "survey-report.pdf",
                 ),
                 "survey-sketch.pdf": (
-                    "Surveyor - WH570150 Survey Sketch.pdf",
-                    STATIC_DIR / "oldest-house-test" / "pdfs" / "survey-sketch.pdf",
+                    "Synthetic Survey Sketch.pdf",
+                    STATIC_DIR / "oldest-house-test" / "synthetic" / "pdfs" / "survey-sketch.pdf",
                 ),
                 "floor-plan-1.pdf": (
-                    "Installer - Floor Plan_20260915_151443_308.pdf",
-                    STATIC_DIR / "oldest-house-test" / "pdfs" / "floor-plan-1.pdf",
+                    "Synthetic Floor Plan - Ground.pdf",
+                    STATIC_DIR / "oldest-house-test" / "synthetic" / "pdfs" / "floor-plan-1.pdf",
                 ),
                 "floor-plan-2.pdf": (
-                    "Installer - Floor Plan_20260915_151556_411.pdf",
-                    STATIC_DIR / "oldest-house-test" / "pdfs" / "floor-plan-2.pdf",
+                    "Synthetic Floor Plan - First.pdf",
+                    STATIC_DIR / "oldest-house-test" / "synthetic" / "pdfs" / "floor-plan-2.pdf",
                 ),
                 "floor-plan-3.pdf": (
-                    "Installer - Floor Plan_20260915_151616_123.pdf",
-                    STATIC_DIR / "oldest-house-test" / "pdfs" / "floor-plan-3.pdf",
+                    "Synthetic Floor Plan - Alternate.pdf",
+                    STATIC_DIR / "oldest-house-test" / "synthetic" / "pdfs" / "floor-plan-3.pdf",
                 ),
             }
             pdf = pdfs.get(pdf_name)

@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 import server
 
 
-DEFAULT_PDF_ZIP = Path(__file__).with_name("WH570150.zip")
+DEFAULT_PDF_ZIP = Path(__file__).with_name("SEAI_Synthetic_Demo_PDFs.zip")
 PDF_CATEGORIES = ("Application", "Survey", "Variation")
 HOUSE_ID_PATTERN = re.compile(r"DEMO-FIC-\d{3}\Z")
 MEASURE_FIELDS = (
