@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261103-vent-empty-state-dark">
+    <link rel="stylesheet" href="/app.css?v=20261103-hide-vent-workspace-nav">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -115,6 +115,12 @@
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
           <button class="button button-primary" id="new-movement-top" type="button" aria-label="Record movement"><span aria-hidden="true">＋</span> Record movement</button>
         </header>
+        <nav class="main-nav workspace-nav" aria-label="Primary navigation">
+          <button class="nav-item active" type="button" data-tab="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span><span class="nav-label">Overview</span></button>
+          <button class="nav-item" type="button" data-tab="inventory"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-label">Inventory</span></button>
+          <button class="nav-item" type="button" data-tab="houses"><span class="nav-icon" aria-hidden="true">⌂</span><span class="nav-label">Houses</span></button>
+          <button class="nav-item" type="button" data-tab="movements"><span class="nav-icon" aria-hidden="true">↔</span><span class="nav-label">Movements</span></button>
+        </nav>
 
         <section class="page active" id="page-overview" data-page="overview">
           <div class="page-heading">
@@ -130,11 +136,11 @@
               </div>
             </div>
             <div class="surveyor-dashboard-stats" aria-live="polite" aria-atomic="true">
-              <div><strong id="stat-provided">0</strong><span id="stat-provided-label">From SEAI</span></div>
-              <div><strong id="stat-ready">0</strong><span id="stat-ready-label">Ready</span></div>
-              <div><strong id="stat-houses">0</strong><span id="stat-houses-label">Active</span></div>
-              <div><strong id="stat-closed">0</strong><span id="stat-closed-label">Closed</span></div>
-              <div><strong id="stat-not-started">0</strong><span id="stat-not-started-label">Not started</span></div>
+              <button type="button" class="dashboard-stat-link" data-house-view="" title="Open the house map"><strong id="stat-provided">0</strong><span id="stat-provided-label">From SEAI</span></button>
+              <button type="button" class="dashboard-stat-link" data-house-view="ready"><strong id="stat-ready">0</strong><span id="stat-ready-label">Ready</span></button>
+              <button type="button" class="dashboard-stat-link" data-house-view="active"><strong id="stat-houses">0</strong><span id="stat-houses-label">Active</span></button>
+              <button type="button" class="dashboard-stat-link" data-house-view="closed"><strong id="stat-closed">0</strong><span id="stat-closed-label">Closed</span></button>
+              <button type="button" class="dashboard-stat-link" data-house-view="not_started"><strong id="stat-not-started">0</strong><span id="stat-not-started-label">Not started</span></button>
             </div>
           </section>
           <section id="ventilation-workload" class="ventilation-workload hidden" aria-labelledby="ventilation-workload-title">
@@ -237,6 +243,20 @@
               </summary>
               <p class="assign-surveyor-workload-hint">Busy surveyors have at least one assigned survey to complete.</p>
               <ul id="assign-surveyor-workload-list" class="assign-surveyor-workload-list"></ul>
+            </details>
+            <details id="assign-weather-panel" class="weather-panel card hidden">
+              <summary class="assign-weather-summary">
+                <div class="assign-weather-title">
+                  <span class="eyebrow">COUNTY FORECAST</span>
+                  <h2>Mayo &amp; Sligo</h2>
+                </div>
+                <p class="weather-status" id="assign-weather-status" role="status" aria-live="polite">Forecast loads when you sign in.</p>
+              </summary>
+              <div class="assign-weather-content">
+                <button class="icon-button weather-refresh" id="assign-weather-refresh" type="button" aria-label="Refresh weather forecast" title="Refresh forecast">↻</button>
+                <div class="weather-areas" id="assign-weather-areas"></div>
+                <p class="weather-attribution">County-level daily forecast from <a href="https://www.met.ie/" target="_blank" rel="noreferrer">Met Éireann</a>.</p>
+              </div>
             </details>
             <div class="houses-teams-tabs" id="houses-teams-tabs" role="tablist" aria-label="Houses and teams views">
               <button class="houses-teams-tab active" id="houses-tab" type="button" role="tab" aria-selected="true" aria-controls="houses-section" tabindex="0">Houses</button>
@@ -877,6 +897,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261103-vent-empty-state-dark" defer></script>
+    <script src="/app.js?v=20261103-hide-vent-workspace-nav" defer></script>
   </body>
 </html>

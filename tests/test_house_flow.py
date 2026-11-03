@@ -4427,6 +4427,25 @@ class HouseRoleAssignmentTests(HttpBase):
             },
         )
         with server.connect_db() as db:
+            supervisor_department_id = db.execute(
+                """
+                SELECT department_id FROM user_departments
+                WHERE user_id = ? ORDER BY is_primary DESC LIMIT 1
+                """,
+                (self.supervisor_id,),
+            ).fetchone()["department_id"]
+            with db:
+                for username in ("teamlead-one", "teamlead-two"):
+                    report_id = db.execute(
+                        "SELECT id FROM app_users WHERE username = ?",
+                        (username,),
+                    ).fetchone()["id"]
+                    server._set_user_organization(
+                        db,
+                        report_id,
+                        [supervisor_department_id],
+                        self.supervisor_id,
+                    )
             self.other_supervisor_id = db.execute(
                 "SELECT id FROM app_users WHERE username = 'other-supervisor'"
             ).fetchone()["id"]
@@ -4857,11 +4876,17 @@ class UiWiringTests(unittest.TestCase):
         )
         self.assertIn('`/api/seai-documents?house_id=${encodeURIComponent(houseId)}`', APP_JS)
         self.assertIn('data-document-id="${Number(document.id)}"', APP_JS)
-        self.assertIn('"seai-documents" : "house-documents"', APP_JS)
+        self.assertRegex(
+            APP_JS,
+            r'const documentPath = annotator\.documentType === "seai"\s+\? "seai-documents"\s+: annotator\.documentType === "vent"\s+\? "house-vent-documents"\s+: "house-documents";',
+        )
         self.assertIn('"The original SEAI PDF stays unchanged.', APP_JS)
         self.assertIn("The original is unchanged.", APP_JS)
         self.assertIn(".seai-document-category", css)
-        self.assertIn("document.is_annotated ? \"Annotated copy\" : \"Original\"", APP_JS)
+        self.assertIn(
+            'document.is_annotated ? "ANNOTATED COPY" : "ORIGINAL PDF"',
+            APP_JS,
+        )
         self.assertIn(".seai-document-status.original", css)
         self.assertIn(".seai-document-status.annotated", css)
         self.assertIn('data-seai-share-selected', APP_JS)
@@ -4871,7 +4896,10 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('data-seai-share-clear', APP_JS)
         self.assertIn("/api/seai-documents/share", APP_JS)
         self.assertIn("View-only PDFs.", APP_JS)
-        self.assertIn("Uploading, annotations, and sharing are disabled", APP_JS)
+        self.assertIn(
+            "Editing, annotations, and sharing are disabled while the house is Not started.",
+            APP_JS,
+        )
         self.assertIn(
             '`<a class="button button-secondary" href="/api/seai-documents/${Number(document.id)}/file"',
             APP_JS,
@@ -5274,9 +5302,9 @@ console.log(JSON.stringify([blankValid,blankMessage,assignedValid,employee.value
         self.assertIn('className="survey-note"', loader)
 
     def test_plumber_role_is_available_with_employee_style_checklist_access(self):
-        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('<option value="plumber">Plumber</option>', html)
-        self.assertIn('"admin", "employee", "plumber"', APP_JS)
+        self.assertIn("state.roles = result.roles", APP_JS)
+        self.assertIn('role.role_key)}">${escapeHtml(role.display_name)', APP_JS)
+        self.assertIn('hasAccessProfile(state.user, "plumber")', APP_JS)
         self.assertIn('plumber: "Plumber"', APP_JS)
 
     def test_auto_calculator_uses_seai_ewi_area_and_survey_perimeter(self):
@@ -5351,9 +5379,10 @@ console.log(JSON.stringify([
         self.assertIn("isMapTestHouse ? \"\" : h.owner_name", ready_renderer)
         self.assertIn("isMapTestHouse ? \"\" : h.address", ready_renderer)
         self.assertIn(
-            'class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}"',
+            'class="card house-card ${isAssign ? "assign-house-card " : ""}',
             APP_JS,
         )
+        self.assertIn('${isReadyArrival ? " assign-ready-arrival" : ""}', APP_JS)
         self.assertIn(".house-grid.house-grid-ready { grid-auto-rows: auto;", css)
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready { height: auto;", css)
         self.assertIn(".house-grid.house-grid-ready .house-plan-ready .house-body { flex: 1 1 auto;", css)
@@ -5375,9 +5404,10 @@ console.log(JSON.stringify([
     def test_not_started_queue_cards_fit_their_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn(
-            'class="card house-card ${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}"',
+            'class="card house-card ${isAssign ? "assign-house-card " : ""}',
             APP_JS,
         )
+        self.assertIn('${isReadyArrival ? " assign-ready-arrival" : ""}', APP_JS)
         self.assertIn(
             '<div class="house-body" data-house-id="${id}"${!isReady ? \' tabindex="0" role="region" aria-label="House status"\' : ""}>',
             APP_JS,
@@ -5441,16 +5471,13 @@ console.log(JSON.stringify([
         self.assertIn('data-label="With teams"', APP_JS)
         self.assertIn('data-label="On houses"', APP_JS)
 
-    def test_dark_overview_stock_material_names_are_visible(self):
-        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
-        self.assertIn('html[data-theme="dark"] #overview-stock td:first-child {', css)
-        self.assertIn('html[data-theme="dark"] #overview-stock .material-name {', css)
-        self.assertIn('html[data-theme="dark"] #overview-stock .material-dot {', css)
-        self.assertIn(
-            'html[data-theme="dark"] #overview-stock tr:hover,\nhtml[data-theme="dark"] #overview-stock tr:hover td {\n  background: #293a32;\n  color: #edf6f0;',
-            css,
-        )
-        self.assertIn('$("#overview-stock").innerHTML', APP_JS)
+    def test_overview_house_counts_are_keyboard_operable_shortcuts(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        for view in ("", "ready", "active", "closed", "not_started"):
+            self.assertIn(
+                f'type="button" class="dashboard-stat-link" data-house-view="{view}"',
+                html,
+            )
 
     def test_dark_search_fields_have_consistent_background_and_placeholders(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -5653,7 +5680,7 @@ console.log(JSON.stringify([
         self.assertIn('$("#go-overview").addEventListener("click", goToHomeView)', APP_JS)
 
     def test_logo_returns_to_overview_and_hides_overview_shortcut(self):
-        self.assertIn('$$(".brand, .mobile-brand").forEach((link) =>', APP_JS)
+        self.assertIn('$$(".brand, .mobile-brand, .surveyor-brand").forEach((link) =>', APP_JS)
         self.assertIn('link.addEventListener("click", goToHomeView)', APP_JS)
         self.assertIn('setTab("overview");\n  showHousesOverview();', APP_JS)
         self.assertIn('$("#go-overview").classList.toggle("hidden", tab === "overview")', APP_JS)
@@ -5682,7 +5709,10 @@ console.log(JSON.stringify([
         self.assertIn("Active · Stage 2", legend)
         self.assertIn('role="group" aria-label="Filter map pins by house stage"', legend)
         self.assertIn('if (tile.dataset.houseView === "")', APP_JS)
-        self.assertIn('const status = state.user?.role === "assign" ? "all" : "map"', APP_JS)
+        self.assertIn(
+            'const status = hasAccessProfile(state.user, "assign") ? "all" : "map"',
+            APP_JS,
+        )
         self.assertIn('request(`/api/calculator/houses?status=${status}`)', APP_JS)
         self.assertIn('request(`/api/calculator/houses?status=${mode}`)', APP_JS)
         self.assertIn(".house-map-layout { grid-template-columns: minmax(0, 1.8fr) minmax(310px, .82fr);", css)

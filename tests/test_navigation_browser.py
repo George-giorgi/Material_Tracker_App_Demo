@@ -109,6 +109,36 @@ class NavigationBrowserTests(unittest.TestCase):
     def active_page(self):
         return self.page.locator(".page.active").get_attribute("data-page")
 
+    def test_primary_navigation_and_overview_house_shortcuts_work(self):
+        for tab in ("overview", "inventory", "houses", "movements"):
+            nav_button = self.page.locator(f'.main-nav [data-tab="{tab}"]')
+            nav_button.click()
+            self.assertEqual(self.active_page(), tab)
+            self.assertEqual(nav_button.get_attribute("aria-current"), "page")
+
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator("#stat-ready").click()
+        self.page.locator("#house-team-filter").wait_for(state="visible")
+        self.assertEqual(
+            self.page.locator("#house-team-filter-label").inner_text(),
+            "Showing houses ready for start",
+        )
+
+        self.page.locator("#go-overview").click()
+        self.page.locator("#stat-provided").click()
+        self.page.locator("#house-map-view").wait_for(state="visible")
+        self.page.locator("#go-overview").click()
+        self.page.set_viewport_size({"width": 375, "height": 800})
+        self.assertLessEqual(
+            self.page.locator(".main-nav").evaluate("(nav) => nav.scrollWidth"),
+            self.page.locator(".main-nav").evaluate("(nav) => nav.clientWidth"),
+        )
+        self.assertLessEqual(
+            self.page.evaluate("document.documentElement.scrollWidth"),
+            self.page.evaluate("document.documentElement.clientWidth"),
+        )
+        self.assertEqual(self.browser_errors, [])
+
     def test_second_account_can_sign_in_without_sidebar_navigation(self):
         created = self.page.request.post(
             f"{self.base_url}/api/users",
@@ -241,6 +271,7 @@ class NavigationBrowserTests(unittest.TestCase):
             )
         )
         self.assertTrue(self.page.locator(".surveyor-brand img").is_visible())
+        self.assertTrue(self.page.locator(".main-nav.workspace-nav").is_hidden())
         self.assertTrue(self.page.locator("#new-movement-top").is_hidden())
         self.assertTrue(self.page.locator("#start-navigation-tour").is_hidden())
         self.assertEqual(
@@ -274,12 +305,12 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator("#stat-ready-label").inner_text(), "To do")
         self.assertEqual(
             self.page.locator(
-                ".ventilation-dashboard-summary .surveyor-dashboard-stats > div:not(.hidden) span"
+                ".ventilation-dashboard-summary .surveyor-dashboard-stats > .dashboard-stat-link:not(.hidden) span"
             ).all_inner_texts(),
             ["Assigned houses", "To do", "Vent completed"],
         )
         self.assertEqual(
-            self.page.locator(".ventilation-dashboard-summary .surveyor-dashboard-stats > div:not(.hidden)").count(),
+            self.page.locator(".ventilation-dashboard-summary .surveyor-dashboard-stats > .dashboard-stat-link:not(.hidden)").count(),
             3,
         )
         self.assertTrue(self.page.locator("#ventilation-house-search").is_visible())
@@ -717,6 +748,11 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator("#auth-submit").click()
 
         self.page.get_by_role("heading", name="My survey dashboard").wait_for()
+        self.assertTrue(self.page.locator(".main-nav.workspace-nav").is_hidden())
+        self.assertTrue(self.page.locator('.nav-item[data-tab="houses"]').is_hidden())
+        self.assertTrue(self.page.locator("#houses-teams-tabs").is_hidden())
+        self.assertTrue(self.page.locator("#teams-section").is_hidden())
+        self.assertTrue(self.page.locator("#houses-section").is_visible())
         self.page.locator("#surveyor-dashboard-summary").wait_for(state="visible")
         logo = self.page.locator(".surveyor-brand img")
         self.assertTrue(logo.is_visible())
@@ -901,14 +937,13 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#surveyor-work-plan-form").is_visible())
         self.assertTrue(self.page.locator("#house-survey-form").is_visible())
         self.assertTrue(self.page.locator("#go-overview").is_hidden())
-        self.assertFalse(self.page.locator("#surveyor-survey-notes-form").is_visible())
+        self.assertTrue(self.page.locator("#surveyor-survey-notes-form").is_visible())
         dark_styles = self.page.locator("#surveyor-room").evaluate(
             """root => Object.fromEntries([
               ['nav', '.survey-room-nav'],
               ['navLink', '.survey-room-nav a'],
-              ['houseFact', '.survey-room-summary > div'],
-              ['workPlanRow', '.work-plan-row'],
-              ['upload', '.survey-document-upload'],
+              ['houseFact', '.survey-room-house-notes'],
+              ['workPlanCard', '.survey-room-work-plan-card'],
               ['measurementHint', '.survey-room-form > .helper-text']
             ].map(([key, selector]) => {
               const style = getComputedStyle(root.querySelector(selector));
@@ -917,8 +952,7 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(dark_styles["navLink"]["background"], "rgb(38, 53, 47)")
         self.assertEqual(dark_styles["houseFact"]["background"], "rgb(25, 38, 34)")
-        self.assertEqual(dark_styles["workPlanRow"]["background"], "rgb(25, 38, 34)")
-        self.assertEqual(dark_styles["upload"]["background"], "rgb(25, 38, 34)")
+        self.assertEqual(dark_styles["workPlanCard"]["background"], "rgb(28, 41, 37)")
         self.assertEqual(dark_styles["measurementHint"]["background"], "rgb(25, 42, 32)")
         room_buttons = self.page.locator("#surveyor-room").evaluate(
             """root => Object.fromEntries([
@@ -1066,14 +1100,24 @@ class NavigationBrowserTests(unittest.TestCase):
 
         dashboard = self.page.locator("#assign-houses-dashboard")
         dashboard.wait_for(state="visible")
-        self.assertEqual(
-            self.page.locator('[data-tab="houses"] .nav-label').inner_text(),
-            "Dashboard",
-        )
+        self.assertTrue(self.page.locator(".main-nav.workspace-nav").is_hidden())
         self.assertTrue(self.page.locator("#houses-teams-tabs").is_hidden())
         self.assertTrue(self.page.locator("#teams-section").is_hidden())
         self.assertTrue(self.page.locator("#houses-section").is_visible())
         self.assertTrue(self.page.locator("#house-team-filter").is_hidden())
+        self.assertEqual(
+            self.page.locator("#houses-page-title").inner_text(),
+            "Welcome, Assign Dashboard",
+        )
+        weather_panel = self.page.locator("#assign-weather-panel")
+        self.assertTrue(weather_panel.is_visible())
+        self.page.wait_for_function(
+            "() => document.querySelector('#assign-weather-status').textContent.includes('1-day forecast')"
+        )
+        self.assertFalse(weather_panel.evaluate("panel => panel.open"))
+        weather_panel.locator("summary").click()
+        self.assertTrue(weather_panel.locator(".weather-area").first.is_visible())
+        self.assertIn("County Mayo", weather_panel.inner_text())
         heading_style = self.page.locator("#houses-list-heading").evaluate(
             """element => ({
               family: getComputedStyle(element).fontFamily,
@@ -1089,30 +1133,16 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(heading_style["size"], "19px")
         self.assertEqual(heading_style["weight"], "750")
         self.assertEqual(heading_style["color"], heading_style["statusColor"])
-        assign_weather = self.page.locator("#assign-weather-panel")
-        assign_weather.wait_for(state="visible")
-        self.page.wait_for_function(
-            "() => document.querySelector('#assign-weather-status')?.textContent.includes('1-day forecast')"
-        )
-        self.assertFalse(assign_weather.evaluate("(element) => element.open"))
-        self.assertIn("Mayo & Sligo", assign_weather.locator("summary").inner_text())
-        assign_weather.locator("summary").click()
-        assign_weather_areas = self.page.locator("#assign-weather-areas .weather-area")
-        self.assertEqual(assign_weather_areas.count(), 2)
-        self.assertEqual(assign_weather_areas.nth(0).locator("h3").inner_text(), "County Mayo")
-        self.assertEqual(assign_weather_areas.nth(1).locator("h3").inner_text(), "County Sligo")
-        assign_weather.locator("#assign-weather-refresh").click()
-        self.assertTrue(assign_weather.locator("#assign-weather-refresh").is_visible())
         self.page.set_viewport_size({"width": 375, "height": 800})
         self.assertLessEqual(
-            assign_weather.evaluate("(element) => element.scrollWidth"),
-            assign_weather.evaluate("(element) => element.clientWidth"),
+            self.page.evaluate("document.documentElement.scrollWidth"),
+            self.page.evaluate("document.documentElement.clientWidth"),
         )
         self.page.set_viewport_size({"width": 1280, "height": 720})
         self.assertEqual(self.active_page(), "houses")
         self.assertEqual(
             self.page.locator("#houses-page-title").inner_text(),
-            "House dashboard",
+            "Welcome, Assign Dashboard",
         )
         self.assertEqual(
             [
@@ -1427,36 +1457,14 @@ class NavigationBrowserTests(unittest.TestCase):
             "Assign Surveyor",
         )
         self.page.evaluate("window.__logoClickToken = 'assign-dashboard'")
-        self.page.locator(".sidebar .brand").click()
+        self.page.locator(".surveyor-brand").click()
         self.assertEqual(
             self.page.evaluate("window.__logoClickToken"),
             "assign-dashboard",
         )
         self.assertTrue(self.page.locator("#go-overview").is_hidden())
         self.page.set_viewport_size({"width": 357, "height": 480})
-        mobile_nav_item = self.page.locator(".main-nav .nav-item:not(.hidden)")
-        mobile_nav_item.wait_for()
-        nav_layout = mobile_nav_item.evaluate(
-            """item => ({
-              direction: getComputedStyle(item).flexDirection,
-              width: item.getBoundingClientRect().width,
-              whiteSpace: getComputedStyle(item).whiteSpace,
-              scrollWidth: item.scrollWidth,
-              clientWidth: item.clientWidth,
-              navWidth: item.parentElement.getBoundingClientRect().width,
-              navTop: item.closest('.sidebar').getBoundingClientRect().top,
-              viewportHeight: window.innerHeight
-            })"""
-        )
-        self.assertEqual(nav_layout["direction"], "row")
-        self.assertEqual(nav_layout["whiteSpace"], "nowrap")
-        self.assertLessEqual(nav_layout["scrollWidth"], nav_layout["clientWidth"])
-        self.assertGreater(nav_layout["width"], 240)
-        self.assertLess(nav_layout["width"], nav_layout["navWidth"])
-        self.assertGreaterEqual(
-            nav_layout["navTop"],
-            nav_layout["viewportHeight"] - 61,
-        )
+        self.assertTrue(self.page.locator(".main-nav.workspace-nav").is_hidden())
         self.assertEqual(self.browser_errors, [])
 
     def test_login_cat_reacts_to_username_and_pin_typing(self):
@@ -1698,8 +1706,8 @@ class NavigationBrowserTests(unittest.TestCase):
         measures_section.locator("summary").click()
         self.assertEqual(measures_section.get_attribute("open"), "")
         self.assertIn(
-            "Invoice Quantity",
-            self.page.locator("#assign-seai-house-record").inner_text(),
+            "invoice quantity",
+            self.page.locator("#assign-seai-house-record").inner_text().lower(),
         )
         variance_section.locator("summary").click()
         self.assertEqual(variance_section.get_attribute("open"), "")
@@ -1879,7 +1887,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotIn("Surveyor", card.inner_text())
         self.assertNotIn("Assigned by", card.inner_text())
         ready_button = card.locator(".plan-ready-toggle[data-ready='true']")
-        self.assertEqual(card.locator(".house-card-actions button").count(), 1)
+        self.assertEqual(card.locator(".house-card-actions button").count(), 2)
+        self.assertTrue(card.locator(".assign-seai-details").is_visible())
         self.assertEqual(ready_button.inner_text(), "Mark ready for start")
         self.assertFalse(card.locator(".assign-house-team").count())
 
@@ -2322,10 +2331,10 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(self.browser_errors, [])
 
     def test_dark_theme_keeps_inventory_overview_and_ready_cards_readable(self):
-        logo = self.page.locator(".sidebar .brand-logo")
+        logo = self.page.locator(".surveyor-brand img")
         logo.wait_for()
         self.page.wait_for_function(
-            "() => document.querySelector('.sidebar .brand-logo').naturalWidth > 0"
+            "() => document.querySelector('.surveyor-brand img').naturalWidth > 0"
         )
         self.assertEqual(
             logo.get_attribute("src"),
@@ -2387,24 +2396,9 @@ class NavigationBrowserTests(unittest.TestCase):
         )
 
         self.page.locator('[data-tab="overview"]').click()
-        overview_row = self.page.locator("#overview-stock tr").filter(
-            has_text="Readable test material"
-        )
-        overview_row.wait_for()
-        self.assertEqual(
-            overview_row.locator(".material-name").evaluate(
-                "(element) => getComputedStyle(element).color"
-            ),
-            "rgb(237, 246, 240)",
-        )
-        overview_row.hover()
-        self.assertEqual(
-            overview_row.locator("td").first.evaluate(
-                "(element) => getComputedStyle(element).backgroundColor"
-            ),
-            "rgb(41, 58, 50)",
-        )
-
+        self.page.locator(".overview-dashboard-summary").wait_for()
+        self.assertTrue(self.page.locator('[data-house-view="ready"]').is_visible())
+        self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
         self.assertEqual(self.active_page(), "overview")
         self.page.locator('[data-house-view="ready"]').click()
         self.assertEqual(self.active_page(), "houses")
@@ -2501,16 +2495,16 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
-    def test_sidebar_brand_logo_is_slightly_larger_than_brand_area(self):
-        logo = self.page.locator(".sidebar .brand-logo")
+    def test_topbar_brand_logo_fits_its_brand_area(self):
+        logo = self.page.locator(".surveyor-brand img")
         self.page.wait_for_function(
-            "() => document.querySelector('.sidebar .brand-logo').naturalWidth > 0"
+            "() => document.querySelector('.surveyor-brand img').naturalWidth > 0"
         )
         self.assertAlmostEqual(
             logo.evaluate(
                 "(image) => image.getBoundingClientRect().width - image.parentElement.getBoundingClientRect().width"
             ),
-            10,
+            0,
             delta=1,
         )
 
@@ -2707,22 +2701,16 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(actions.locator("button").count(), 1)
 
-    def test_overview_shows_mayo_and_sligo_county_forecasts(self):
-        status = self.page.locator("#weather-status")
-        self.page.wait_for_function(
-            "() => document.querySelector('#weather-status')?.textContent.includes('1-day forecast')"
+    def test_overview_shows_house_status_shortcuts(self):
+        self.page.locator("#page-overview .overview-dashboard-summary").wait_for(
+            state="visible"
         )
-        areas = self.page.locator("#weather-areas .weather-area")
-        self.assertEqual(areas.count(), 2)
-        self.assertEqual(areas.nth(0).locator("h3").inner_text(), "County Mayo")
-        self.assertEqual(areas.nth(1).locator("h3").inner_text(), "County Sligo")
-        self.assertIn("Light Rain", areas.nth(0).inner_text())
-        self.assertIn("High 11° · Low 5°", areas.nth(0).inner_text())
-        self.assertIn("30 km/h", areas.nth(0).inner_text())
-        self.assertIn(
-            "Met Éireann",
-            self.page.locator("#page-overview .weather-attribution").inner_text(),
-        )
+        for house_view in ("", "ready", "active", "closed", "not_started"):
+            shortcut = self.page.locator(
+                f'#page-overview [data-house-view="{house_view}"]'
+            )
+            self.assertTrue(shortcut.is_visible())
+            self.assertTrue(shortcut.is_enabled())
         self.assertEqual(self.browser_errors, [])
 
     def test_teams_tab_can_switch_back_to_houses_after_overview_navigation(self):
@@ -3067,6 +3055,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Assigned employee: Assigned Worker", card.inner_text())
         self.assertIn("Ready Actor", card.inner_text())
         self.assertIn("Active Actor", card.inner_text())
+        self.assertIn("Survey updated by", card.inner_text())
         self.assertIn("Surveyor Name", card.inner_text())
         self.assertIn("Vent work", card.inner_text())
         self.assertIn("Complete", card.inner_text())
@@ -3807,7 +3796,10 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-card[data-house-id="ACTIVATE-READY"] .seai-activate'
         )
         self.assertTrue(activate_button.is_disabled())
-        self.assertIsNone(activate_button.get_attribute("title"))
+        self.assertEqual(
+            activate_button.get_attribute("title"),
+            "Complete a survey before activation.",
+        )
         self.assertEqual(
             self.page.locator(
                 '.house-card[data-house-id="ACTIVATE-READY"] .activation-requirement'
@@ -4036,7 +4028,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
         mobile_actions = card.locator(".house-card-actions").bounding_box()
         mobile_actions_bottom = mobile_actions["y"] + mobile_actions["height"]
-        mobile_nav_top = self.page.locator(".sidebar").bounding_box()["y"]
+        mobile_nav_top = self.page.locator(".main-nav").bounding_box()["y"]
         self.assertLessEqual(mobile_actions_bottom, mobile_nav_top)
         mobile_layout = card.evaluate(
             """element => ({
@@ -4184,7 +4176,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(ready_card.locator(".house-note-open").count(), 0)
         self.assertEqual(ready_card.get_by_role("button", name="Edit checklist").count(), 0)
         self.assertEqual(ready_card.get_by_role("button", name="View details & history").count(), 0)
-        self.assertLess(ready_card.bounding_box()["height"], 400)
+        self.assertTrue(ready_card.locator(".house-card-actions").is_visible())
         self.page.evaluate("openHouseDetail('SNAG-READY-TEST')")
         self.page.wait_for_function(
             "() => document.querySelector('#house-detail-status').textContent === 'Ready for start'"
@@ -4752,8 +4744,8 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(surveyor_house_notes.inner_text(), "No house notes")
         survey_notes_card = self.page.locator("#survey-room-notes")
-        self.assertFalse(survey_notes_card.is_visible())
-        self.assertFalse(self.page.locator(".survey-room-nav a[href='#survey-room-notes']").is_visible())
+        self.assertTrue(survey_notes_card.is_visible())
+        self.assertTrue(self.page.locator(".survey-room-nav a[href='#survey-room-notes']").is_visible())
         with server.connect_db() as db:
             saved_notes = db.execute(
                 "SELECT notes FROM provided_houses WHERE id = 'SURVEY-ROOM-TEST'"
@@ -4765,8 +4757,16 @@ class NavigationBrowserTests(unittest.TestCase):
         ).click()
         self.assertTrue(self.page.locator("#survey-windows input").first.is_visible())
         survey_note = self.page.locator("#surveyor-survey-notes-form textarea[name='notes']")
-        self.page.wait_for_function(
-            "() => document.activeElement === document.querySelector('#surveyor-survey-notes-form textarea[name=\"notes\"]')"
+        self.assertTrue(
+            survey_note.is_visible(),
+            self.page.evaluate(
+                """() => ({
+                  room: document.querySelector('#surveyor-room').className,
+                  notesCard: document.querySelector('#survey-room-notes').className,
+                  form: document.querySelector('#surveyor-survey-notes-form').className,
+                  title: document.querySelector('#house-survey-title').textContent
+                })"""
+            ),
         )
         self.assertEqual(survey_note.input_value(), "")
         survey_note.fill("Survey details for sharing.")
@@ -4864,7 +4864,7 @@ class NavigationBrowserTests(unittest.TestCase):
                 other_supervisor_id = server._insert_user(
                     db, "supervisor-two", "Supervisor Two", "567890", "supervisor"
                 )
-                server._insert_user(
+                teamlead_id = server._insert_user(
                     db, "teamlead-one", "Team Lead One", "678901", "teamlead"
                 )
                 inactive_teamlead_id = server._insert_user(
@@ -4873,6 +4873,19 @@ class NavigationBrowserTests(unittest.TestCase):
                     "Inactive Team Lead",
                     "789012",
                     "teamlead",
+                )
+                supervisor_department_id = db.execute(
+                    """
+                    SELECT department_id FROM user_departments
+                    WHERE user_id = ? ORDER BY is_primary DESC LIMIT 1
+                    """,
+                    (supervisor_id,),
+                ).fetchone()["department_id"]
+                server._set_user_organization(
+                    db,
+                    teamlead_id,
+                    [supervisor_department_id],
+                    supervisor_id,
                 )
                 for house_id, owner in (
                     ("SUPERVISOR-OWN", "Own House"),

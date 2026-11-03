@@ -96,9 +96,11 @@ class NavigationFlowTests(unittest.TestCase):
         steps = extract_tour_steps(APP_JS)
         setup = r"""
 const state = {
+  user: null,
   houseMapMode: false, housesTeamsTab: "houses", houseTeamFilter: "stale",
   houseStatusFilter: "stale", selectedMapHouseId: "old", houseMapCamera: {x: 1},
 };
+const hasAccessProfile = () => false;
 const makeNode = (dataset = {}) => {
   const classes = new Set();
   const attributes = {};
@@ -136,6 +138,8 @@ function showHousesOverview() {
   overviewRenders += 1;
   state.houseMapMode = false;
 }
+function refreshPendingChanges() { return Promise.resolve(); }
+function showToast() {}
 """
         script = (
             setup + "\n" + steps + "\n" + set_tab + "\n" + open_step + r"""

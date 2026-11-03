@@ -40,6 +40,9 @@ const state = {
   surveyRoomReturn: "list",
   surveyRoomRequest: 0,
   surveyRoomIsReady: false,
+  weather: null,
+  weatherError: "",
+  weatherLoading: false,
   preparedHouseShare: null,
   seaiSharePages: new Map(),
   pdfAnnotator: null,
@@ -258,6 +261,7 @@ const navigationTourSteps = [
 let toastTimer;
 let movementSearchRequest = 0;
 let ventilationHouseFilter = "all";
+let weatherRequestId = 0;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(
@@ -271,6 +275,119 @@ function escapeHtml(value) {
         "'": "&#39;",
       })[character],
   );
+}
+
+function weatherConditionIcon(condition) {
+  const value = String(condition || "").toLowerCase();
+  if (value.includes("thunder")) return "⛈️";
+  if (value.includes("snow") || value.includes("sleet")) return "🌨️";
+  if (value.includes("rain") || value.includes("shower")) return "🌧️";
+  if (value.includes("fog") || value.includes("mist")) return "🌫️";
+  if (value.includes("cloud")) return value.includes("scattered") ? "⛅" : "☁️";
+  if (value.includes("sun") || value.includes("clear")) return "🌤️";
+  return "🌦️";
+}
+
+function renderAssignWeather() {
+  const status = $("#assign-weather-status");
+  const refreshButton = $("#assign-weather-refresh");
+  const locations = $("#assign-weather-areas");
+  refreshButton.disabled = state.weatherLoading;
+  refreshButton.setAttribute("aria-busy", String(state.weatherLoading));
+  if (state.weatherError) {
+    status.textContent = `Forecast unavailable: ${state.weatherError}`;
+    status.classList.add("error");
+  } else if (state.weatherLoading) {
+    status.textContent = state.weather ? "Refreshing forecast…" : "Loading county forecast…";
+    status.classList.remove("error");
+  } else if (!state.weather) {
+    status.textContent = "Forecast is not available yet.";
+    status.classList.remove("error");
+  } else {
+    const issued = state.weather.issued
+      ? new Date(state.weather.issued).toLocaleString(undefined, {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "recently";
+    const dayCount = state.weather.areas[0]?.days.length || 0;
+    status.textContent = `${dayCount}-day forecast · Issued ${issued}`;
+    status.classList.remove("error");
+  }
+
+  if (!state.weather) {
+    locations.replaceChildren();
+    return;
+  }
+  locations.innerHTML = state.weather.areas
+    .map(
+      (area) => `
+        <article class="weather-area">
+          <h3>County ${escapeHtml(area.county)}</h3>
+          <div class="weather-days" role="region" tabindex="0" aria-label="${escapeHtml(area.county)} county forecast">
+            ${area.days
+              .map((day) => {
+                const date = new Date(`${day.date}T12:00:00`);
+                const dateLabel = Number.isNaN(date.getTime())
+                  ? day.date
+                  : date.toLocaleDateString(undefined, {
+                      weekday: "short",
+                      day: "numeric",
+                      month: "short",
+                    });
+                const temperature = (value) =>
+                  value === null || value === undefined || !Number.isFinite(Number(value))
+                    ? "—"
+                    : `${Math.round(Number(value))}°`;
+                const rain =
+                  day.rainfall_mm === null || day.rainfall_mm === undefined
+                    ? "Rain —"
+                    : `Rain ${new Intl.NumberFormat(undefined, {
+                        maximumFractionDigits: 1,
+                      }).format(day.rainfall_mm)} mm`;
+                const wind =
+                  day.wind_speed_kmh === null || day.wind_speed_kmh === undefined
+                    ? "Wind —"
+                    : `Wind ${escapeHtml(day.wind_direction || "")} ${Math.round(Number(day.wind_speed_kmh))} km/h`;
+                const condition = String(day.weather || "Forecast")
+                  .replaceAll("_", " ")
+                  .replace(/\b\w/g, (letter) => letter.toUpperCase());
+                return `
+                  <div class="weather-day">
+                    <span class="weather-day-date">${escapeHtml(dateLabel)}</span>
+                    <span class="weather-day-condition">${weatherConditionIcon(day.weather)} ${escapeHtml(condition)}</span>
+                    <span class="weather-day-temps">High ${temperature(day.max_temp)} · Low ${temperature(day.min_temp)}</span>
+                    <span class="weather-day-details">${rain}</span>
+                    <span class="weather-day-details">${wind}</span>
+                  </div>`;
+              })
+              .join("")}
+          </div>
+        </article>`,
+    )
+    .join("");
+}
+
+async function loadCountyWeather() {
+  if (state.weatherLoading) return;
+  const requestId = ++weatherRequestId;
+  state.weatherLoading = true;
+  state.weatherError = "";
+  renderAssignWeather();
+  try {
+    state.weather = await request("/api/weather");
+  } catch (error) {
+    if (requestId !== weatherRequestId) return;
+    state.weatherError = error.message;
+  } finally {
+    if (requestId === weatherRequestId) {
+      state.weatherLoading = false;
+      renderAssignWeather();
+    }
+  }
 }
 
 function formatQuantity(value, unit = "") {
@@ -439,6 +556,7 @@ function houseAuditHtml(house, readyOnly = false) {
       })[0];
   const activation = latestOfType("status", (entry) => entry.status === "active");
   const ready = latestOfType("status", (entry) => entry.status === "ready");
+  const survey = latestOfType("survey");
   const closed = latestOfType("status", (entry) => entry.status === "closed");
   const deliveries = uniqueActivity
     .filter((entry) => entry.type === "movement" &&
@@ -472,6 +590,9 @@ function houseAuditHtml(house, readyOnly = false) {
       "surveyor-assignment-field",
       "Assigned ",
     ) : ""}
+    ${!readyOnly && survey && (survey.changed_by || survey.changed_at)
+      ? auditField("Survey updated by", survey.changed_by, survey.changed_at)
+      : ""}
     ${!readyOnly && activation ? auditField("Activated by", activation.changed_by, activation.changed_at) : ""}
     ${!readyOnly && closed ? auditField("Closed by", closed.changed_by, closed.changed_at) : ""}
     ${!readyOnly && latestDelivery ? auditField(
@@ -479,7 +600,7 @@ function houseAuditHtml(house, readyOnly = false) {
       `${latestDelivery.person || "Name not recorded"} → ${latestDelivery.house_employee || "Assigned employee not recorded"}`,
       latestDelivery.recorded_at,
     ) : ""}
-    ${!readyOnly && firstDelivery ? auditField("First delivery", formatAuditDate(firstDelivery.happened_on)) : ""}
+    ${!readyOnly && firstDelivery ? auditField("First delivery", formatAuditDate(firstDelivery.happened_on), "", "delivery-first-field") : ""}
     ${!readyOnly && lastDelivery ? auditField("Last delivery", formatAuditDate(lastDelivery.happened_on)) : ""}
   </div>`;
   return `<div class="house-audit${readyOnly ? " house-audit-ready" : ""}" aria-label="House activity">${highlights}</div>`;
@@ -739,14 +860,18 @@ function showWorkspace(user) {
   $("#today-label").classList.toggle("hidden", isVentilation);
   const housesNavLabel = $('[data-tab="houses"] .nav-label');
   if (housesNavLabel) {
-    housesNavLabel.textContent = isAssign
-      ? "Dashboard"
-      : "Houses & teams";
+    housesNavLabel.textContent =
+      isAssign || isSurveyor ? "Houses" : "Houses & teams";
   }
+  $("#assign-weather-panel").classList.toggle("hidden", !isAssign);
   $("#house-map-activity").classList.toggle("hidden", isAssign);
   document.body.classList.toggle("surveyor-mode", isSurveyor);
   document.body.classList.toggle("supervisor-mode", isSupervisor);
   document.body.classList.toggle("ventilation-mode", isVentilation);
+  $(".main-nav.workspace-nav").classList.toggle(
+    "hidden",
+    isVentilation || isAssign || isSurveyor,
+  );
   $("#surveyor-dashboard-summary").classList.toggle("hidden", !isSurveyor);
   $("#supervisor-dashboard-summary").classList.toggle("hidden", !isSupervisor);
   $("#surveyor-house-filters").classList.toggle("hidden", !isSurveyor);
@@ -759,7 +884,9 @@ function showWorkspace(user) {
   $$(".nav-item[data-tab]").forEach((item) =>
     item.classList.toggle(
       "hidden",
-      (isSurveyor || isSupervisor || isAssign) && item.dataset.tab !== "houses",
+      (isSurveyor && item.dataset.tab === "houses") ||
+        ((isSurveyor || isSupervisor || isAssign) &&
+          item.dataset.tab !== "houses"),
     ),
   );
   $("#new-movement-top").classList.toggle(
@@ -838,7 +965,7 @@ function showWorkspace(user) {
     state.viewingHouseId = "";
     state.houseMapData = null;
     $("#houses-page-eyebrow").textContent = "SITE ALLOCATION & RESPONSIBILITY";
-    $("#houses-page-title").textContent = "House dashboard";
+    $("#houses-page-title").textContent = `Welcome, ${user.display_name}`;
     $("#houses-page-subtitle").textContent =
       "Review house status and open the jobs that need your attention.";
     $("#houses-empty p").textContent = "Houses will appear here as jobs are assigned.";
@@ -5616,6 +5743,13 @@ async function refresh(preserveMovementLines = false) {
   state.dashboard = dashboard;
   state.movements = ledger.movements;
   renderAll(preserveMovementLines);
+  if (
+    hasAccessProfile(state.user, "assign") &&
+    !state.weather &&
+    !state.weatherError
+  ) {
+    void loadCountyWeather();
+  }
   if (state.viewingHouseId) {
     await loadHouseDetail(state.viewingHouseId);
   }
@@ -6678,6 +6812,7 @@ function bindEvents() {
   $("#theme-toggle").addEventListener("click", () =>
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"),
   );
+  $("#assign-weather-refresh").addEventListener("click", loadCountyWeather);
   setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   $$("dialog").forEach((dialog) =>
     dialog.addEventListener("close", () => {
@@ -6827,7 +6962,7 @@ function bindEvents() {
     "click",
     openPresentationAction,
   );
-  $$(".brand, .mobile-brand").forEach((link) =>
+  $$(".brand, .mobile-brand, .surveyor-brand").forEach((link) =>
     link.addEventListener("click", goToHomeView),
   );
   $$(".nav-item[data-tab]").forEach((button) =>
