@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261102-2330">
+    <link rel="stylesheet" href="/app.css?v=20261103-vent-empty-state-dark">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -103,23 +103,6 @@
       </section>
     </main>
     <div class="app-shell hidden">
-      <aside class="sidebar">
-        <a class="brand" href="/" aria-label="BRUSNA Material Tracker home">
-          <img class="brand-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat">
-        </a>
-        <div class="workspace-label">WORKSPACE</div>
-        <nav class="main-nav" aria-label="Main navigation">
-          <button class="nav-item active" data-tab="overview" aria-current="page"><span class="nav-icon">◫</span>Overview</button>
-          <button class="nav-item" data-tab="inventory"><span class="nav-icon">▤</span>Inventory</button>
-          <button class="nav-item" data-tab="houses"><span class="nav-icon">⌂</span><span class="nav-label">Houses &amp; teams</span></button>
-          <button class="nav-item" data-tab="movements"><span class="nav-icon">↔</span>Movements</button>
-        </nav>
-        <div class="sidebar-bottom">
-          <div class="local-badge"><span class="status-dot"></span><span><strong>Shared workspace</strong><small>Data stays on the tracker host</small></span></div>
-          <p>First step toward clearer stock, delivery and usage records.</p>
-        </div>
-      </aside>
-
       <main class="main-content">
         <header class="topbar">
           <a class="surveyor-brand" href="/" aria-label="BRUSNA Material Tracker home"><img src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat"><span class="surveyor-cat-eye surveyor-cat-eye-left" aria-hidden="true"></span><span class="surveyor-cat-eye surveyor-cat-eye-right" aria-hidden="true"></span><span class="surveyor-logo-mouse" aria-hidden="true">🐭</span></a>
@@ -130,45 +113,59 @@
           <button class="button button-secondary" id="account-button">Account</button>
           <button class="button button-secondary" id="start-navigation-tour" type="button">Navigation test flow</button>
           <button class="button button-secondary" id="start-presentation">Presentation guide</button>
-          <button class="button button-primary" id="new-movement-top"><span>＋</span> Record movement</button>
+          <button class="button button-primary" id="new-movement-top" type="button" aria-label="Record movement"><span aria-hidden="true">＋</span> Record movement</button>
         </header>
 
         <section class="page active" id="page-overview" data-page="overview">
           <div class="page-heading">
-            <div><div class="eyebrow">YOUR MATERIALS, AT A GLANCE</div><h1>Overview</h1><p class="page-subtitle">A clear picture of warehouse stock and where materials are going.</p></div>
+            <div><div class="eyebrow" id="overview-eyebrow">YOUR MATERIALS, AT A GLANCE</div><h1 id="overview-title">Overview</h1><p class="page-subtitle" id="overview-subtitle">A clear picture of warehouse stock and where materials are going.</p></div>
             <span class="date-chip" id="today-label"></span>
           </div>
-          <div class="kpi-row">
-            <button type="button" class="kpi seai" data-house-view="" title="View all provided houses on the map"><span class="kpi-label">From SEAI</span><span class="kpi-value" id="stat-provided">—</span></button>
-            <button type="button" class="kpi active" data-house-view="active" title="View active houses"><span class="kpi-label">Active houses</span><span class="kpi-value" id="stat-houses">—</span></button>
-            <button type="button" class="kpi closed" data-house-view="closed" title="View closed houses"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="stat-closed">—</span></button>
-            <button type="button" class="kpi pending" data-house-view="not_started" title="View SEAI houses not started yet"><span class="kpi-label">Not started</span><span class="kpi-value" id="stat-not-started">—</span></button>
-            <button type="button" class="kpi ready" data-house-view="ready" title="View houses ready for start"><span class="kpi-label">Ready for start</span><span class="kpi-value" id="stat-ready">—</span></button>
-          </div>
-          <div class="kpi-strip">
-            <span><b id="stat-materials">—</b> material types tracked</span>
-            <span><b id="stat-movements">—</b> recent movements</span>
-            <span class="kpi-warn"><b id="stat-counts">—</b> balances to reconcile</span>
-          </div>
-
-          <section class="weather-panel card" aria-labelledby="weather-title">
-            <div class="weather-panel-heading">
-              <div><span class="eyebrow">COUNTY FORECAST</span><h2 id="weather-title">Mayo &amp; Sligo weather</h2><p>Plan outdoor work with the latest local outlook.</p></div>
-              <button class="icon-button weather-refresh" id="weather-refresh" type="button" aria-label="Refresh weather forecast" title="Refresh forecast">↻</button>
+          <section class="surveyor-dashboard-summary overview-dashboard-summary ventilation-dashboard-summary" aria-label="Ventilation team progress">
+            <div class="surveyor-dashboard-message">
+              <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
+              <div>
+                <strong id="overview-summary-title">Live overview</strong>
+                <p id="overview-summary-description">Warehouse and site activity across the current project set.</p>
+              </div>
             </div>
-            <p class="weather-status" id="weather-status" role="status" aria-live="polite">Forecast loads when you sign in.</p>
-            <div class="weather-areas" id="weather-areas"></div>
-            <p class="weather-attribution">County-level daily forecast from <a href="https://www.met.ie/" target="_blank" rel="noreferrer">Met Éireann</a>. Forecast length depends on the latest published data; conditions can change.</p>
+            <div class="surveyor-dashboard-stats" aria-live="polite" aria-atomic="true">
+              <div><strong id="stat-provided">0</strong><span id="stat-provided-label">From SEAI</span></div>
+              <div><strong id="stat-ready">0</strong><span id="stat-ready-label">Ready</span></div>
+              <div><strong id="stat-houses">0</strong><span id="stat-houses-label">Active</span></div>
+              <div><strong id="stat-closed">0</strong><span id="stat-closed-label">Closed</span></div>
+              <div><strong id="stat-not-started">0</strong><span id="stat-not-started-label">Not started</span></div>
+            </div>
           </section>
+          <section id="ventilation-workload" class="ventilation-workload hidden" aria-labelledby="ventilation-workload-title">
+            <div class="ventilation-workload-heading">
+              <div>
+                <div class="ventilation-workload-title-line"><h2 id="ventilation-workload-title">My assigned houses</h2><span id="ventilation-workload-count" aria-live="polite"></span></div>
+                <p>See what needs doing and what your team has completed.</p>
+              </div>
+              <div class="ventilation-workload-actions">
+                <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="ventilation-house-search" type="search" placeholder="Search houses" aria-label="Search assigned ventilation houses"></label>
+                <button class="ventilation-refresh-button" id="refresh-ventilation-houses" type="button" aria-label="Refresh assigned ventilation houses">
+                  <svg class="ventilation-refresh-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.8 8A7 7 0 0 0 4.9 4.7L3.2 6.4M3.2 6.4V2.8M3.2 6.4h3.6M3.2 12a7 7 0 0 0 11.9 3.3l1.7-1.7m0 0v3.6m0-3.6h-3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+            <div id="ventilation-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter assigned ventilation houses">
+              <button type="button" class="ventilation-house-filter active" data-ventilation-filter="all" aria-pressed="true">All <span id="ventilation-filter-all-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-ventilation-filter="outstanding" aria-pressed="false">To do <span id="ventilation-filter-outstanding-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-ventilation-filter="complete" aria-pressed="false">Completed <span id="ventilation-filter-complete-count">0</span></button>
+            </div>
+            <div id="ventilation-house-list" class="ventilation-house-list"></div>
+            <div id="ventilation-filter-empty" class="ventilation-house-empty hidden"><strong>No houses in this group</strong><p>Choose another filter to see your assigned ventilation work.</p></div>
+          </section>
+          <div class="kpi-strip">
+            <span><b id="stat-movements">—</b> recent movements</span>
+          </div>
 
           <div class="overview-grid">
-            <article class="card stock-card">
-              <div class="card-heading"><div><h2>Warehouse stock</h2><p>Current balance by material</p></div><button class="text-button" data-goto="inventory">View inventory <span>→</span></button></div>
-              <div class="table-wrap"><table><thead><tr><th>Material</th><th>Code</th><th>In warehouse</th><th>Status</th></tr></thead><tbody id="overview-stock"></tbody></table></div>
-              <div class="empty-state hidden" id="overview-empty"><div class="empty-symbol">▤</div><strong>No materials yet</strong><p>Import the tracker workbook or add a material to get started.</p><button class="button button-secondary" data-goto="inventory">Set up inventory</button></div>
-            </article>
             <article class="card activity-card">
-              <div class="card-heading"><div><h2>Recent activity</h2><p>Latest recorded material movements</p></div><button class="icon-button" data-goto="movements" aria-label="View all movements">↗</button></div>
+              <div class="card-heading"><div><h2 id="overview-activity-title">Recent activity</h2><p id="overview-activity-subtitle">Latest recorded material movements</p></div><button class="icon-button" data-goto="movements" aria-label="View all movements">↗</button></div>
               <div class="activity-list" id="overview-activity"></div>
             </article>
           </div>
@@ -241,20 +238,6 @@
               <p class="assign-surveyor-workload-hint">Busy surveyors have at least one assigned survey to complete.</p>
               <ul id="assign-surveyor-workload-list" class="assign-surveyor-workload-list"></ul>
             </details>
-            <details id="assign-weather-panel" class="weather-panel card hidden">
-              <summary class="assign-weather-summary">
-                <div class="assign-weather-title">
-                  <span class="eyebrow">COUNTY FORECAST</span>
-                  <h2>Mayo &amp; Sligo</h2>
-                </div>
-                <p class="weather-status" id="assign-weather-status" role="status" aria-live="polite">Forecast loads when you sign in.</p>
-              </summary>
-              <div class="assign-weather-content">
-                <button class="icon-button weather-refresh" id="assign-weather-refresh" type="button" aria-label="Refresh weather forecast" title="Refresh forecast">↻</button>
-                <div class="weather-areas" id="assign-weather-areas"></div>
-                <p class="weather-attribution">County-level daily forecast from <a href="https://www.met.ie/" target="_blank" rel="noreferrer">Met Éireann</a>.</p>
-              </div>
-            </details>
             <div class="houses-teams-tabs" id="houses-teams-tabs" role="tablist" aria-label="Houses and teams views">
               <button class="houses-teams-tab active" id="houses-tab" type="button" role="tab" aria-selected="true" aria-controls="houses-section" tabindex="0">Houses</button>
               <button class="houses-teams-tab" id="teams-tab" type="button" role="tab" aria-selected="false" aria-controls="teams-section" tabindex="-1">Teams</button>
@@ -265,7 +248,10 @@
               <div><h2 id="houses-list-heading">Houses</h2></div>
               <div class="heading-actions">
                 <label class="search-box house-search-box"><span>⌕</span><input id="house-search" type="search" placeholder="Search houses" aria-label="Search houses"></label>
-                <button class="button button-secondary hidden" id="refresh-surveyor-houses" type="button" aria-label="Refresh assigned houses">↻ <span>Refresh</span></button>
+                <button class="ventilation-refresh-button hidden" id="refresh-surveyor-houses" type="button" aria-label="Refresh assigned houses">
+                  <svg class="ventilation-refresh-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.8 8A7 7 0 0 0 4.9 4.7L3.2 6.4M3.2 6.4V2.8M3.2 6.4h3.6M3.2 12a7 7 0 0 0 11.9 3.3l1.7-1.7m0 0v3.6m0-3.6h-3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Refresh</span>
+                </button>
                 <button class="button button-primary" id="open-house">＋ Active house</button>
               </div>
             </div>
@@ -333,19 +319,27 @@
               <div id="survey-room-seai-documents" class="survey-room-seai-documents" aria-live="polite"></div>
             </article>
             <article class="card survey-room-work-plan-card" id="survey-room-work-plan">
-              <div class="card-heading"><div><h2>Pre-start work plan</h2><p>For each trade, choose whether work is required and add any helpful details. The Active house checklist will start required work as not done.</p></div></div>
+              <div class="card-heading"><div><span class="work-plan-eyebrow">Before activation</span><h2>Pre-start work plan</h2><p>For each trade, choose whether work is required and add any helpful details. The Assign team sees this plan on the house card, and the Active house checklist starts required work as not done.</p></div><span id="surveyor-work-plan-progress" class="work-plan-progress" aria-live="polite">0 of 4 chosen</span></div>
               <form id="surveyor-work-plan-form" class="surveyor-work-plan-form">
-                <div class="work-plan-row">
-                  <label class="field">Scaffolding<select name="scaffolding_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                <div class="work-plan-trade" data-trade="scaffolding" data-state="unset">
+                  <div class="work-plan-trade-head"><span class="work-plan-trade-icon" aria-hidden="true">🏗️</span><strong>Scaffolding</strong><span class="work-plan-trade-state">Not chosen</span></div>
+                  <label class="field">Requirement<select name="scaffolding_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
                   <label class="field">Work details<textarea name="scaffolding_notes" rows="2" maxlength="1000" placeholder="Optional details, such as access or setup"></textarea></label>
                 </div>
-                <div class="work-plan-row">
-                  <label class="field">ESB work<select name="esb_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                <div class="work-plan-trade" data-trade="esb" data-state="unset">
+                  <div class="work-plan-trade-head"><span class="work-plan-trade-icon" aria-hidden="true">⚡</span><strong>ESB work</strong><span class="work-plan-trade-state">Not chosen</span></div>
+                  <label class="field">Requirement<select name="esb_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
                   <label class="field">Work details<textarea name="esb_notes" rows="2" maxlength="1000" placeholder="Optional details about the ESB work"></textarea></label>
                 </div>
-                <div class="work-plan-row">
-                  <label class="field">Plumber work<select name="plumber_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                <div class="work-plan-trade" data-trade="plumber" data-state="unset">
+                  <div class="work-plan-trade-head"><span class="work-plan-trade-icon" aria-hidden="true">🔧</span><strong>Plumber work</strong><span class="work-plan-trade-state">Not chosen</span></div>
+                  <label class="field">Requirement<select name="plumber_required" required><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
                   <label class="field">Work details<textarea name="plumber_notes" rows="2" maxlength="1000" placeholder="Optional details about the plumber work"></textarea></label>
+                </div>
+                <div class="work-plan-trade" data-trade="vent" data-state="unset">
+                  <div class="work-plan-trade-head"><span class="work-plan-trade-icon" aria-hidden="true">🌬️</span><strong>Vent work</strong><span class="work-plan-trade-state">Not chosen</span></div>
+                  <label class="field">Requirement<select name="vent_required"><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
+                  <label class="field">Work details<textarea name="vent_notes" rows="2" maxlength="1000" placeholder="Optional details about the ventilation work"></textarea></label>
                 </div>
                 <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Requirement choices and work details save automatically. You can also save manually.</small><button class="button button-secondary" type="submit">Save work plan</button></div>
               </form>
@@ -463,6 +457,11 @@
             <article class="card house-detail-checklist-card" id="house-detail-checklist-card">
               <div class="card-heading"><div><h2>Pre-start checklist</h2><p>Saved preparation checks for this house.</p></div><span id="house-detail-checklist-summary" class="house-detail-checklist-summary"></span></div>
               <div id="house-detail-checklist" class="house-detail-checklist"></div>
+              <div id="house-detail-work-plan" class="house-detail-work-plan hidden">
+                <h3>Pre-start work plan</h3>
+                <p class="muted">Result recorded by the surveyor.</p>
+                <div id="house-detail-work-plan-rows"></div>
+              </div>
             </article>
             <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">
               <div class="card-heading"><div><h2>Materials used on this finished house</h2><p>Recorded usage plus the remaining on-site quantities automatically closed out when the house was finished.</p></div></div>
@@ -528,12 +527,25 @@
           <div><div class="eyebrow">SHARE SURVEY PDF</div><h2 id="house-document-share-title">Prepared PDF</h2></div>
           <button class="icon-button close-dialog" type="button" aria-label="Close">×</button>
         </div>
-        <p id="house-document-share-description" class="page-subtitle">The original PDF is followed by a separate page with the saved survey note. If this browser cannot attach files to the app you choose, the combined PDF will download for you to attach manually.</p>
-        <div class="dialog-actions">
-          <button id="house-document-share-send" class="button button-primary" type="button">Share PDF…</button>
-          <button id="house-document-share-email" class="button button-secondary" type="button">Email PDF</button>
-          <button id="house-document-share-whatsapp" class="button button-secondary" type="button">WhatsApp PDF</button>
-          <button id="house-document-share-download" class="button button-secondary" type="button">Download only</button>
+        <p id="house-document-share-description" class="page-subtitle">Send this PDF straight to a team to add it to the house record, or choose another way to share or download it.</p>
+        <section class="house-document-team-send" aria-labelledby="house-document-team-send-title">
+          <div class="house-document-share-section-heading">
+            <h3 id="house-document-team-send-title">Send directly to a team</h3>
+            <p>Save the PDF to this house so the team can view it from its dashboard.</p>
+          </div>
+          <div class="house-document-team-buttons">
+            <button id="house-document-share-vent" class="button button-primary" type="button" title="Send the selected PDF to the Vent team without the survey-notes page"><span class="house-document-team-icon" aria-hidden="true">V</span><span><strong>Send PDF to Vent team</strong><small>Save to the Vent team house record</small></span></button>
+            <button id="house-document-share-ewi" class="button button-secondary house-document-team-ewi" type="button" title="Send the annotated PDF to the External Insulation supervisor team" hidden><span class="house-document-team-icon" aria-hidden="true">EWI</span><span><strong>Send PDF to external insulation team</strong><small>Available to active External Insulation supervisors</small></span></button>
+          </div>
+        </section>
+        <div class="house-document-share-alternatives">
+          <h3>Other options</h3>
+          <div class="house-document-share-options">
+            <button id="house-document-share-send" class="button button-secondary" type="button">Share PDF…</button>
+            <button id="house-document-share-email" class="button button-secondary" type="button">Email PDF</button>
+            <button id="house-document-share-whatsapp" class="button button-secondary" type="button">WhatsApp PDF</button>
+            <button id="house-document-share-download" class="button button-secondary" type="button">Download PDF</button>
+          </div>
         </div>
       </div>
     </dialog>
@@ -865,6 +877,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261102-2330" defer></script>
+    <script src="/app.js?v=20261103-vent-empty-state-dark" defer></script>
   </body>
 </html>

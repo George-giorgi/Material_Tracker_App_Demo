@@ -109,6 +109,462 @@ class NavigationBrowserTests(unittest.TestCase):
     def active_page(self):
         return self.page.locator(".page.active").get_attribute("data-page")
 
+    def test_second_account_can_sign_in_without_sidebar_navigation(self):
+        created = self.page.request.post(
+            f"{self.base_url}/api/users",
+            data={
+                "username": "second-surveyor",
+                "display_name": "Second Surveyor",
+                "pin": "234567",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(created.status, 201, created.text())
+
+        login = self.page.request.post(
+            f"{self.base_url}/api/auth/login",
+            data={"username": "second-surveyor", "pin": "234567"},
+        )
+        self.assertEqual(login.status, 200, login.text())
+        cookie = login.headers["set-cookie"].split(";", 1)[0]
+        name, value = cookie.split("=", 1)
+        self.page.context.add_cookies(
+            [{"name": name, "value": value, "url": self.base_url}]
+        )
+        self.page.goto(self.base_url, wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.wait_for_function(
+            "document.querySelector('#account-name').textContent === 'Second Surveyor'"
+        )
+
+        self.assertTrue(self.page.locator("#auth-error").evaluate(
+            "element => element.classList.contains('hidden')"
+        ))
+        self.assertTrue(self.page.locator("#new-movement-top").is_hidden())
+        self.assertTrue(self.page.locator("#start-navigation-tour").is_hidden())
+        self.assertEqual(self.browser_errors, [])
+
+    def test_ventilation_department_uses_surveyor_style_dashboard_without_survey_controls(self):
+        pdf_document = server.fitz.open()
+        pdf_document.new_page().insert_text((72, 72), "Annotatable survey")
+        annotatable_pdf = pdf_document.tobytes()
+        pdf_document.close()
+        with server.connect_db() as db:
+            ventilation_id = db.execute(
+                "SELECT id FROM departments WHERE name = 'Ventilation'"
+            ).fetchone()["id"]
+            db.executemany(
+                """
+                INSERT INTO provided_houses
+                    (id, postcode, address, owner_name, ready_for_start,
+                     plan_vent_required, plan_vent_notes, plan_vent_done_by,
+                     plan_vent_done_at)
+                VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
+                """,
+                [
+                    (
+                        "VENT-DASHBOARD-PENDING",
+                        "V1 1AA",
+                        "1 Vent Road",
+                        "Pending Owner",
+                        "Check bedroom vents",
+                        "",
+                        "",
+                    ),
+                    (
+                        "VENT-DASHBOARD-COMPLETE",
+                        "V2 2BB",
+                        "2 Vent Road",
+                        "Complete Owner",
+                        "Airflow checked",
+                        "Ventilation Teammate",
+                        "2026-11-03T09:00:00",
+                    ),
+                ],
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_documents
+                    (house_id, filename, content, size_bytes, shared_by, shared_at)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'annotated-survey.pdf',
+                    ?, ?, 'Surveyor Teammate', '2026-11-03T09:00:00'
+                )
+                """,
+                (b"%PDF-1.4\nannotated survey\n", len(b"%PDF-1.4\nannotated survey\n")),
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_documents
+                    (house_id, filename, content, size_bytes, shared_by, shared_at)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'survey-plan.pdf',
+                    ?, ?, 'Surveyor Teammate', '2026-11-03T09:00:00'
+                )
+                """,
+                (annotatable_pdf, len(annotatable_pdf)),
+            )
+        created = self.page.request.post(
+            f"{self.base_url}/api/users",
+            data={
+                "username": "ventilation-dashboard",
+                "display_name": "Ventilation Dashboard",
+                "pin": "234567",
+                "role": "employee",
+                "department_ids": [ventilation_id],
+            },
+        )
+        self.assertEqual(created.status, 201, created.text())
+
+        login = self.page.request.post(
+            f"{self.base_url}/api/auth/login",
+            data={"username": "ventilation-dashboard", "pin": "234567"},
+        )
+        self.assertEqual(login.status, 200, login.text())
+        cookie = login.headers["set-cookie"].split(";", 1)[0]
+        name, value = cookie.split("=", 1)
+        self.page.context.add_cookies(
+            [{"name": name, "value": value, "url": self.base_url}]
+        )
+        self.page.goto(self.base_url, wait_until="domcontentloaded")
+        self.page.get_by_role("heading", name="My ventilation dashboard").wait_for()
+
+        self.assertEqual(self.active_page(), "overview")
+        self.assertTrue(
+            self.page.locator("body").evaluate(
+                "element => element.classList.contains('ventilation-mode')"
+            )
+        )
+        self.assertFalse(
+            self.page.locator("body").evaluate(
+                "element => element.classList.contains('surveyor-mode')"
+            )
+        )
+        self.assertTrue(self.page.locator(".surveyor-brand img").is_visible())
+        self.assertTrue(self.page.locator("#new-movement-top").is_hidden())
+        self.assertTrue(self.page.locator("#start-navigation-tour").is_hidden())
+        self.assertEqual(
+            self.page.locator("#overview-eyebrow").inner_text(),
+            "YOUR WORK QUEUE",
+        )
+        self.assertEqual(
+            self.page.locator("#overview-summary-title").inner_text(),
+            "Welcome, Ventilation Dashboard",
+        )
+        self.assertTrue(self.page.locator("#today-label").is_hidden())
+        self.assertTrue(self.page.locator(".overview-dashboard-summary").is_visible())
+        summary_style = self.page.locator(".ventilation-dashboard-summary").evaluate(
+            """element => ({
+              display: getComputedStyle(element).display,
+              direction: getComputedStyle(element).flexDirection,
+              borderRadius: getComputedStyle(element).borderRadius,
+              padding: getComputedStyle(element).padding
+            })"""
+        )
+        self.assertEqual(summary_style["display"], "flex")
+        self.assertEqual(summary_style["direction"], "row")
+        self.assertEqual(summary_style["borderRadius"], "14px")
+        self.assertFalse(self.page.locator(".ventilation-summary-progress").count())
+        self.assertTrue(self.page.locator("#page-overview .overview-grid").is_hidden())
+        self.assertTrue(self.page.locator("#ventilation-house-filters").is_visible())
+        self.assertEqual(self.page.locator("#stat-provided").inner_text(), "2")
+        self.assertEqual(self.page.locator("#stat-houses").inner_text(), "1")
+        self.assertEqual(self.page.locator("#stat-ready").inner_text(), "1")
+        self.assertFalse(self.page.locator("#stat-ready").is_hidden())
+        self.assertEqual(self.page.locator("#stat-ready-label").inner_text(), "To do")
+        self.assertEqual(
+            self.page.locator(
+                ".ventilation-dashboard-summary .surveyor-dashboard-stats > div:not(.hidden) span"
+            ).all_inner_texts(),
+            ["Assigned houses", "To do", "Vent completed"],
+        )
+        self.assertEqual(
+            self.page.locator(".ventilation-dashboard-summary .surveyor-dashboard-stats > div:not(.hidden)").count(),
+            3,
+        )
+        self.assertTrue(self.page.locator("#ventilation-house-search").is_visible())
+        self.assertTrue(self.page.locator("#refresh-ventilation-houses").is_visible())
+        self.assertEqual(
+            self.page.locator(".ventilation-house-card").count(),
+            2,
+        )
+        self.page.locator("#ventilation-house-search").fill("VENT-DASHBOARD-PENDING")
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 1)
+        self.page.locator("#ventilation-house-search").fill("")
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 2)
+        self.page.locator("#refresh-ventilation-houses").click()
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 2)
+        pending_card = self.page.locator(
+            ".ventilation-house-card"
+        ).filter(has_text="VENT-DASHBOARD-PENDING")
+        complete_card = self.page.locator(
+            ".ventilation-house-card"
+        ).filter(has_text="VENT-DASHBOARD-COMPLETE")
+        shared_pdf = pending_card.locator(".ventilation-shared-pdfs")
+        self.assertFalse(shared_pdf.evaluate("element => element.open"))
+        shared_pdf.locator("summary").click()
+        self.assertTrue(shared_pdf.evaluate("element => element.open"))
+        self.assertTrue(
+            pending_card.locator(".ventilation-house-completion").evaluate(
+                "element => element.parentElement.classList.contains('ventilation-house-top')"
+            )
+        )
+        self.assertIn("annotated-survey.pdf", pending_card.inner_text())
+        self.assertIn("Shared by Surveyor Teammate", pending_card.inner_text())
+        self.assertNotIn("annotated-survey.pdf", complete_card.inner_text())
+        pdf_url = pending_card.locator(
+            'a[aria-label="View annotated-survey.pdf"]'
+        ).get_attribute("href")
+        pdf_response = self.page.evaluate(
+            """async url => {
+              const response = await fetch(url);
+              return {
+                status: response.status,
+                contentType: response.headers.get("content-type"),
+                content: await response.text()
+              };
+            }""",
+            pdf_url,
+        )
+        self.assertEqual(pdf_response["status"], 200)
+        self.assertTrue(pdf_response["contentType"].startswith("application/pdf"))
+        self.assertIn("annotated survey", pdf_response["content"])
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        annotate_button = pending_card.get_by_role(
+            "button", name="Annotate survey-plan.pdf"
+        )
+        self.assertTrue(annotate_button.is_visible())
+        button_layout = annotate_button.evaluate(
+            """button => {
+              const rect = button.getBoundingClientRect();
+              const row = button.closest('li').getBoundingClientRect();
+              return {
+                display: getComputedStyle(button).display,
+                left: rect.left,
+                right: rect.right,
+                rowLeft: row.left,
+                rowRight: row.right
+              };
+            }"""
+        )
+        self.assertNotEqual(button_layout["display"], "none")
+        self.assertGreaterEqual(button_layout["left"], button_layout["rowLeft"])
+        self.assertLessEqual(button_layout["right"], button_layout["rowRight"])
+        self.page.set_viewport_size({"width": 1280, "height": 720})
+        pending_card.get_by_role(
+            "button", name="Annotate survey-plan.pdf"
+        ).click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_box = canvas.bounding_box()
+        self.page.mouse.move(canvas_box["x"] + 30, canvas_box["y"] + 30)
+        self.page.mouse.down()
+        self.page.mouse.move(canvas_box["x"] + 130, canvas_box["y"] + 90)
+        self.page.mouse.up()
+        save_annotated_copy = self.page.get_by_role(
+            "button", name="Save annotated copy"
+        )
+        self.assertTrue(save_annotated_copy.is_enabled())
+        save_annotated_copy.click()
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
+        shared_pdf = pending_card.locator(".ventilation-shared-pdfs")
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('.ventilation-house-card')]
+              .some(card => card.textContent.includes('survey-plan-vent-annotated.pdf'))"""
+        )
+        self.assertFalse(shared_pdf.evaluate("element => element.open"))
+        shared_pdf.locator("summary").click()
+        self.page.get_by_text("survey-plan-vent-annotated.pdf", exact=True).wait_for()
+        with server.connect_db() as db:
+            original = db.execute(
+                """
+                SELECT content FROM house_vent_documents
+                WHERE house_id = 'VENT-DASHBOARD-PENDING' AND filename = 'survey-plan.pdf'
+                """
+            ).fetchone()
+            annotated = db.execute(
+                """
+                SELECT content, shared_by FROM house_vent_documents
+                WHERE house_id = 'VENT-DASHBOARD-PENDING'
+                  AND filename = 'survey-plan-vent-annotated.pdf'
+                """
+            ).fetchone()
+        self.assertEqual(original["content"], annotatable_pdf)
+        self.assertNotEqual(annotated["content"], annotatable_pdf)
+        self.assertEqual(annotated["shared_by"], "Vent annotated by Ventilation Dashboard")
+        self.assertEqual(
+            len(
+                self.page.locator("#ventilation-house-list").evaluate(
+                    "element => getComputedStyle(element).gridTemplateColumns.split(' ').filter(Boolean)"
+                )
+            ),
+            2,
+        )
+        ventilation_card_shape = self.page.locator(
+            ".ventilation-house-card"
+        ).first.evaluate(
+            """card => ({
+              minHeight: getComputedStyle(card).minHeight,
+              borderRadius: getComputedStyle(card).borderRadius,
+              padding: getComputedStyle(card).padding,
+              boxShadow: getComputedStyle(card).boxShadow
+            })"""
+        )
+        self.assertEqual(ventilation_card_shape["minHeight"], "190px")
+        self.assertEqual(ventilation_card_shape["borderRadius"], "13px")
+        self.assertEqual(ventilation_card_shape["padding"], "20px")
+        self.assertIn(
+            "Ventilation Teammate",
+            self.page.locator(".ventilation-house-card.is-complete").inner_text(),
+        )
+        self.assertIn(
+            "Ventilation outstanding",
+            self.page.locator(".ventilation-house-card:not(.is-complete)").inner_text(),
+        )
+        self.assertEqual(
+            self.page.locator("#ventilation-filter-outstanding-count").inner_text(),
+            "1",
+        )
+        self.page.locator('[data-ventilation-filter="outstanding"]').click()
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 1)
+        self.assertIn(
+            "VENT-DASHBOARD-PENDING",
+            self.page.locator(".ventilation-house-card").inner_text(),
+        )
+        self.page.locator('[data-ventilation-filter="all"]').click()
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 2)
+        self.page.locator('[data-ventilation-filter="complete"]').click()
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 1)
+        self.assertTrue(
+            self.page.locator(".ventilation-house-card.is-complete").is_visible()
+        )
+        self.page.locator('[data-ventilation-filter="all"]').click()
+        self.assertEqual(self.page.locator(".ventilation-house-card").count(), 2)
+        pending_card = self.page.locator(
+            ".ventilation-house-card"
+        ).filter(has_text="VENT-DASHBOARD-PENDING")
+        self.assertTrue(
+            pending_card.get_by_role(
+                "button", name="Mark Vent work done"
+            ).is_visible()
+        )
+        if self.page.locator("html").get_attribute("data-theme") != "dark":
+            self.page.locator("#theme-toggle").click()
+        dark_card_style = pending_card.evaluate(
+            """card => ({
+              background: getComputedStyle(card).backgroundColor,
+              color: getComputedStyle(card).color,
+              buttonBackground: getComputedStyle(card.querySelector('.ventilation-complete-button')).backgroundColor,
+              buttonColor: getComputedStyle(card.querySelector('.ventilation-complete-button')).color,
+              pdfBackground: getComputedStyle(card.querySelector('.survey-room-seai-pdf-list li')).backgroundColor
+            })"""
+        )
+        self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
+        self.assertNotEqual(dark_card_style["background"], "rgba(0, 0, 0, 0)")
+        self.assertNotEqual(dark_card_style["buttonBackground"], dark_card_style["background"])
+        self.assertEqual(dark_card_style["buttonColor"], "rgb(255, 255, 255)")
+        self.assertNotEqual(dark_card_style["pdfBackground"], "rgb(255, 255, 255)")
+        if not shared_pdf.evaluate("element => element.open"):
+            shared_pdf.locator("summary").click()
+        self.assertIn("Shared survey PDFs", shared_pdf.inner_text())
+        pdf_actions = shared_pdf.locator(".ventilation-pdf-actions").first
+        self.assertEqual(
+            pdf_actions.evaluate("element => getComputedStyle(element).display"),
+            "grid",
+        )
+        self.assertTrue(pdf_actions.locator("[data-vent-pdf-annotate]").is_visible())
+        dark_pdf_style = shared_pdf.locator(".ventilation-shared-pdf-list li").first.evaluate(
+            """row => ({
+              background: getComputedStyle(row).backgroundColor,
+              borderColor: getComputedStyle(row).borderTopColor,
+              filename: getComputedStyle(row.querySelector('.ventilation-pdf-name strong')).color,
+              metadata: getComputedStyle(row.querySelector('.ventilation-pdf-name small')).color
+            })"""
+        )
+        self.assertNotEqual(dark_pdf_style["background"], "rgb(255, 255, 255)")
+        self.assertNotEqual(dark_pdf_style["filename"], dark_pdf_style["background"])
+        self.assertNotEqual(dark_pdf_style["metadata"], dark_pdf_style["background"])
+        pending_card.get_by_role(
+            "button", name="Annotate survey-plan.pdf"
+        ).click()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        annotator_dark_style = self.page.locator("#pdf-annotator-dialog").evaluate(
+            """dialog => ({
+              dialog: getComputedStyle(dialog).backgroundColor,
+              header: getComputedStyle(dialog.querySelector('.pdf-annotator-header')).backgroundColor,
+              toolbar: getComputedStyle(dialog.querySelector('.pdf-annotator-toolbar')).backgroundColor,
+              title: getComputedStyle(dialog.querySelector('.pdf-annotator-title h2')).color,
+              help: getComputedStyle(dialog.querySelector('.pdf-annotator-help')).color,
+              viewport: getComputedStyle(dialog.querySelector('.pdf-annotator-viewport')).backgroundColor,
+              pdfPage: getComputedStyle(dialog.querySelector('.pdf-page-surface')).backgroundColor,
+              activeTool: getComputedStyle(dialog.querySelector('.pdf-tool-button.active')).backgroundColor
+            })"""
+        )
+        self.assertNotEqual(annotator_dark_style["dialog"], "rgb(255, 255, 255)")
+        self.assertNotEqual(annotator_dark_style["header"], "rgb(255, 255, 255)")
+        self.assertNotEqual(annotator_dark_style["toolbar"], "rgb(255, 255, 255)")
+        self.assertNotEqual(annotator_dark_style["viewport"], "rgb(255, 255, 255)")
+        self.assertEqual(annotator_dark_style["pdfPage"], "rgb(255, 255, 255)")
+        self.assertNotEqual(annotator_dark_style["activeTool"], "rgba(0, 0, 0, 0)")
+        self.page.locator("#pdf-annotator-close").click()
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
+        pending_card.get_by_role(
+            "button", name="Mark Vent work done"
+        ).click()
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('.ventilation-house-card')]
+              .some(card => card.textContent.includes('VENT-DASHBOARD-PENDING') &&
+                card.classList.contains('is-complete'))"""
+        )
+        self.assertIn("Ventilation Dashboard", pending_card.inner_text())
+        self.assertTrue(pending_card.locator(".ventilation-completion-mark.is-done").is_visible())
+        undo_button_style = pending_card.locator(
+            ".ventilation-complete-button.is-undo"
+        ).evaluate(
+            """button => ({
+              background: getComputedStyle(button).backgroundColor,
+              borderStyle: getComputedStyle(button).borderTopStyle,
+              borderColor: getComputedStyle(button).borderTopColor,
+              color: getComputedStyle(button).color
+            })"""
+        )
+        self.assertEqual(undo_button_style["background"], "rgba(0, 0, 0, 0)")
+        self.assertEqual(undo_button_style["borderStyle"], "solid")
+        self.assertNotEqual(undo_button_style["borderColor"], "rgba(0, 0, 0, 0)")
+        self.assertNotEqual(undo_button_style["color"], "rgb(255, 255, 255)")
+        self.assertEqual(
+            pending_card.locator("[data-ventilation-complete]").get_attribute(
+                "data-done"
+            ),
+            "false",
+        )
+        pending_card.get_by_role(
+            "button", name="Mark Vent work outstanding"
+        ).click()
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('.ventilation-house-card')]
+              .some(card => card.textContent.includes('VENT-DASHBOARD-PENDING') &&
+                !card.classList.contains('is-complete'))"""
+        )
+        self.assertIn("Ventilation outstanding", pending_card.inner_text())
+        self.assertNotIn("Completed by Ventilation Dashboard", pending_card.inner_text())
+        self.assertFalse(pending_card.locator(".ventilation-completion-mark.is-done").count())
+        self.assertTrue(
+            pending_card.get_by_role(
+                "button", name="Mark Vent work done"
+            ).is_visible()
+        )
+        self.assertEqual(
+            self.page.locator("#page-overview [data-goto*='survey']").count(),
+            0,
+        )
+        self.assertEqual(self.browser_errors, [])
+
     def test_cross_user_updates_refresh_the_current_view_and_keep_other_views_stale(self):
         self.page.wait_for_function(
             "document.querySelector('#stat-ready').textContent !== '—'"
@@ -366,6 +822,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.set_viewport_size({"width": 390, "height": 844})
         card = self.page.locator("#houses-list article[data-house-id='DASHBOARD-1']")
         self.assertTrue(card.is_visible())
+        self.assertEqual(card.locator(".surveyor-house-details").count(), 0)
         insulation = card.locator(".house-insulation-summary")
         self.assertTrue(insulation.is_visible())
         self.assertIn("No verified SEAI insulation quantities are available", insulation.inner_text())
@@ -1461,7 +1918,12 @@ class NavigationBrowserTests(unittest.TestCase):
                 db, "picker-surveyor", "Picker Surveyor", "345678", "surveyor"
             )
             supervisor_id = server._insert_user(
-                db, "picker-supervisor", "Picker Supervisor", "456789", "supervisor"
+                db,
+                "picker-supervisor",
+                "Picker Supervisor",
+                "456789",
+                "supervisor",
+                "External Wall Insulation",
             )
             server._insert_user(db, "picker-assign", "Cathy", "234567", "assign")
             db.execute(
@@ -1490,6 +1952,15 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator("#auth-pin").fill("234567")
         self.page.locator("#auth-submit").click()
         self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        refresh_button = self.page.locator("#refresh-surveyor-houses")
+        self.assertTrue(refresh_button.is_visible())
+        self.assertEqual(refresh_button.get_attribute("aria-label"), "Refresh house dashboard")
+        self.assertIn("ventilation-refresh-button", refresh_button.get_attribute("class"))
+        self.assertTrue(refresh_button.locator(".ventilation-refresh-icon").is_visible())
+        refresh_button.click()
+        self.page.wait_for_function(
+            "() => !document.querySelector('#refresh-surveyor-houses').hasAttribute('aria-busy')"
+        )
         self.page.locator("[data-assign-house-filter='ready']").click()
         self.page.locator(
             "#houses-list [data-house-id='SUPERVISOR-PICKER-TEST'] .assign-house-activate"
@@ -1556,7 +2027,12 @@ class NavigationBrowserTests(unittest.TestCase):
                 db, "test-surveyor-one", "Surveyor One", "345678", "surveyor"
             )
             supervisor_id = server._insert_user(
-                db, "browser-supervisor", "Browser Supervisor", "456789", "supervisor"
+                db,
+                "browser-supervisor",
+                "Browser Supervisor",
+                "456789",
+                "supervisor",
+                "External Wall Insulation",
             )
             server._insert_user(
                 db, "cathy-assign", "Cathy", "234567", "assign"
@@ -2570,7 +3046,10 @@ class NavigationBrowserTests(unittest.TestCase):
                 db.execute(
                     """
                     UPDATE provided_houses
-                    SET address = 'Audit Test Address', area_m2 = 100, perimeter_m = 40
+                    SET address = 'Audit Test Address', area_m2 = 100, perimeter_m = 40,
+                        plan_vent_required = 1,
+                        plan_vent_done_by = 'Vent Team Member',
+                        plan_vent_done_at = '2026-11-03T10:00:00'
                     WHERE id = 'AUDIT-CARD-TEST'
                     """
                 )
@@ -2589,6 +3068,9 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Ready Actor", card.inner_text())
         self.assertIn("Active Actor", card.inner_text())
         self.assertIn("Surveyor Name", card.inner_text())
+        self.assertIn("Vent work", card.inner_text())
+        self.assertIn("Complete", card.inner_text())
+        self.assertIn("Vent Team Member", card.inner_text())
         self.assertEqual(card.locator(".house-property-details").count(), 0)
         self.assertNotIn("Audit Test Address", card.inner_text())
         stage_one = card.locator('.stage-btn[data-stage="1"]')
@@ -2605,6 +3087,73 @@ class NavigationBrowserTests(unittest.TestCase):
             stage_two.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(184, 119, 50)",
         )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_active_house_card_shows_vent_completion_from_shared_work_plan(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "VENT-CATHY-CARD")
+                db.execute(
+                    """
+                    UPDATE provided_houses
+                    SET plan_vent_required = 1,
+                        plan_vent_done_by = 'Vent Team Member',
+                        plan_vent_done_at = '2026-11-03T10:00:00'
+                    WHERE id = 'VENT-CATHY-CARD'
+                    """
+                )
+                server._record_house_status(
+                    db, "VENT-CATHY-CARD", "ready", "Ready Actor"
+                )
+                server._record_house_status(
+                    db, "VENT-CATHY-CARD", "active", "Active Actor"
+                )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator("#stat-houses").click()
+        card = self.page.locator("#houses-list .house-card").filter(
+            has=self.page.locator("h2", has_text="VENT-CATHY-CARD")
+        )
+        self.assertIn("Vent work", card.inner_text())
+        self.assertIn("Complete", card.inner_text())
+        self.assertIn("Vent Team Member", card.inner_text())
+        self.assertIn("Checked by Vent Team Member", card.inner_text())
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_vent_done_by = '', plan_vent_done_at = ''
+                WHERE id = 'VENT-CATHY-CARD'
+                """
+            )
+        server._record_change("/api/house-work-plan/complete")
+        self.page.evaluate("pollTrackerChanges()")
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('#houses-list .house-card')]
+              .some(card => card.textContent.includes('VENT-CATHY-CARD') &&
+                card.textContent.includes('Outstanding') &&
+                !card.textContent.includes('Vent Team Member'))"""
+        )
+        self.assertIn("Outstanding", card.inner_text())
+        self.assertNotIn("Vent Team Member", card.inner_text())
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_vent_done_by = 'Vent Team Member',
+                    plan_vent_done_at = '2026-11-03T10:00:00'
+                WHERE id = 'VENT-CATHY-CARD'
+                """
+            )
+        server._record_change("/api/house-work-plan/complete")
+        self.page.evaluate("pollTrackerChanges()")
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('#houses-list .house-card')]
+              .some(card => card.textContent.includes('VENT-CATHY-CARD') &&
+                card.textContent.includes('Vent Team Member') &&
+                card.textContent.includes('Complete'))"""
+        )
+        self.assertIn("Checked by Vent Team Member", card.inner_text())
+        self.assertEqual(self.browser_errors, [])
         self.assertEqual(self.browser_errors, [])
 
     def test_house_stage_change_updates_card_dashboard_and_survives_reload(self):

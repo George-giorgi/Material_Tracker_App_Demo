@@ -14,7 +14,7 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest, urlopen
 import zipfile
 from contextlib import asynccontextmanager, contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from io import BytesIO, StringIO
 from xml.etree.ElementTree import ParseError, fromstring
@@ -377,6 +377,8 @@ def _create_house_document_share_pdf(content, filename, house_id, survey_note):
             422,
             f"PDFs with more than {HOUSE_DOCUMENT_MAX_PAGES} pages cannot be prepared for sharing.",
         )
+    if not survey_note:
+        return bytes(content)
 
     font_path = Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"
     font_name = "TrackerSurveyNotes"
@@ -533,6 +535,8 @@ def _create_seai_document_share_pdf(selections, documents, house_id, survey_note
         filenames.add(source["filename"])
     selected_pages = BytesIO()
     writer.write(selected_pages)
+    if not survey_note:
+        return selected_pages.getvalue()
     source_label = (
         f"Selected SEAI pages ({len(selections)} pages from {len(filenames)} PDFs)"
     )
@@ -557,6 +561,9 @@ def _is_annotated_pdf_filename(filename):
     )
 
 
+WORK_PLAN_TRADES = ("scaffolding", "esb", "plumber", "vent")
+
+
 def _is_not_started_house(db, house_id):
     row = db.execute(
         """
@@ -579,6 +586,9 @@ def _clear_house_survey_records(db, house_id):
     db.execute("DELETE FROM house_surveys WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_snags WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_checklists WHERE house_id = ?", (house_id,))
+    db.execute("DELETE FROM house_vent_documents WHERE house_id = ?", (house_id,))
+    db.execute("DELETE FROM seai_document_shares WHERE house_id = ?", (house_id,))
+    db.execute("DELETE FROM seai_shared_pdf_deliveries WHERE house_id = ?", (house_id,))
     db.execute(
         """
         UPDATE provided_houses
@@ -591,7 +601,17 @@ def _clear_house_survey_records(db, house_id):
             plan_esb_required = NULL,
             plan_esb_notes = '',
             plan_plumber_required = NULL,
-            plan_plumber_notes = ''
+            plan_plumber_notes = '',
+            plan_scaffolding_done_by = '',
+            plan_scaffolding_done_at = '',
+            plan_esb_done_by = '',
+            plan_esb_done_at = '',
+            plan_plumber_done_by = '',
+            plan_plumber_done_at = '',
+            plan_vent_required = NULL,
+            plan_vent_notes = '',
+            plan_vent_done_by = '',
+            plan_vent_done_at = ''
         WHERE id = ?
         """,
         (house_id,),
@@ -1068,6 +1088,46 @@ def initialize_db():
             )
             """
         )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_vent_documents (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                shared_by TEXT NOT NULL DEFAULT '',
+                shared_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seai_document_shares (
+                id INTEGER PRIMARY KEY,
+                document_id INTEGER NOT NULL,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                recipient_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                shared_by TEXT NOT NULL DEFAULT '',
+                shared_at TEXT NOT NULL,
+                UNIQUE(document_id, recipient_user_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seai_shared_pdf_deliveries (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                recipient_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                shared_by TEXT NOT NULL DEFAULT '',
+                shared_at TEXT NOT NULL
+            )
+            """
+        )
         provided_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(provided_houses)")
         }
@@ -1083,6 +1143,13 @@ def initialize_db():
             ("plan_esb_notes", "TEXT NOT NULL DEFAULT ''"),
             ("plan_plumber_required", "INTEGER"),
             ("plan_plumber_notes", "TEXT NOT NULL DEFAULT ''"),
+            ("plan_vent_required", "INTEGER"),
+            ("plan_vent_notes", "TEXT NOT NULL DEFAULT ''"),
+            *(
+                (f"plan_{trade}_{field}", "TEXT NOT NULL DEFAULT ''")
+                for trade in WORK_PLAN_TRADES
+                for field in ("done_by", "done_at")
+            ),
             ("latitude", "REAL"),
             ("longitude", "REAL"),
         ):
@@ -1285,20 +1352,8 @@ def _seed_user_departments():
                 """,
                 (user["id"], department_ids[department]),
             )
-        karol = db.execute(
-            "SELECT id FROM app_users WHERE username = 'Karol' COLLATE NOCASE"
-        ).fetchone()
-        if karol is not None:
-            db.execute(
-                """
-                INSERT OR IGNORE INTO user_departments
-                    (user_id, department_id, is_primary)
-                VALUES (?, ?, 0)
-                """,
-                (karol["id"], department_ids["Surveyors"]),
-            )
         ewi_department_id = department_ids["External Wall Insulation"]
-        karol = db.execute(
+        ewi_supervisor = db.execute(
             """
             SELECT id FROM app_users
             WHERE role = 'supervisor' AND supervisor_specialty = ?
@@ -1306,7 +1361,7 @@ def _seed_user_departments():
             """,
             ("External Wall Insulation",),
         ).fetchone()
-        if karol is not None:
+        if ewi_supervisor is not None:
             for teamlead in db.execute(
                 """
                 SELECT users.id FROM app_users users
@@ -1317,14 +1372,14 @@ def _seed_user_departments():
                 """,
                 (ewi_department_id,),
             ):
-                if teamlead["id"] != karol["id"]:
+                if teamlead["id"] != ewi_supervisor["id"]:
                     db.execute(
                         """
                         INSERT OR IGNORE INTO user_reporting_lines
                             (manager_user_id, report_user_id, relationship)
                         VALUES (?, ?, 'supervisor')
                         """,
-                        (karol["id"], teamlead["id"]),
+                        (ewi_supervisor["id"], teamlead["id"]),
                     )
 
 
@@ -1497,6 +1552,66 @@ def _has_access_profile(user, role_key):
     return f"access.{role_key}" in values or (
         role_key == "admin" and "*" in values
     )
+
+
+def _in_department(db, user, department_name):
+    return db.execute(
+        """
+        SELECT 1 FROM user_departments memberships
+        JOIN departments ON departments.id = memberships.department_id
+        WHERE memberships.user_id = ?
+          AND departments.name = ? COLLATE NOCASE
+        """,
+        (user["id"], department_name),
+    ).fetchone() is not None
+
+
+def _external_insulation_supervisors(db):
+    return db.execute(
+        """
+        SELECT users.id
+        FROM app_users users
+        WHERE users.is_active = 1
+          AND users.supervisor_specialty = 'External Wall Insulation' COLLATE NOCASE
+          AND EXISTS (
+              SELECT 1 FROM app_role_permissions access
+              WHERE access.role_key = users.role
+                AND access.permission_key = 'access.supervisor'
+                AND access.is_allowed = 1
+          )
+        ORDER BY users.id
+        """
+    ).fetchall()
+
+
+def _can_complete_work_plan_trade(db, user, trade):
+    if trade == "plumber":
+        return _has_access_profile(user, "plumber")
+    if trade == "vent":
+        return _in_department(db, user, "Ventilation")
+    if _has_access_profile(user, "assign"):
+        return True
+    if not (
+        _has_access_profile(user, "supervisor")
+        or _has_access_profile(user, "teamlead")
+    ):
+        return False
+    return db.execute(
+        """
+        SELECT 1 FROM app_users users
+        WHERE users.id = ?
+          AND (
+              users.supervisor_specialty = 'External Wall Insulation' COLLATE NOCASE
+              OR EXISTS (
+                  SELECT 1 FROM user_departments memberships
+                  JOIN departments ON departments.id = memberships.department_id
+                  WHERE memberships.user_id = users.id
+                    AND departments.name = 'External Wall Insulation' COLLATE NOCASE
+              )
+          )
+        """,
+        (user["id"],),
+    ).fetchone() is not None
 
 
 def _set_user_organization(db, user_id, department_ids, manager_user_id=None):
@@ -2731,6 +2846,10 @@ def _dashboard(db):
                        COALESCE(p.plan_esb_notes, '') AS plan_esb_notes,
                        p.plan_plumber_required,
                        COALESCE(p.plan_plumber_notes, '') AS plan_plumber_notes,
+                       p.plan_vent_required,
+                       COALESCE(p.plan_vent_notes, '') AS plan_vent_notes,
+                       COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
+                       COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
                        c.scaffolding_status, c.esb_unclipped, c.plumber_status
                 FROM houses h
                 LEFT JOIN house_checklists c ON c.house_id = h.id
@@ -2742,6 +2861,58 @@ def _dashboard(db):
         ],
         "locations": sorted(known_locations(db)),
     }
+
+
+def _ventilation_house_list(db):
+    houses = [
+        {
+            "id": row["id"],
+            "postcode": row["postcode"],
+            "address": row["address"],
+            "owner_name": row["owner_name"],
+            "status": row["status"],
+            "notes": row["notes"],
+            "done_by": row["plan_vent_done_by"],
+            "done_at": row["plan_vent_done_at"],
+            "documents": [],
+        }
+        for row in db.execute(
+            """
+            SELECT p.id, p.postcode, p.address, p.owner_name,
+                   COALESCE(p.plan_vent_notes, '') AS notes,
+                   COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
+                   COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
+                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                        WHEN h.id IS NULL THEN 'not_started'
+                        WHEN h.is_finished = 1 THEN 'closed'
+                        ELSE 'active' END AS status
+            FROM provided_houses p
+            LEFT JOIN houses h ON h.id = p.id
+            WHERE p.plan_vent_required = 1
+            ORDER BY
+                (COALESCE(p.plan_vent_done_at, '') = ''),
+                COALESCE(p.plan_vent_done_at, '') DESC,
+                p.id COLLATE NOCASE
+            """
+        )
+    ]
+    documents_by_house = {}
+    for row in db.execute(
+        """
+        SELECT documents.id, documents.house_id, documents.filename,
+               documents.size_bytes, documents.shared_by, documents.shared_at
+        FROM house_vent_documents documents
+        JOIN provided_houses houses ON houses.id = documents.house_id
+        WHERE houses.plan_vent_required = 1
+        ORDER BY documents.id DESC
+        """
+    ):
+        documents_by_house.setdefault(row["house_id"], []).append(
+            {key: row[key] for key in ("id", "filename", "size_bytes", "shared_by", "shared_at")}
+        )
+    for house in houses:
+        house["documents"] = documents_by_house.get(house["id"], [])
+    return houses
 
 
 def _team_rosters(db):
@@ -3309,7 +3480,19 @@ class LegacyRouteHandlers:
                     or urlparse(self.path).path.startswith("/api/house-documents/")
                     or urlparse(self.path).path == "/api/seai-documents"
                     or urlparse(self.path).path.startswith("/api/seai-documents/")
+                    or urlparse(self.path).path == "/api/house-vent-documents"
+                    or urlparse(self.path).path.startswith("/api/house-vent-documents/")
+                    or urlparse(self.path).path == "/api/supervisor/shared-seai-documents"
+                    or urlparse(self.path).path.startswith("/api/supervisor/shared-seai-documents/")
                 )
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and urlparse(self.path).path == "/api/house-vent-documents"
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and urlparse(self.path).path == "/api/supervisor/shared-seai-documents"
             )
             allowed = allowed or (
                 self.command == "POST"
@@ -3360,6 +3543,14 @@ class LegacyRouteHandlers:
                 )
                 is not None
             )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/seai-documents/\d+/share-with-ewi-team",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
             if not allowed:
                 self._send_json(403, {"error": "Surveyor access is limited to ready-house surveys."})
                 return None
@@ -3376,9 +3567,12 @@ class LegacyRouteHandlers:
             f"ewi_session={token}",
             "Path=/",
             "HttpOnly",
-            "SameSite=Strict",
+            "SameSite=Lax",
             f"Max-Age={max_age}",
         ]
+        if max_age > 0:
+            expires = datetime.now(timezone.utc) + timedelta(seconds=max_age)
+            attributes.append(f"Expires={expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
         if COOKIE_SECURE:
             attributes.append("Secure")
         return [("Set-Cookie", "; ".join(attributes))]
@@ -3535,6 +3729,11 @@ class LegacyRouteHandlers:
                            p.plan_scaffolding_required, p.plan_scaffolding_notes,
                            p.plan_esb_required, p.plan_esb_notes,
                            p.plan_plumber_required, p.plan_plumber_notes,
+                           p.plan_scaffolding_done_by, p.plan_scaffolding_done_at,
+                           p.plan_esb_done_by, p.plan_esb_done_at,
+                           p.plan_plumber_done_by, p.plan_plumber_done_at,
+                           p.plan_vent_required, p.plan_vent_notes,
+                           p.plan_vent_done_by, p.plan_vent_done_at,
                            hs.data AS survey_data, hs.notes AS survey_notes,
                            hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
                            assigned_surveyor.display_name AS assigned_surveyor_name,
@@ -3640,9 +3839,14 @@ class LegacyRouteHandlers:
                         }
                 snags = _snags_by_house(db)
                 house_audit = _house_audit_by_id(db)
+                work_plan_permissions = {
+                    trade: _can_complete_work_plan_trade(db, user, trade)
+                    for trade in WORK_PLAN_TRADES
+                }
             houses = []
             for row in rows:
                 house = dict(row)
+                house["work_plan_permissions"] = work_plan_permissions
                 if can_see_seai_summary:
                     house["seai_summary"] = seai_summaries.get(row["id"])
                 if (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
@@ -3703,7 +3907,16 @@ class LegacyRouteHandlers:
                         dict(row)
                         for row in db.execute(
                             """
-                            SELECT id, username, display_name
+                            SELECT id, username, display_name,
+                                   (
+                                       supervisor_specialty = 'External Wall Insulation' COLLATE NOCASE
+                                       OR EXISTS (
+                                           SELECT 1 FROM user_departments link
+                                           JOIN departments dept ON dept.id = link.department_id
+                                           WHERE link.user_id = app_users.id
+                                             AND dept.name = 'External Wall Insulation' COLLATE NOCASE
+                                       )
+                                   ) AS is_ewi
                             FROM app_users
                             WHERE is_active = 1
                               AND EXISTS (
@@ -3800,6 +4013,122 @@ class LegacyRouteHandlers:
                         if not _is_annotated_pdf_filename(row["filename"])
                     ]
             self._send_json(200, {"house_id": house_id, "documents": [dict(row) for row in rows]})
+        elif path == "/api/supervisor/shared-seai-documents" or path.startswith(
+            "/api/supervisor/shared-seai-documents/"
+        ):
+            user = self._login_required()
+            if user is None:
+                return
+            if not _has_access_profile(user, "supervisor"):
+                self._send_json(403, {"error": "Supervisor access is required to view shared team PDFs."})
+                return
+            if path == "/api/supervisor/shared-seai-documents":
+                with connect_db() as db:
+                    document_table = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'seai_documents'"
+                    ).fetchone()
+                    if not document_table:
+                        rows = []
+                    else:
+                        columns = {
+                            row["name"]
+                            for row in db.execute("PRAGMA table_info(seai_documents)")
+                        }
+                        if "content" not in columns:
+                            self._send_json(
+                                503,
+                                {"error": "SEAI PDF storage has not been initialized."},
+                            )
+                            return
+                        rows = [
+                            dict(row)
+                            for row in db.execute(
+                            """
+                            SELECT shares.id, shares.house_id, shares.shared_by,
+                                   shares.shared_at, documents.filename,
+                                   length(documents.content) AS size_bytes,
+                                   '/api/supervisor/shared-seai-documents/' ||
+                                       shares.id || '/file' AS file_url
+                            FROM seai_document_shares shares
+                            JOIN seai_documents documents ON documents.id = shares.document_id
+                            WHERE shares.recipient_user_id = ?
+                              AND documents.content IS NOT NULL
+                            ORDER BY shares.shared_at DESC, shares.id DESC
+                            """,
+                            (user["id"],),
+                            ).fetchall()
+                        ]
+                    rows.extend(
+                        dict(row)
+                        for row in db.execute(
+                            """
+                            SELECT 'delivery-' || id AS id, house_id, shared_by,
+                                   shared_at, filename, size_bytes,
+                                   '/api/supervisor/shared-seai-documents/delivery-' ||
+                                       id || '/file' AS file_url
+                            FROM seai_shared_pdf_deliveries
+                            WHERE recipient_user_id = ?
+                            ORDER BY shared_at DESC, id DESC
+                            """,
+                            (user["id"],),
+                        ).fetchall()
+                    )
+                rows.sort(
+                    key=lambda row: (row["shared_at"], str(row["id"])),
+                    reverse=True,
+                )
+                self._send_json(200, {"documents": [dict(row) for row in rows]})
+                return
+            delivery_match = re.fullmatch(
+                r"/api/supervisor/shared-seai-documents/delivery-(\d+)/file",
+                path,
+            )
+            if delivery_match:
+                with connect_db() as db:
+                    row = db.execute(
+                        """
+                        SELECT filename, content
+                        FROM seai_shared_pdf_deliveries
+                        WHERE id = ? AND recipient_user_id = ?
+                        """,
+                        (int(delivery_match.group(1)), user["id"]),
+                    ).fetchone()
+                if row is None:
+                    self._send_json(404, {"error": "Shared PDF was not found."})
+                    return
+                attachment = parse_qs(urlparse(self.path).query).get("download", ["0"])[0] == "1"
+                self._send_pdf(row["filename"], row["content"], attachment=attachment)
+                return
+            match = re.fullmatch(
+                r"/api/supervisor/shared-seai-documents/(\d+)/file", path
+            )
+            if match is None:
+                self._send_json(404, {"error": "Shared PDF was not found."})
+                return
+            with connect_db() as db:
+                document_table = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'seai_documents'"
+                ).fetchone()
+                if not document_table:
+                    self._send_json(404, {"error": "Shared PDF was not found."})
+                    return
+                row = db.execute(
+                    """
+                    SELECT documents.filename, documents.content
+                    FROM seai_document_shares shares
+                    JOIN seai_documents documents ON documents.id = shares.document_id
+                    WHERE shares.id = ? AND shares.recipient_user_id = ?
+                      AND documents.content IS NOT NULL
+                    """,
+                    (int(match.group(1)), user["id"]),
+                ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "Shared PDF was not found."})
+                return
+            attachment = parse_qs(urlparse(self.path).query).get("download", ["0"])[0] == "1"
+            self._send_pdf(row["filename"], row["content"], attachment=attachment)
         elif path == "/api/seai-documents":
             user = self._login_required()
             if user is None:
@@ -3927,6 +4256,79 @@ class LegacyRouteHandlers:
                 )
             else:
                 self._send_pdf(row["filename"], row["content"])
+        elif path == "/api/house-vent-documents" or path.startswith("/api/house-vent-documents/"):
+            user = self._login_required()
+            if user is None:
+                return
+            can_view_all_shared_documents = (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "surveyor")
+                or _has_access_profile(user, "assign")
+            )
+            is_ventilation_user = False
+            with connect_db() as db:
+                is_ventilation_user = _in_department(db, user, "Ventilation")
+                if not can_view_all_shared_documents and not is_ventilation_user:
+                    self._send_json(403, {"error": "You cannot view documents shared with the Vent team."})
+                    return
+                if path == "/api/house-vent-documents":
+                    house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
+                    if not house_id:
+                        self._send_json(400, {"error": "A house ID is required."})
+                        return
+                    if is_ventilation_user and not can_view_all_shared_documents:
+                        eligible = db.execute(
+                            "SELECT 1 FROM provided_houses WHERE id = ? AND plan_vent_required = 1",
+                            (house_id,),
+                        ).fetchone()
+                        if eligible is None:
+                            self._send_json(404, {"error": "House was not found."})
+                            return
+                    rows = db.execute(
+                        """
+                        SELECT id, filename, size_bytes, shared_by, shared_at
+                        FROM house_vent_documents WHERE house_id = ? ORDER BY id DESC
+                        """,
+                        (house_id,),
+                    ).fetchall()
+                    self._send_json(200, {"house_id": house_id, "documents": [dict(row) for row in rows]})
+                    return
+                document_id = path[len("/api/house-vent-documents/"):]
+                document_match = re.fullmatch(r"(\d+)/(file|preview)", document_id)
+                if document_match is None:
+                    self._send_json(404, {"error": "Document was not found."})
+                    return
+                row = db.execute(
+                    """
+                    SELECT documents.house_id, documents.filename, documents.content,
+                           houses.plan_vent_required
+                    FROM house_vent_documents documents
+                    LEFT JOIN provided_houses houses ON houses.id = documents.house_id
+                    WHERE documents.id = ?
+                    """,
+                    (int(document_match.group(1)),),
+                ).fetchone()
+                if row is None:
+                    self._send_json(404, {"error": "Document was not found."})
+                    return
+                if (
+                    is_ventilation_user
+                    and not can_view_all_shared_documents
+                    and row["plan_vent_required"] != 1
+                ):
+                    self._send_json(404, {"error": "Document was not found."})
+                    return
+            if document_match.group(2) == "preview":
+                page_values = parse_qs(urlparse(self.path).query).get("page", ["1"])
+                try:
+                    page_number = int(page_values[0])
+                except ValueError:
+                    self._send_json(400, {"error": "A valid PDF page number is required."})
+                    return
+                image, page_count = _render_pdf_page(row["content"], page_number)
+                self._send_png(image, (("X-PDF-Page-Count", str(page_count)),))
+            else:
+                self._send_pdf(row["filename"], row["content"])
         elif path.startswith("/api/house-documents/"):
             user = self._login_required()
             if user is None:
@@ -3993,6 +4395,22 @@ class LegacyRouteHandlers:
                 return
             if not is_share_pdf:
                 self._send_pdf(row["filename"], row["content"])
+                return
+            include_survey_note = (
+                parse_qs(urlparse(self.path).query)
+                .get("include_survey_note", ["1"])[0]
+                != "0"
+            )
+            if not include_survey_note:
+                try:
+                    share_pdf = _create_house_document_share_pdf(
+                        row["content"], row["filename"], row["house_id"], None
+                    )
+                except ApiError as exc:
+                    self._send_json(exc.status, {"error": str(exc)})
+                    return
+                share_filename = f"{row['house_id']}-{Path(row['filename']).name}"
+                self._send_pdf(share_filename, share_pdf, attachment=True)
                 return
             survey = json.loads(row["survey_data"]) if row["survey_data"] else {}
             survey_note = str(survey.get("notes") or "").strip()
@@ -4067,6 +4485,8 @@ class LegacyRouteHandlers:
                 dashboard = _dashboard(db)
                 if _has_access_profile(user, "assign"):
                     dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
+                if _in_department(db, user, "Ventilation"):
+                    dashboard["ventilation_houses"] = _ventilation_house_list(db)
             if _has_access_profile(user, "assign"):
                 dashboard["materials"] = []
                 dashboard["movements"] = []
@@ -4347,6 +4767,10 @@ class LegacyRouteHandlers:
                                 WHEN h.is_finished = 1 THEN 'closed'
                                 ELSE 'active' END AS status,
                            COALESCE(p.notes, '') AS notes,
+                           p.plan_scaffolding_required, p.plan_scaffolding_notes,
+                           p.plan_esb_required, p.plan_esb_notes,
+                           p.plan_plumber_required, p.plan_plumber_notes,
+                           p.plan_vent_required, p.plan_vent_notes,
                            hs.data AS survey_data,
                            COALESCE(hs.notes, '') AS survey_notes,
                            COALESCE(hs.updated_by, '') AS survey_updated_by,
@@ -4367,7 +4791,12 @@ class LegacyRouteHandlers:
                                hc.scaffolding_status, hc.esb_unclipped,
                                hc.plumber_status, is_finished,
                                CASE WHEN is_finished = 1 THEN 'closed' ELSE 'active' END AS status,
-                               '' AS notes, NULL AS survey_data, '' AS survey_notes,
+                               '' AS notes,
+                               NULL AS plan_scaffolding_required, NULL AS plan_scaffolding_notes,
+                               NULL AS plan_esb_required, NULL AS plan_esb_notes,
+                               NULL AS plan_plumber_required, NULL AS plan_plumber_notes,
+                               NULL AS plan_vent_required, NULL AS plan_vent_notes,
+                               NULL AS survey_data, '' AS survey_notes,
                                '' AS survey_updated_by, '' AS survey_updated_at
                         FROM houses
                         LEFT JOIN house_checklists hc ON hc.house_id = houses.id
@@ -4743,6 +5172,76 @@ class LegacyRouteHandlers:
                     {"ok": True, "filename": document["filename"]},
                 )
                 return
+            ewi_share_match = re.fullmatch(
+                r"/api/seai-documents/(\d+)/share-with-ewi-team", path
+            )
+            if ewi_share_match:
+                if not (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ):
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to share annotated PDFs with the External Insulation team.",
+                    )
+                document_id = int(ewi_share_match.group(1))
+                with connect_db() as db:
+                    document_table = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'seai_documents'"
+                    ).fetchone()
+                    if not document_table:
+                        raise ApiError(404, "Annotated SEAI PDF was not found.")
+                    columns = {
+                        row["name"]
+                        for row in db.execute("PRAGMA table_info(seai_documents)")
+                    }
+                    if "content" not in columns:
+                        raise ApiError(503, "SEAI PDF storage has not been initialized.")
+                    source = db.execute(
+                        """
+                        SELECT documents.id, documents.application_id, documents.filename
+                        FROM seai_documents documents
+                        JOIN provided_houses houses ON houses.id = documents.application_id
+                        WHERE documents.id = ? AND lower(documents.filename) LIKE '%.pdf'
+                          AND documents.content IS NOT NULL
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                    if source is None or not _is_annotated_pdf_filename(source["filename"]):
+                        raise ApiError(404, "Annotated SEAI PDF was not found.")
+                    _require_pdf_editable(db, source["application_id"])
+                    recipients = _external_insulation_supervisors(db)
+                    if not recipients:
+                        raise ApiError(404, "No active External Insulation supervisor accounts were found.")
+                    shared_at = datetime.now().isoformat(timespec="seconds")
+                    inserted = sum(
+                        db.execute(
+                            """
+                            INSERT OR IGNORE INTO seai_document_shares
+                                (document_id, house_id, recipient_user_id, shared_by, shared_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                document_id,
+                                source["application_id"],
+                                recipient["id"],
+                                user["display_name"],
+                                shared_at,
+                            ),
+                        ).rowcount
+                        for recipient in recipients
+                    )
+                self._send_json(
+                    200,
+                    {
+                        "shared": bool(inserted),
+                        "recipient_count": len(recipients),
+                        "house_id": source["application_id"],
+                        "filename": source["filename"],
+                    },
+                )
+                return
             seai_share_match = re.fullmatch(r"/api/seai-documents/(\d+)/share", path)
             if seai_share_match:
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
@@ -4750,6 +5249,11 @@ class LegacyRouteHandlers:
                         403,
                         "Administrator or surveyor access is required to share SEAI PDFs.",
                     )
+                include_survey_note = (
+                    parse_qs(urlparse(self.path).query)
+                    .get("include_survey_note", ["1"])[0]
+                    != "0"
+                )
                 document_id = int(seai_share_match.group(1))
                 with connect_db() as db:
                     source = db.execute(
@@ -4764,35 +5268,35 @@ class LegacyRouteHandlers:
                     if source is None:
                         raise ApiError(404, "SEAI PDF was not found.")
                     _require_pdf_editable(db, source["application_id"])
-                    survey_row = db.execute(
-                        "SELECT data FROM house_surveys WHERE house_id = ?",
-                        (source["application_id"],),
-                    ).fetchone()
-                    if survey_row is None:
-                        raise ApiError(
-                            409, "Save a survey note before sharing an SEAI PDF."
-                        )
-                    try:
-                        survey_data = json.loads(survey_row["data"])
-                    except (json.JSONDecodeError, TypeError) as exc:
-                        raise ApiError(500, "The saved house survey could not be read.") from exc
-                    if not isinstance(survey_data, dict):
-                        raise ApiError(500, "The saved house survey could not be read.")
-                    survey_note = str(survey_data.get("notes") or "").strip()
-                    if not survey_note:
-                        raise ApiError(
-                            409, "Save a survey note before sharing an SEAI PDF."
-                        )
+                    survey_note = None
+                    if include_survey_note:
+                        survey_row = db.execute(
+                            "SELECT data FROM house_surveys WHERE house_id = ?",
+                            (source["application_id"],),
+                        ).fetchone()
+                        if survey_row is None:
+                            raise ApiError(
+                                409, "Save a survey note before sharing an SEAI PDF."
+                            )
+                        try:
+                            survey_data = json.loads(survey_row["data"])
+                        except (json.JSONDecodeError, TypeError) as exc:
+                            raise ApiError(500, "The saved house survey could not be read.") from exc
+                        if not isinstance(survey_data, dict):
+                            raise ApiError(500, "The saved house survey could not be read.")
+                        survey_note = str(survey_data.get("notes") or "").strip()
+                        if not survey_note:
+                            raise ApiError(
+                                409, "Save a survey note before sharing an SEAI PDF."
+                            )
                 shared_pdf = _create_house_document_share_pdf(
                     source["content"],
                     source["filename"],
                     source["application_id"],
                     survey_note,
                 )
-                share_filename = (
-                    f"{source['application_id']}-"
-                    f"{Path(source['filename']).stem}-with-survey-note.pdf"
-                )
+                suffix = "-with-survey-note" if include_survey_note else ""
+                share_filename = f"{source['application_id']}-{Path(source['filename']).stem}{suffix}.pdf"
                 self._send_pdf(share_filename, shared_pdf, attachment=True)
                 return
             if path == "/api/seai-documents/share":
@@ -4806,6 +5310,9 @@ class LegacyRouteHandlers:
                     raise ApiError(400, "SEAI PDF share details must be a JSON object.")
                 house_id = str(payload.get("house_id") or "").strip()
                 selections = payload.get("pages")
+                include_survey_note = payload.get("include_survey_note", True)
+                if not isinstance(include_survey_note, bool):
+                    raise ApiError(400, "The survey note option must be true or false.")
                 if (
                     not house_id
                     or not isinstance(selections, list)
@@ -4845,23 +5352,25 @@ class LegacyRouteHandlers:
                     )
                 with connect_db() as db:
                     _require_pdf_editable(db, house_id)
-                    survey_row = db.execute(
-                        "SELECT data FROM house_surveys WHERE house_id = ?",
-                        (house_id,),
-                    ).fetchone()
-                    if survey_row is None:
-                        raise ApiError(409, "Save a survey note before sharing selected PDF pages.")
-                    try:
-                        survey_data = json.loads(survey_row["data"])
-                    except (json.JSONDecodeError, TypeError) as exc:
-                        raise ApiError(500, "The saved house survey could not be read.") from exc
-                    if not isinstance(survey_data, dict):
-                        raise ApiError(500, "The saved house survey could not be read.")
-                    survey_note = str(survey_data.get("notes") or "").strip()
-                    if not survey_note:
-                        raise ApiError(
-                            409, "Save a survey note before sharing selected PDF pages."
-                        )
+                    survey_note = None
+                    if include_survey_note:
+                        survey_row = db.execute(
+                            "SELECT data FROM house_surveys WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        if survey_row is None:
+                            raise ApiError(409, "Save a survey note before sharing selected PDF pages.")
+                        try:
+                            survey_data = json.loads(survey_row["data"])
+                        except (json.JSONDecodeError, TypeError) as exc:
+                            raise ApiError(500, "The saved house survey could not be read.") from exc
+                        if not isinstance(survey_data, dict):
+                            raise ApiError(500, "The saved house survey could not be read.")
+                        survey_note = str(survey_data.get("notes") or "").strip()
+                        if not survey_note:
+                            raise ApiError(
+                                409, "Save a survey note before sharing selected PDF pages."
+                            )
                     placeholders = ",".join("?" for _ in document_ids)
                     rows = db.execute(
                         f"""
@@ -4923,7 +5432,8 @@ class LegacyRouteHandlers:
                     house_id,
                     survey_note,
                 )
-                share_filename = f"{house_id}-selected-seai-pages-with-survey-note.pdf"
+                suffix = "-with-survey-note" if include_survey_note else ""
+                share_filename = f"{house_id}-selected-seai-pages{suffix}.pdf"
                 self._send_pdf(share_filename, shared_pdf, attachment=True)
                 return
             seai_annotation_match = re.fullmatch(
@@ -5090,6 +5600,103 @@ class LegacyRouteHandlers:
                     },
                 )
                 return
+            vent_annotation_match = re.fullmatch(
+                r"/api/house-vent-documents/(\d+)/annotations", path
+            )
+            if vent_annotation_match:
+                with connect_db() as db:
+                    is_ventilation_user = _in_department(db, user, "Ventilation")
+                if not is_ventilation_user:
+                    raise ApiError(
+                        403, "Ventilation department access is required to annotate shared PDFs."
+                    )
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PDF annotations must be a JSON object.")
+                document_id = int(vent_annotation_match.group(1))
+                with connect_db() as db:
+                    source = db.execute(
+                        """
+                        SELECT documents.house_id, documents.filename, documents.content
+                        FROM house_vent_documents documents
+                        JOIN provided_houses houses ON houses.id = documents.house_id
+                        WHERE documents.id = ? AND houses.plan_vent_required = 1
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                if source is None:
+                    raise ApiError(404, "Document was not found.")
+                annotated_pdf = _annotate_pdf_document(
+                    source["content"], payload.get("annotations")
+                )
+                if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
+                    raise ApiError(413, "The annotated PDF exceeds the 8 MB document limit.")
+                annotated_filename = (
+                    f"{Path(source['filename']).stem}-vent-annotated.pdf"
+                )
+                shared_at = datetime.now().isoformat(timespec="seconds")
+                shared_by = f"Vent annotated by {user['display_name']}"
+                with connect_db() as db:
+                    with db:
+                        eligible = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses
+                            WHERE id = ? AND plan_vent_required = 1
+                            """,
+                            (source["house_id"],),
+                        ).fetchone()
+                        if eligible is None:
+                            raise ApiError(
+                                409, "Vent PDFs can only be annotated while Vent work is required."
+                            )
+                        document_count = db.execute(
+                            "SELECT COUNT(*) FROM house_vent_documents WHERE house_id = ?",
+                            (source["house_id"],),
+                        ).fetchone()[0]
+                        if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
+                            raise ApiError(
+                                409, "This house already has the maximum of 25 Vent team PDFs."
+                            )
+                        suffix = 2
+                        while db.execute(
+                            """
+                            SELECT 1 FROM house_vent_documents
+                            WHERE house_id = ? AND filename = ?
+                            """,
+                            (source["house_id"], annotated_filename),
+                        ).fetchone():
+                            annotated_filename = (
+                                f"{Path(source['filename']).stem}-vent-annotated-{suffix}.pdf"
+                            )
+                            suffix += 1
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_vent_documents
+                                (house_id, filename, content, size_bytes, shared_by, shared_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                source["house_id"],
+                                annotated_filename,
+                                annotated_pdf,
+                                len(annotated_pdf),
+                                shared_by,
+                                shared_at,
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": source["house_id"],
+                        "source_id": document_id,
+                        "filename": annotated_filename,
+                        "size_bytes": len(annotated_pdf),
+                        "shared_by": shared_by,
+                        "shared_at": shared_at,
+                    },
+                )
+                return
             if path == "/api/house-survey":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to record measurements.")
@@ -5228,6 +5835,133 @@ class LegacyRouteHandlers:
                     },
                 )
                 return
+            if path == "/api/supervisor/shared-seai-documents":
+                if not (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ):
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to send PDFs to the External Insulation team.",
+                    )
+                query = parse_qs(urlparse(self.path).query)
+                house_id = query.get("house_id", [""])[0].strip()
+                filename = Path(query.get("filename", [""])[0]).name.strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if not filename or not filename.lower().endswith(".pdf"):
+                    raise ApiError(400, "External Insulation team documents must be PDF files.")
+                file_data = self._body()
+                if not file_data.startswith(b"%PDF-"):
+                    raise ApiError(400, "The shared file is not a valid PDF.")
+                if len(file_data) > HOUSE_DOCUMENT_MAX_BYTES:
+                    raise ApiError(413, "The shared PDF must be smaller than 8 MB.")
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not ready:
+                            raise ApiError(404, "Ready house was not found.")
+                        recipients = _external_insulation_supervisors(db)
+                        if not recipients:
+                            raise ApiError(404, "No active External Insulation supervisor accounts were found.")
+                        delivery_ids = []
+                        shared_at = datetime.now().isoformat(timespec="seconds")
+                        for recipient in recipients:
+                            count = db.execute(
+                                """
+                                SELECT COUNT(*) FROM seai_shared_pdf_deliveries
+                                WHERE house_id = ? AND recipient_user_id = ?
+                                """,
+                                (house_id, recipient["id"]),
+                            ).fetchone()[0]
+                            if count >= HOUSE_DOCUMENT_MAX_COUNT:
+                                raise ApiError(
+                                    409,
+                                    "This house already has the maximum of 25 External Insulation team PDFs.",
+                                )
+                            cursor = db.execute(
+                                """
+                                INSERT INTO seai_shared_pdf_deliveries
+                                    (house_id, recipient_user_id, filename, content,
+                                     size_bytes, shared_by, shared_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    house_id,
+                                    recipient["id"],
+                                    filename,
+                                    file_data,
+                                    len(file_data),
+                                    user["display_name"],
+                                    shared_at,
+                                ),
+                            )
+                            delivery_ids.append(cursor.lastrowid)
+                self._send_json(
+                    201,
+                    {
+                        "recipient_count": len(delivery_ids),
+                        "house_id": house_id,
+                        "filename": filename,
+                    },
+                )
+                return
+            if path == "/api/house-vent-documents":
+                if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
+                    raise ApiError(403, "Surveyor access is required to share PDFs with the Vent team.")
+                query = parse_qs(urlparse(self.path).query)
+                house_id = query.get("house_id", [""])[0].strip()
+                filename = Path(query.get("filename", [""])[0]).name.strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if not filename or not filename.lower().endswith(".pdf"):
+                    raise ApiError(400, "Vent team documents must be PDF files.")
+                file_data = self._body()
+                if not file_data.startswith(b"%PDF-"):
+                    raise ApiError(400, "The shared file is not a valid PDF.")
+                with connect_db() as db:
+                    with db:
+                        ready = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not ready:
+                            raise ApiError(404, "Ready house was not found.")
+                        count = db.execute(
+                            "SELECT COUNT(*) FROM house_vent_documents WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()[0]
+                        if count >= HOUSE_DOCUMENT_MAX_COUNT:
+                            raise ApiError(409, "This house already has the maximum of 25 Vent team PDFs.")
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_vent_documents
+                                (house_id, filename, content, size_bytes, shared_by, shared_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                house_id,
+                                filename,
+                                file_data,
+                                len(file_data),
+                                user["display_name"],
+                                datetime.now().isoformat(timespec="seconds"),
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {"id": cursor.lastrowid, "house_id": house_id, "filename": filename},
+                )
+                return
             if path == "/api/house-documents":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to upload house documents.")
@@ -5357,6 +6091,7 @@ class LegacyRouteHandlers:
                 "/api/movements/batch",
                 "/api/house-checklist",
                 "/api/house-work-plan",
+                "/api/house-work-plan/complete",
                 "/api/seai-measure-variation",
             }:
                 if not self._admin_required(user):
@@ -5966,7 +6701,7 @@ class LegacyRouteHandlers:
                     raise ApiError(400, "House ID is required.")
                 required_values = {}
                 notes_values = {}
-                for trade in ("scaffolding", "esb", "plumber"):
+                for trade in WORK_PLAN_TRADES:
                     required = payload.get(f"{trade}_required")
                     if required is not None and not isinstance(required, bool):
                         raise ApiError(
@@ -5982,32 +6717,35 @@ class LegacyRouteHandlers:
                         None if required is None else int(required)
                     )
                     notes_values[trade] = notes.strip()
+                assignments = ", ".join(
+                    f"plan_{trade}_required = ?, plan_{trade}_notes = ?, "
+                    f"plan_{trade}_done_by = CASE WHEN ? = 1 THEN plan_{trade}_done_by ELSE '' END, "
+                    f"plan_{trade}_done_at = CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END"
+                    for trade in WORK_PLAN_TRADES
+                )
+                values = [
+                    value
+                    for trade in WORK_PLAN_TRADES
+                    for value in (
+                        required_values[trade],
+                        notes_values[trade],
+                        required_values[trade],
+                        required_values[trade],
+                    )
+                ]
                 with connect_db() as db:
                     with db:
                         saved = db.execute(
-                            """
+                            f"""
                             UPDATE provided_houses
-                            SET plan_scaffolding_required = ?,
-                                plan_scaffolding_notes = ?,
-                                plan_esb_required = ?,
-                                plan_esb_notes = ?,
-                                plan_plumber_required = ?,
-                                plan_plumber_notes = ?
+                            SET {assignments}
                             WHERE id = ? AND ready_for_start = 1
                               AND NOT EXISTS (
                                   SELECT 1 FROM houses
                                   WHERE houses.id = provided_houses.id
                               )
                             """,
-                            (
-                                required_values["scaffolding"],
-                                notes_values["scaffolding"],
-                                required_values["esb"],
-                                notes_values["esb"],
-                                required_values["plumber"],
-                                notes_values["plumber"],
-                                house_id,
-                            ),
+                            (*values, house_id),
                         )
                         if saved.rowcount == 0:
                             exists = db.execute(
@@ -6021,6 +6759,63 @@ class LegacyRouteHandlers:
                                 "Work plans can only be edited for Ready for start houses.",
                             )
                 self._send_json(200, {"house_id": house_id, "saved": True})
+            elif path == "/api/house-work-plan/complete":
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "Work plan update must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                trade = payload.get("trade")
+                done = payload.get("done")
+                if not house_id:
+                    raise ApiError(400, "House ID is required.")
+                if trade not in WORK_PLAN_TRADES:
+                    raise ApiError(400, "Choose a valid work plan item.")
+                if not isinstance(done, bool):
+                    raise ApiError(400, "Choose whether the work is done.")
+                with connect_db() as db:
+                    with db:
+                        if not _can_complete_work_plan_trade(db, user, trade):
+                            raise ApiError(
+                                403,
+                                "Plumber work can only be checked by a Plumber."
+                                if trade == "plumber"
+                                else "Vent work can only be checked by a Vent team account."
+                                if trade == "vent"
+                                else "Only Assign, External Wall Insulation supervisors and team leads can check this item.",
+                            )
+                        completed_at = datetime.now().isoformat(timespec="seconds")
+                        saved = db.execute(
+                            f"""
+                            UPDATE provided_houses
+                            SET plan_{trade}_done_by = ?,
+                                plan_{trade}_done_at = ?
+                            WHERE id = ? AND ready_for_start = 1
+                              AND plan_{trade}_required = 1
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM houses
+                                  WHERE houses.id = provided_houses.id
+                              )
+                            """,
+                            (
+                                user["display_name"] if done else "",
+                                completed_at if done else "",
+                                house_id,
+                            ),
+                        )
+                        if saved.rowcount == 0:
+                            raise ApiError(
+                                409,
+                                "Only required work on Ready for start houses can be checked.",
+                            )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "trade": trade,
+                        "done_by": user["display_name"] if done else "",
+                        "done_at": completed_at if done else "",
+                    },
+                )
             elif path == "/api/seai-measure-variation":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(

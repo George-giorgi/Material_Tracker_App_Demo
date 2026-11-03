@@ -198,6 +198,21 @@ class HttpBase(FlowBase):
         connection.close()
         return result
 
+    def call_binary(self, method, path, content, content_type, cookie=None):
+        headers = {"Content-Type": content_type}
+        use_cookie = self.cookie if cookie is None else cookie
+        if use_cookie:
+            headers["Cookie"] = use_cookie
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request(method, path, body=content, headers=headers)
+        response = connection.getresponse()
+        result = json.loads(response.read() or b"{}")
+        status = response.status
+        connection.close()
+        return status, result
+
     def call_raw_with_headers(self, method, path, cookie=None):
         headers = {}
         use_cookie = self.cookie if cookie is None else cookie
@@ -402,6 +417,26 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertIn("Second observation for the house.", note_page)
         self.assertGreaterEqual(note_page.count("•"), 2)
         self.assertNotIn("Do not include this house note", note_page)
+
+    def test_vent_share_pdf_excludes_survey_note_page(self):
+        self.make_ready_house()
+        original_pdf = self.make_test_pdf("Original plan content")
+        status, uploaded = self.call_multipart(
+            "/api/house-documents", "DOC-TEST", "survey-plan.pdf", original_pdf
+        )
+        self.assertEqual(status, 201, uploaded)
+
+        status, content_type, disposition, shared_pdf = self.call_raw(
+            "GET",
+            f"/api/house-documents/{uploaded['id']}/share?include_survey_note=0",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        reader = PdfReader(BytesIO(shared_pdf))
+        self.assertEqual(len(reader.pages), 1)
+        self.assertIn("Original plan content", reader.pages[0].extract_text())
+        self.assertNotIn("House survey note", reader.pages[0].extract_text())
 
     def test_share_pdf_requires_a_saved_survey_note(self):
         self.make_ready_house()
@@ -617,6 +652,228 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertEqual(
             self.call_raw("GET", f"/api/house-documents/{uploaded['id']}/share")[0],
             409,
+        )
+
+    def test_pdf_saved_for_vent_team_is_listed_and_cleared_on_reset(self):
+        self.make_ready_house()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=5
+        )
+        connection.request(
+            "POST",
+            "/api/house-vent-documents?house_id=DOC-TEST&filename=vent-pages.pdf",
+            body=b"%PDF-1.4\nvent\n",
+            headers={"Content-Type": "application/pdf", "Cookie": self.cookie},
+        )
+        response = connection.getresponse()
+        saved = json.loads(response.read())
+        connection.close()
+        self.assertEqual(response.status, 201, saved)
+        status, listing, _ = self.call("GET", "/api/house-vent-documents?house_id=DOC-TEST")
+        self.assertEqual(status, 200)
+        self.assertEqual([d["filename"] for d in listing["documents"]], ["vent-pages.pdf"])
+        status, _, _, body = self.call_raw("GET", f"/api/house-vent-documents/{saved['id']}/file")
+        self.assertEqual((status, body), (200, b"%PDF-1.4\nvent\n"))
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_vent_required = 1 WHERE id = 'DOC-TEST'"
+            )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, plan_vent_required)
+                VALUES ('DOC-NOT-VENT', 0)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_documents
+                    (house_id, filename, content, size_bytes, shared_by, shared_at)
+                VALUES ('DOC-NOT-VENT', 'private.pdf', ?, ?, 'Surveyor', '2026-11-03T09:00:00')
+                """,
+                (b"%PDF-1.4\nprivate\n", len(b"%PDF-1.4\nprivate\n")),
+            )
+            other_document_id = db.execute(
+                "SELECT id FROM house_vent_documents WHERE house_id = 'DOC-NOT-VENT'"
+            ).fetchone()["id"]
+            server._insert_user(
+                db, "vent-doc-reader", "Vent Document Reader", "234567",
+                "teamlead", team_name="Ventilation",
+            )
+            server._insert_user(
+                db, "non-vent-doc-reader", "Other Department", "345678",
+                "employee",
+            )
+        vent_cookie = self.call(
+            "POST", "/api/auth/login",
+            {"username": "vent-doc-reader", "pin": "234567"},
+        )[2]
+        status, listing, _ = self.call(
+            "GET", "/api/house-vent-documents?house_id=DOC-TEST",
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([document["filename"] for document in listing["documents"]], ["vent-pages.pdf"])
+        status, _, _, body = self.call_raw(
+            "GET", f"/api/house-vent-documents/{saved['id']}/file",
+            cookie=vent_cookie,
+        )
+        self.assertEqual((status, body), (200, b"%PDF-1.4\nvent\n"))
+        self.assertEqual(
+            self.call(
+                "GET", "/api/house-vent-documents?house_id=DOC-NOT-VENT",
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        self.assertEqual(
+            self.call_raw(
+                "GET", f"/api/house-vent-documents/{other_document_id}/file",
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        non_vent_cookie = self.call(
+            "POST", "/api/auth/login",
+            {"username": "non-vent-doc-reader", "pin": "345678"},
+        )[2]
+        self.assertEqual(
+            self.call(
+                "GET", "/api/house-vent-documents?house_id=DOC-TEST",
+                cookie=non_vent_cookie,
+            )[0],
+            403,
+        )
+        with server.connect_db() as db:
+            server._clear_house_survey_records(db, "DOC-TEST")
+        status, listing, _ = self.call("GET", "/api/house-vent-documents?house_id=DOC-TEST")
+        self.assertEqual(listing["documents"], [])
+
+    def test_vent_team_can_preview_and_save_a_separate_annotated_copy(self):
+        self.make_ready_house()
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "Surveyor original")
+        original_pdf = document.tobytes()
+        document.close()
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_vent_required = 1 WHERE id = 'DOC-TEST'"
+            )
+            server._insert_user(
+                db,
+                "vent-pdf-annotator",
+                "Vent PDF Annotator",
+                "234567",
+                "teamlead",
+                team_name="Ventilation",
+            )
+            original_id = db.execute(
+                """
+                INSERT INTO house_vent_documents
+                    (house_id, filename, content, size_bytes, shared_by, shared_at)
+                VALUES ('DOC-TEST', 'survey-plan.pdf', ?, ?, 'Surveyor', '2026-11-03T09:00:00')
+                """,
+                (original_pdf, len(original_pdf)),
+            ).lastrowid
+        vent_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "vent-pdf-annotator", "pin": "234567"},
+        )[2]
+
+        status, headers, image = self.call_raw_with_headers(
+            "GET",
+            f"/api/house-vent-documents/{original_id}/preview?page=1",
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["X-PDF-Page-Count"], "1")
+        self.assertTrue(image.startswith(b"\x89PNG"))
+
+        status, annotated, _ = self.call(
+            "POST",
+            f"/api/house-vent-documents/{original_id}/annotations",
+            {
+                "annotations": [
+                    {
+                        "page": 1,
+                        "tool": "pen",
+                        "color": "#d93025",
+                        "width": 0.005,
+                        "points": [[0.2, 0.2], [0.4, 0.4]],
+                    }
+                ]
+            },
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 201, annotated)
+        self.assertEqual(annotated["filename"], "survey-plan-vent-annotated.pdf")
+        self.assertEqual(annotated["shared_by"], "Vent annotated by Vent PDF Annotator")
+        with server.connect_db() as db:
+            source = db.execute(
+                "SELECT content FROM house_vent_documents WHERE id = ?",
+                (original_id,),
+            ).fetchone()
+            saved_copy = db.execute(
+                "SELECT content FROM house_vent_documents WHERE id = ?",
+                (annotated["id"],),
+            ).fetchone()
+        self.assertEqual(source["content"], original_pdf)
+        self.assertNotEqual(saved_copy["content"], original_pdf)
+        self.assertEqual(len(PdfReader(BytesIO(saved_copy["content"])).pages), 1)
+
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, plan_vent_required)
+                VALUES ('DOC-NOT-VENT-ANNOTATE', 0)
+                """
+            )
+            ineligible_id = db.execute(
+                """
+                INSERT INTO house_vent_documents
+                    (house_id, filename, content, size_bytes, shared_by, shared_at)
+                VALUES ('DOC-NOT-VENT-ANNOTATE', 'private.pdf', ?, ?, 'Surveyor', '2026-11-03T09:00:00')
+                """,
+                (original_pdf, len(original_pdf)),
+            ).lastrowid
+            server._insert_user(
+                db,
+                "other-pdf-annotator",
+                "Other PDF Annotator",
+                "345678",
+                "employee",
+            )
+        self.assertEqual(
+            self.call_raw(
+                "GET",
+                f"/api/house-vent-documents/{ineligible_id}/preview?page=1",
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/house-vent-documents/{ineligible_id}/annotations",
+                {"annotations": [{"page": 1}]},
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        other_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "other-pdf-annotator", "pin": "345678"},
+        )[2]
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/house-vent-documents/{original_id}/annotations",
+                {"annotations": [{"page": 1}]},
+                cookie=other_cookie,
+            )[0],
+            403,
         )
 
     def test_document_upload_rejects_non_pdf_and_non_ready_house(self):
@@ -1641,6 +1898,33 @@ class CalculatorApiTests(HttpBase):
         self.assertIn("Survey selected page one", reader.pages[1].extract_text())
         self.assertIn("Saved annotation mark", reader.pages[1].extract_text())
         self.assertIn("Saved SEAI survey note.", reader.pages[2].extract_text())
+        status, content_type, disposition, vent_body = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                "house_id": house_id,
+                "pages": [
+                    {"document_id": source_document_ids[0], "page": 2},
+                    {"document_id": source_document_ids[1], "page": 1},
+                ],
+                "include_survey_note": False,
+            },
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        vent_reader = PdfReader(BytesIO(vent_body))
+        self.assertEqual(len(vent_reader.pages), 2)
+        self.assertIn(
+            "Application selected page two", vent_reader.pages[0].extract_text()
+        )
+        self.assertIn("Survey selected page one", vent_reader.pages[1].extract_text())
+        self.assertIn("Saved annotation mark", vent_reader.pages[1].extract_text())
+        self.assertNotIn(
+            "Saved SEAI survey note.",
+            "\n".join(page.extract_text() for page in vent_reader.pages),
+        )
         with server.connect_db() as db:
             stored_sources = [
                 (row["id"], row["content"])
@@ -1748,6 +2032,22 @@ class CalculatorApiTests(HttpBase):
                 "SELECT content FROM seai_documents WHERE id = ?", (document_id,)
             ).fetchone()["content"]
         self.assertEqual(stored, annotated_content)
+        status, content_type, disposition, vent_body = self.call_raw_json(
+            "POST",
+            f"/api/seai-documents/{document_id}/share?include_survey_note=0",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        vent_reader = PdfReader(BytesIO(vent_body))
+        self.assertEqual(len(vent_reader.pages), 2)
+        self.assertIn("Saved annotation mark", vent_reader.pages[0].extract_text())
+        self.assertNotIn(
+            "Survey note for annotated PDF",
+            "\n".join(page.extract_text() for page in vent_reader.pages),
+        )
 
         with server.connect_db() as db:
             db.execute(
@@ -1762,6 +2062,248 @@ class CalculatorApiTests(HttpBase):
         )
         self.assertEqual(status, 409)
         self.assertIn("Save a survey note", error_body.decode("utf-8"))
+
+    def test_surveyor_can_share_annotated_pdf_with_ewi_supervisors(self):
+        house_id = "PDF-EWI-SHARE"
+        self.provide(house_id, "D00 0000", "1 Example Street, Demo Town", "Example Owner")
+        self.mark_ready(house_id)
+        pdf_buffer = BytesIO()
+        pdf = canvas.Canvas(pdf_buffer)
+        pdf.drawString(72, 720, "Annotated survey")
+        pdf.save()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    content BLOB
+                )
+                """
+            )
+            annotated_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'survey-annotated.pdf', '.pdf', ?)
+                """,
+                (house_id, pdf_buffer.getvalue()),
+            ).lastrowid
+            original_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Survey', 'survey.pdf', '.pdf', ?)
+                """,
+                (house_id, pdf_buffer.getvalue()),
+            ).lastrowid
+        for username, display_name, role, specialty in (
+            ("ewi-supervisor-a", "EWI Supervisor A", "supervisor", "External Wall Insulation"),
+            ("ewi-supervisor-b", "EWI Supervisor B", "supervisor", "External Wall Insulation"),
+            ("other-supervisor", "Other Supervisor", "supervisor", "Plumbing"),
+            ("ewi-share-surveyor", "Share Surveyor", "surveyor", ""),
+        ):
+            status, result, _ = self.call(
+                "POST",
+                "/api/users",
+                {
+                    "username": username,
+                    "display_name": display_name,
+                    "pin": "345678",
+                    "role": role,
+                    "supervisor_specialty": specialty,
+                },
+            )
+            self.assertEqual(status, 201, result)
+        _, _, surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ewi-share-surveyor", "pin": "345678"},
+        )
+        _, _, ewi_cookie_a = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ewi-supervisor-a", "pin": "345678"},
+        )
+        _, _, ewi_cookie_b = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ewi-supervisor-b", "pin": "345678"},
+        )
+        _, _, other_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "other-supervisor", "pin": "345678"},
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{annotated_id}/share-with-ewi-team",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["shared"])
+        self.assertEqual(result["recipient_count"], 2)
+        status, repeated, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{annotated_id}/share-with-ewi-team",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200, repeated)
+        self.assertFalse(repeated["shared"])
+        status, error, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{original_id}/share-with-ewi-team",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 404, error)
+
+        status, ewi_documents, _ = self.call(
+            "GET",
+            "/api/supervisor/shared-seai-documents",
+            cookie=ewi_cookie_a,
+        )
+        self.assertEqual(status, 200, ewi_documents)
+        self.assertEqual(len(ewi_documents["documents"]), 1)
+        share_id = ewi_documents["documents"][0]["id"]
+        status, second_ewi_documents, _ = self.call(
+            "GET",
+            "/api/supervisor/shared-seai-documents",
+            cookie=ewi_cookie_b,
+        )
+        self.assertEqual(status, 200, second_ewi_documents)
+        self.assertEqual(len(second_ewi_documents["documents"]), 1)
+        status, other_documents, _ = self.call(
+            "GET",
+            "/api/supervisor/shared-seai-documents",
+            cookie=other_cookie,
+        )
+        self.assertEqual(status, 200, other_documents)
+        self.assertEqual(other_documents["documents"], [])
+        status, content_type, disposition, body = self.call_raw(
+            "GET",
+            f"/api/supervisor/shared-seai-documents/{share_id}/file?download=1",
+            cookie=ewi_cookie_a,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("attachment", disposition)
+        self.assertEqual(body, pdf_buffer.getvalue())
+        status, _, _, _ = self.call_raw(
+            "GET",
+            f"/api/supervisor/shared-seai-documents/{share_id}/file",
+            cookie=other_cookie,
+        )
+        self.assertEqual(status, 404)
+        with server.connect_db() as db:
+            server._clear_house_survey_records(db, house_id)
+            remaining_shares = db.execute(
+                "SELECT COUNT(*) FROM seai_document_shares WHERE house_id = ?",
+                (house_id,),
+            ).fetchone()[0]
+        self.assertEqual(remaining_shares, 0)
+
+    def test_selected_pdf_can_be_sent_to_ewi_supervisors(self):
+        house_id = "PDF-EWI-SELECTED"
+        self.provide(house_id, "D00 0000", "1 Example Street, Demo Town", "Example Owner")
+        self.mark_ready(house_id)
+        for username, display_name, role, specialty in (
+            ("ewi-supervisor-a", "EWI Supervisor A", "supervisor", "External Wall Insulation"),
+            ("ewi-supervisor-b", "EWI Supervisor B", "supervisor", "External Wall Insulation"),
+            ("other-supervisor", "Other Supervisor", "supervisor", "Plumbing"),
+            ("selected-share-surveyor", "Selected Share Surveyor", "surveyor", ""),
+        ):
+            status, result, _ = self.call(
+                "POST",
+                "/api/users",
+                {
+                    "username": username,
+                    "display_name": display_name,
+                    "pin": "345678",
+                    "role": role,
+                    "supervisor_specialty": specialty,
+                },
+            )
+            self.assertEqual(status, 201, result)
+        surveyor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "selected-share-surveyor", "pin": "345678"},
+        )[2]
+        ewi_cookie_a = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ewi-supervisor-a", "pin": "345678"},
+        )[2]
+        ewi_cookie_b = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ewi-supervisor-b", "pin": "345678"},
+        )[2]
+        other_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "other-supervisor", "pin": "345678"},
+        )[2]
+        selected_pdf = b"%PDF-1.4\nselected and annotated SEAI pages\n"
+        path = (
+            "/api/supervisor/shared-seai-documents"
+            f"?house_id={house_id}&filename={house_id}-selected-pages.pdf"
+        )
+        status, result = self.call_binary(
+            "POST", path, selected_pdf, "application/pdf", cookie=surveyor_cookie
+        )
+        self.assertEqual(status, 201, result)
+        self.assertEqual(result["recipient_count"], 2)
+        status, listing, _ = self.call(
+            "GET",
+            "/api/supervisor/shared-seai-documents",
+            cookie=ewi_cookie_a,
+        )
+        self.assertEqual(status, 200, listing)
+        self.assertEqual(len(listing["documents"]), 1)
+        selected_delivery = listing["documents"][0]
+        self.assertEqual(selected_delivery["house_id"], house_id)
+        self.assertEqual(
+            selected_delivery["file_url"],
+            f"/api/supervisor/shared-seai-documents/delivery-{selected_delivery['id'].removeprefix('delivery-')}/file",
+        )
+        status, _, _, body = self.call_raw(
+            "GET", selected_delivery["file_url"], cookie=ewi_cookie_a
+        )
+        self.assertEqual((status, body), (200, selected_pdf))
+        status, second_listing, _ = self.call(
+            "GET",
+            "/api/supervisor/shared-seai-documents",
+            cookie=ewi_cookie_b,
+        )
+        self.assertEqual(status, 200, second_listing)
+        self.assertEqual(len(second_listing["documents"]), 1)
+        status, other_listing, _ = self.call(
+            "GET",
+            "/api/supervisor/shared-seai-documents",
+            cookie=other_cookie,
+        )
+        self.assertEqual((status, other_listing["documents"]), (200, []))
+        self.assertEqual(
+            self.call_raw(
+                "GET", selected_delivery["file_url"], cookie=other_cookie
+            )[0],
+            404,
+        )
+        with server.connect_db() as db:
+            server._clear_house_survey_records(db, house_id)
+            remaining = db.execute(
+                "SELECT COUNT(*) FROM seai_shared_pdf_deliveries WHERE house_id = ?",
+                (house_id,),
+            ).fetchone()[0]
+        self.assertEqual(remaining, 0)
 
     def test_seai_share_rejects_invalid_selections_and_non_survey_roles(self):
         house_id = "PDF-SHARE-VALIDATION"
@@ -3977,6 +4519,175 @@ class HouseRoleAssignmentTests(HttpBase):
         )
 
 
+class WorkPlanCompletionTests(HttpBase):
+    def login(self, username, display_name, role, pin="234567", **details):
+        with server.connect_db() as db:
+            server._insert_user(db, username, display_name, pin, role, **details)
+        return self.call(
+            "POST", "/api/auth/login", {"username": username, "pin": pin}
+        )[2]
+
+    def complete(self, cookie, trade, done=True):
+        return self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": "PLAN-1", "trade": trade, "done": done},
+            cookie=cookie,
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.provide("PLAN-1", "T1", "1 Elm", "Plan Owner")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1,
+                    plan_scaffolding_required = 1,
+                    plan_esb_required = 1,
+                    plan_plumber_required = 1
+                WHERE id = 'PLAN-1'
+                """
+            )
+
+    def test_surveyor_saves_vent_work_and_only_vent_team_can_check_it(self):
+        cathy = self.login("cathy-vent", "Cathy", "assign")
+        surveyor = self.login("surveyor-vent", "Surveyor", "surveyor")
+        vent_lead = self.login("vent-lead", "Vent Lead", "teamlead", team_name="Ventilation")
+        payload = {"house_id": "PLAN-1", "vent_required": True, "vent_notes": "Fit trickle vents"}
+        for trade in ("scaffolding", "esb", "plumber"):
+            payload[f"{trade}_required"] = False
+        self.assertEqual(
+            self.call("POST", "/api/house-work-plan", payload, cookie=surveyor)[0], 200
+        )
+        status, result, _ = self.call("GET", "/api/calculator/houses?status=ready", cookie=vent_lead)
+        house = next(item for item in result["houses"] if item["id"] == "PLAN-1")
+        self.assertEqual((house["plan_vent_required"], house["plan_vent_notes"]), (1, "Fit trickle vents"))
+        self.assertTrue(house["work_plan_permissions"]["vent"])
+        self.assertEqual(self.complete(cathy, "vent")[0], 403)
+        self.assertEqual(self.complete(self.cookie, "vent")[0], 403)
+        status, result, _ = self.complete(vent_lead, "vent")
+        self.assertEqual((status, result["done_by"]), (200, "Vent Lead"))
+        status, cathy_houses, _ = self.call(
+            "GET", "/api/calculator/houses?status=ready", cookie=cathy
+        )
+        self.assertEqual(status, 200)
+        cathy_house = next(
+            house for house in cathy_houses["houses"] if house["id"] == "PLAN-1"
+        )
+        self.assertEqual(cathy_house["plan_vent_done_by"], "Vent Lead")
+        self.assertTrue(cathy_house["plan_vent_done_at"])
+        status, result, _ = self.complete(vent_lead, "vent", done=False)
+        self.assertEqual(status, 200)
+        self.assertEqual((result["done_by"], result["done_at"]), ("", ""))
+        status, cathy_houses, _ = self.call(
+            "GET", "/api/calculator/houses?status=ready", cookie=cathy
+        )
+        self.assertEqual(status, 200)
+        cathy_house = next(
+            house for house in cathy_houses["houses"] if house["id"] == "PLAN-1"
+        )
+        self.assertEqual(
+            (cathy_house["plan_vent_done_by"], cathy_house["plan_vent_done_at"]),
+            ("", ""),
+        )
+        with server.connect_db() as db:
+            server._clear_house_survey_records(db, "PLAN-1")
+            row = db.execute(
+                "SELECT plan_vent_required, plan_vent_done_by FROM provided_houses WHERE id = 'PLAN-1'"
+            ).fetchone()
+        self.assertEqual((row["plan_vent_required"], row["plan_vent_done_by"]), (None, ""))
+
+    def test_only_permitted_roles_can_check_each_item(self):
+        cathy = self.login("cathy-plan", "Cathy", "assign")
+        ewi_supervisor = self.login(
+            "ewi-supervisor-plan", "External Insulation Supervisor", "supervisor",
+            supervisor_specialty="External Wall Insulation",
+        )
+        other_supervisor = self.login("other-plan", "Other", "supervisor")
+        teamlead = self.login("lead-plan", "Lead", "teamlead")
+        plumber = self.login("plumber-plan", "Plumber", "plumber")
+
+        self.assertEqual(self.complete(cathy, "scaffolding")[0], 200)
+        self.assertEqual(self.complete(ewi_supervisor, "esb")[0], 200)
+        self.assertEqual(self.complete(other_supervisor, "scaffolding", False)[0], 403)
+        self.assertEqual(self.complete(self.cookie, "scaffolding", False)[0], 403)
+        self.assertEqual(self.complete(cathy, "plumber")[0], 403)
+        self.assertEqual(self.complete(ewi_supervisor, "plumber")[0], 403)
+        self.assertEqual(self.complete(plumber, "esb")[0], 403)
+        status, result, _ = self.complete(plumber, "plumber")
+        self.assertEqual((status, result["done_by"]), (200, "Plumber"))
+
+        with server.connect_db() as db:
+            department = db.execute(
+                "SELECT id FROM departments WHERE name = 'External Wall Insulation'"
+            ).fetchone()["id"]
+            self.assertTrue(
+                db.execute(
+                    "SELECT 1 FROM user_departments ud JOIN app_users u ON u.id = ud.user_id "
+                    "WHERE u.username = 'lead-plan' AND ud.department_id = ?",
+                    (department,),
+                ).fetchone()
+            )
+        self.assertEqual(self.complete(teamlead, "esb", False)[0], 200)
+
+    def test_checked_by_is_listed_and_cleared_when_unchecked_or_not_required(self):
+        cathy = self.login("cathy-plan", "Cathy", "assign")
+        self.assertEqual(self.complete(cathy, "scaffolding")[0], 200)
+        _, result, _ = self.call(
+            "GET", "/api/calculator/houses?status=ready", cookie=cathy
+        )
+        house = result["houses"][0]
+        self.assertEqual(house["plan_scaffolding_done_by"], "Cathy")
+        self.assertTrue(house["plan_scaffolding_done_at"])
+        self.assertEqual(
+            house["work_plan_permissions"],
+            {"scaffolding": True, "esb": True, "plumber": False, "vent": False},
+        )
+
+        self.assertEqual(self.complete(cathy, "scaffolding", False)[0], 200)
+        self.assertEqual(self.complete(cathy, "scaffolding")[0], 200)
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_scaffolding_required = 0 WHERE id = 'PLAN-1'"
+            )
+        self.assertEqual(self.complete(cathy, "scaffolding")[0], 409)
+
+    def test_reset_clears_checks(self):
+        cathy = self.login("cathy-plan", "Cathy", "assign")
+        self.assertEqual(self.complete(cathy, "esb")[0], 200)
+        with server.connect_db() as db:
+            server._clear_house_survey_records(db, "PLAN-1")
+            row = db.execute(
+                "SELECT plan_esb_done_by, plan_esb_done_at FROM provided_houses WHERE id = 'PLAN-1'"
+            ).fetchone()
+        self.assertEqual((row[0], row[1]), ("", ""))
+
+
+class HouseDashboardVentStatusTests(HttpBase):
+    def test_active_house_dashboard_includes_vent_completion_for_house_cards(self):
+        with server.connect_db() as db:
+            with db:
+                server._upsert_house(db, "VENT-CARD-DASHBOARD")
+                db.execute(
+                    """
+                    UPDATE provided_houses
+                    SET plan_vent_required = 1,
+                        plan_vent_done_by = 'Vent Team Member',
+                        plan_vent_done_at = '2026-11-03T10:00:00'
+                    WHERE id = 'VENT-CARD-DASHBOARD'
+                    """
+                )
+        status, dashboard, _ = self.call("GET", "/api/dashboard")
+        self.assertEqual(status, 200)
+        house = next(
+            item for item in dashboard["house_list"]
+            if item["id"] == "VENT-CARD-DASHBOARD"
+        )
+        self.assertEqual(house["plan_vent_done_by"], "Vent Team Member")
+        self.assertEqual(house["plan_vent_done_at"], "2026-11-03T10:00:00")
+
+
 class FrontEndLogicTests(unittest.TestCase):
     def test_audit_date_time_uses_readable_day_month_year_and_24_hour_time(self):
         start = APP_JS.index("function formatAuditDateTime")
@@ -4167,6 +4878,27 @@ class UiWiringTests(unittest.TestCase):
         )
         self.assertNotIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
         self.assertIn('data-not-started-only', html)
+
+    def test_annotated_pdfs_can_be_shared_with_the_ewi_supervisor_team(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('"/api/supervisor/shared-seai-documents"', APP_JS)
+        self.assertIn("/share-with-ewi-team", APP_JS)
+        self.assertIn('id="house-document-share-ewi"', html)
+        self.assertIn('id="house-document-share-vent"', html)
+        self.assertIn("Send PDF to Vent team", html)
+        self.assertIn("Send PDF to external insulation team", html)
+        self.assertIn("Available to active External Insulation supervisors", html)
+        self.assertIn('$("#house-document-share-ewi").hidden = false', APP_JS)
+        self.assertIn("ewiTeamShare: {", APP_JS)
+        self.assertIn("/api/supervisor/shared-seai-documents?house_id=", APP_JS)
+        self.assertIn("sendPreparedPdfToEwiTeam", APP_JS)
+        self.assertIn(".house-document-team-buttons { display: grid;", css)
+        self.assertIn(".house-document-team-buttons > .house-document-team-ewi {", css)
+        self.assertIn("html[data-theme=\"dark\"] .house-document-team-buttons > .house-document-team-ewi", css)
+        self.assertIn(".house-document-share-options { display: grid;", css)
+        self.assertIn("PDFs shared with you", APP_JS)
+        self.assertIn('html[data-theme="dark"] body.supervisor-mode .supervisor-shared-seai', css)
 
     def test_surveyor_seai_pdf_library_is_separately_highlighted(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
