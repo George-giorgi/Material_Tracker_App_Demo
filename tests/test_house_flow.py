@@ -4165,7 +4165,7 @@ class UiWiringTests(unittest.TestCase):
             '`<a class="button button-secondary" href="/api/seai-documents/${Number(document.id)}/file"',
             APP_JS,
         )
-        self.assertIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
+        self.assertNotIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
         self.assertIn('data-not-started-only', html)
 
     def test_surveyor_seai_pdf_library_is_separately_highlighted(self):

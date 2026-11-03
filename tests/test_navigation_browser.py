@@ -4119,7 +4119,8 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(255, 244, 223)",
         )
         nav = self.page.locator(".survey-room-nav")
-        self.assertEqual(nav.locator("a").count(), 6)
+        self.assertEqual(nav.locator("a").count(), 5)
+        self.assertEqual(nav.locator("a[href='#survey-room-documents']").count(), 0)
         nav.locator('a[href="#survey-room-work-plan"]').click()
         self.assertEqual(
             self.page.locator("#house-survey-title").inner_text(),
@@ -4214,157 +4215,6 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-survey-open[data-house-id="SURVEY-ROOM-TEST"]'
         ).click()
         self.assertTrue(self.page.locator("#survey-windows input").first.is_visible())
-        pdf_buffer = BytesIO()
-        pdf = canvas.Canvas(pdf_buffer)
-        pdf.drawString(72, 720, "Browser survey plan")
-        pdf.showPage()
-        pdf.drawString(72, 720, "Second browser survey page")
-        pdf.save()
-        self.page.locator("#house-document-file").set_input_files(
-            {
-                "name": "survey-plan.pdf",
-                "mimeType": "application/octet-stream",
-                "buffer": pdf_buffer.getvalue(),
-            }
-        )
-        self.page.locator("#house-document-form button[type='submit']").click()
-        document_link = self.page.get_by_role("link", name="survey-plan.pdf")
-        document_link.wait_for()
-        response = self.page.request.get(
-            f"{self.base_url}{document_link.get_attribute('href')}"
-        )
-        self.assertEqual(response.status, 200)
-        self.assertEqual(response.headers["content-type"], "application/pdf")
-        self.assertTrue(response.body().startswith(b"%PDF-"))
-        self.page.set_viewport_size({"width": 768, "height": 1024})
-        self.page.locator(".house-document-annotate").click()
-        annotator = self.page.locator("#pdf-annotator-dialog")
-        annotator.wait_for(state="visible")
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-image').naturalWidth > 0"
-        )
-        self.assertEqual(
-            self.page.locator("#pdf-annotator-page-count").inner_text(),
-            "Page 1 of 2",
-        )
-        self.assertEqual(
-            self.page.locator(".pdf-annotator-progress").get_attribute("aria-valuemax"),
-            "2",
-        )
-        self.assertEqual(
-            self.page.locator(".pdf-annotator-progress").get_attribute("aria-valuenow"),
-            "1",
-        )
-        self.assertTrue(self.page.locator("#pdf-annotator-previous").is_disabled())
-        self.assertFalse(self.page.locator("#pdf-annotator-next").is_disabled())
-        self.assertEqual(
-            self.page.locator("#pdf-annotator-zoom-level").inner_text(),
-            "100%",
-        )
-        self.page.set_viewport_size({"width": 390, "height": 844})
-        page_navigation_bounds = self.page.locator(
-            "#pdf-annotator-page-navigation"
-        ).bounding_box()
-        self.assertGreater(page_navigation_bounds["width"], 0)
-        self.assertLessEqual(
-            page_navigation_bounds["x"] + page_navigation_bounds["width"],
-            390,
-        )
-        self.assertTrue(self.page.locator("#pdf-annotator-page-jump").is_visible())
-        self.page.set_viewport_size({"width": 768, "height": 1024})
-        self.page.locator("#pdf-annotator-page-number").fill("2")
-        self.page.locator("#pdf-annotator-page-jump button[type='submit']").click()
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
-        )
-        self.page.locator("#pdf-annotator-page-number").fill("1")
-        self.page.locator("#pdf-annotator-page-jump button[type='submit']").click()
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
-        )
-        self.page.locator("#pdf-annotator-next").click()
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
-        )
-        self.assertEqual(
-            self.page.locator(".pdf-annotator-progress").get_attribute("aria-valuenow"),
-            "2",
-        )
-        self.assertFalse(self.page.locator("#pdf-annotator-previous").is_disabled())
-        self.assertTrue(self.page.locator("#pdf-annotator-next").is_disabled())
-        self.page.locator("#pdf-annotator-previous").click()
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
-        )
-        self.page.locator("#pdf-annotator-zoom-in").click()
-        self.assertEqual(
-            self.page.locator("#pdf-annotator-zoom-level").inner_text(),
-            "125%",
-        )
-        self.page.locator("#pdf-annotator-zoom-fit").click()
-        self.assertEqual(
-            self.page.locator("#pdf-annotator-zoom-level").inner_text(),
-            "100%",
-        )
-        self.page.locator("#pdf-annotator-size").select_option("4")
-        viewport = self.page.locator("#pdf-annotator-viewport")
-        viewport.hover()
-        self.page.mouse.wheel(0, 40)
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 2 of 2'"
-        )
-        self.page.mouse.wheel(0, -40)
-        self.page.wait_for_function(
-            "() => document.querySelector('#pdf-annotator-page-count').textContent === 'Page 1 of 2'"
-        )
-        annotation_canvas = self.page.locator("#pdf-annotator-canvas")
-        canvas_bounds = annotation_canvas.bounding_box()
-        self.page.mouse.move(canvas_bounds["x"] + 120, canvas_bounds["y"] + 140)
-        self.page.mouse.down()
-        self.page.mouse.move(canvas_bounds["x"] + 160, canvas_bounds["y"] + 150)
-        self.page.mouse.up()
-        self.assertFalse(self.page.locator("#pdf-annotator-save").is_disabled())
-        self.page.locator("[data-pdf-tool='text']").click()
-        self.page.locator("#pdf-annotator-text").fill("Survey check")
-        self.page.locator("#pdf-annotator-text-size").select_option("24")
-        annotation_canvas.click(position={"x": 160, "y": 200})
-        text_size = self.page.evaluate(
-            """() => {
-              const annotation = state.pdfAnnotator.annotations.at(-1);
-              return annotation.font_size * state.pdfAnnotator.fitWidth;
-            }"""
-        )
-        self.assertAlmostEqual(text_size, 24)
-        self.page.locator("#pdf-annotator-undo").click()
-        self.assertFalse(self.page.locator("#pdf-annotator-save").is_disabled())
-        annotation_canvas.click(position={"x": 160, "y": 200})
-        self.page.locator("#pdf-annotator-save").click()
-        annotated_link = self.page.get_by_role(
-            "link", name="survey-plan-annotated.pdf"
-        )
-        annotated_link.wait_for()
-        annotated_response = self.page.request.get(
-            f"{self.base_url}{annotated_link.get_attribute('href')}"
-        )
-        self.assertEqual(annotated_response.status, 200)
-        self.assertIn(
-            "Survey check",
-            PdfReader(BytesIO(annotated_response.body())).pages[0].extract_text(),
-        )
-        with server.fitz.open(
-            stream=annotated_response.body(), filetype="pdf"
-        ) as annotated_pdf:
-            self.assertGreater(
-                max(path["width"] for path in annotated_pdf[0].get_drawings()),
-                2.5,
-            )
-        self.assertTrue(document_link.is_visible())
-        self.page.locator(
-            '.house-document-share[data-document-name="survey-plan.pdf"]'
-        ).click()
-        self.page.get_by_text(
-            "Only the Survey note is added to the shared PDF. Enter it in the Survey note field and click Save survey note first."
-        ).wait_for()
         survey_note = self.page.locator("#surveyor-survey-notes-form textarea[name='notes']")
         self.page.wait_for_function(
             "() => document.activeElement === document.querySelector('#surveyor-survey-notes-form textarea[name=\"notes\"]')"
@@ -4386,26 +4236,11 @@ class NavigationBrowserTests(unittest.TestCase):
             json.loads(saved_survey)["notes"],
             "Updated survey note for sharing.",
         )
-        self.page.locator(
-            '.house-document-share[data-document-name="survey-plan.pdf"]'
-        ).click()
-        share_dialog = self.page.locator("#house-document-share-dialog")
-        share_dialog.wait_for(state="visible")
-        self.assertTrue(self.page.locator("#house-document-share-send").is_visible())
-        self.assertTrue(self.page.locator("#house-document-share-email").is_visible())
-        self.assertTrue(self.page.locator("#house-document-share-whatsapp").is_visible())
-        self.assertIn(
-            "survey note",
-            self.page.locator("#house-document-share-description").inner_text().lower(),
-        )
-        with self.page.expect_download() as download_info:
-            self.page.locator("#house-document-share-download").click()
-        self.assertIn("with-survey-note.pdf", download_info.value.suggested_filename)
         self.page.locator("#back-from-surveyor-room").click()
         self.assertTrue(self.page.locator("#houses-overview").is_visible())
         self.assertEqual(self.browser_errors, [])
 
-    def test_surveyor_room_can_delete_pdfs_and_read_filenames_in_dark_mode(self):
+    def test_surveyor_room_hides_the_house_pdfs_card(self):
         house_id = "SURVEY-PDF-DELETE-TEST"
         with server.connect_db() as db:
             db.execute(
@@ -4420,48 +4255,12 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator(
             f'.house-survey-open[data-house-id="{house_id}"]'
         ).click()
-        self.page.locator("#survey-room-documents").wait_for(state="visible")
-
-        pdf_buffer = BytesIO()
-        pdf = canvas.Canvas(pdf_buffer)
-        pdf.drawString(72, 720, "PDF deletion test")
-        pdf.save()
-        self.page.locator("#house-document-file").set_input_files(
-            {
-                "name": "survey-delete-test.pdf",
-                "mimeType": "application/pdf",
-                "buffer": pdf_buffer.getvalue(),
-            }
-        )
-        self.page.locator("#house-document-form button[type='submit']").click()
-        document_link = self.page.get_by_role("link", name="survey-delete-test.pdf")
-        document_link.wait_for()
-        self.page.evaluate(
-            """() => {
-              if (document.documentElement.dataset.theme !== "dark") {
-                document.querySelector("#theme-toggle").click();
-              }
-            }"""
-        )
+        self.assertEqual(self.page.locator("#survey-room-documents").count(), 0)
         self.assertEqual(
-            document_link.locator(".house-document-copy strong").evaluate(
-                "element => getComputedStyle(element).color"
-            ),
-            "rgb(232, 240, 235)",
+            self.page.locator(".survey-room-nav a[href='#survey-room-documents']").count(),
+            0,
         )
-
-        self.page.once("dialog", lambda dialog: dialog.accept())
-        self.page.locator(
-            '.house-document-delete[data-document-name="survey-delete-test.pdf"]'
-        ).click()
-        self.page.get_by_text("survey-delete-test.pdf deleted.").wait_for()
-        self.page.locator(".house-documents-empty").wait_for()
-        with server.connect_db() as db:
-            count = db.execute(
-                "SELECT COUNT(*) FROM house_documents WHERE house_id = ?",
-                (house_id,),
-            ).fetchone()[0]
-        self.assertEqual(count, 0)
+        self.assertEqual(self.page.locator("#survey-room-seai-documents").count(), 1)
         self.assertEqual(self.browser_errors, [])
 
     def test_ready_card_only_shows_ready_and_survey_audit(self):

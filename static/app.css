@@ -1407,30 +1407,26 @@ h1 { margin-bottom: 3px; font-size: 24px; }
 .survey-room-nav a { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; border: 1px solid #dce8df; border-radius: 8px; padding: 6px 10px; background: #f6faf7; color: #365b43; font-size: 10px; font-weight: 700; text-decoration: none; }
 .survey-room-nav a:hover { border-color: #9fc5a9; background: #eaf5ed; }
 .survey-room-nav a:focus-visible { outline: 2px solid #267344; outline-offset: 2px; }
-#survey-room-work-plan, #survey-room-seai-details, #survey-room-measurements, #survey-room-documents, #survey-room-notes, #surveyor-house-notes-form { scroll-margin-top: 68px; }
+#survey-room-work-plan, #survey-room-seai-details, #survey-room-measurements, #survey-room-notes, #surveyor-house-notes-form { scroll-margin-top: 68px; }
 .survey-room-summary-card,
 .survey-room-survey-notes-card,
 .survey-room-seai-card,
 .survey-room-work-plan-card,
-.survey-room-documents-card,
 .survey-room-measurements-card { overflow: hidden; border-color: #e0e9e3; border-radius: 14px; box-shadow: 0 3px 12px #193b2409; }
 .survey-room-summary-card .card-heading,
 .survey-room-survey-notes-card .card-heading,
 .survey-room-seai-card .card-heading,
 .survey-room-work-plan-card .card-heading,
-.survey-room-documents-card .card-heading,
 .survey-room-measurements-card .card-heading { padding: 16px 18px 12px; }
 .survey-room-summary-card .card-heading h2,
 .survey-room-survey-notes-card .card-heading h2,
 .survey-room-seai-card .card-heading h2,
 .survey-room-work-plan-card .card-heading h2,
-.survey-room-documents-card .card-heading h2,
 .survey-room-measurements-card .card-heading h2 { color: #284634; font-size: 15px; }
 .survey-room-summary-card .card-heading p,
 .survey-room-survey-notes-card .card-heading p,
 .survey-room-seai-card .card-heading p,
 .survey-room-work-plan-card .card-heading p,
-.survey-room-documents-card .card-heading p,
 .survey-room-measurements-card .card-heading p { margin-top: 4px; color: #718078; font-size: 10px; }
 .survey-room-seai-content { display: grid; gap: 8px; padding: 0 18px 18px; }
 .assign-seai-house-detail .survey-room-seai-content { padding: 0; }
@@ -1540,9 +1536,6 @@ html[data-theme="dark"] .survey-room-seai-measures .seai-variation-save:hover { 
 .survey-document-upload .file-picker { min-height: 36px; background: #fff; }
 .survey-document-upload .file-name { flex: 1 1 150px; max-width: 320px; }
 .survey-document-upload > small { flex: 1 0 100%; color: #7c8980; font-size: 9px; }
-.house-documents-list { display: grid; gap: 7px; padding: 12px 18px 17px; }
-.house-documents-list > p { margin: 0; border-radius: 8px; padding: 11px 12px; background: #f7f9f7; color: #718078; font-size: 10px; line-height: 1.5; }
-.house-documents-list > .house-documents-error { background: #fff5f3; color: #9a4034; }
 .house-document-entry { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .house-document-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .house-document-link { display: flex; min-width: 0; align-items: center; gap: 11px; border: 1px solid #e1e9e3; border-radius: 9px; padding: 10px 12px; color: inherit; text-decoration: none; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
@@ -1572,12 +1565,9 @@ html[data-theme="dark"] .survey-room-seai-measures .seai-variation-save:hover { 
   .survey-room-summary-card .card-heading,
   .survey-room-survey-notes-card .card-heading,
   .survey-room-work-plan-card .card-heading,
-  .survey-room-documents-card .card-heading,
   .survey-room-measurements-card .card-heading { padding-right: 14px; padding-left: 14px; }
   .surveyor-work-plan-form { padding-right: 14px; padding-left: 14px; }
   .surveyor-house-notes-form { padding-right: 14px; padding-left: 14px; }
-  .survey-document-upload { margin-right: 14px; margin-left: 14px; }
-  .house-documents-list { padding-right: 14px; padding-left: 14px; }
   .survey-room-form { padding-right: 14px; padding-left: 14px; }
 }
 @media(max-width:460px) {
@@ -1764,12 +1754,10 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
 .survey-room-summary-card,
 .survey-room-survey-notes-card,
 .survey-room-seai-card,
-.survey-room-documents-card,
 .survey-room-measurements-card { border-radius: 15px; }
 .survey-room-summary-card .card-heading,
 .survey-room-survey-notes-card .card-heading,
 .survey-room-seai-card .card-heading,
-.survey-room-documents-card .card-heading,
 .survey-room-measurements-card .card-heading { padding: 18px 20px 14px; }
 .survey-room-seai-content { padding-right: 20px; padding-left: 20px; }
 .surveyor-house-notes-form textarea { min-height: 92px; border-radius: 10px; font-size: 13px; }
@@ -2344,7 +2332,6 @@ html[data-theme="dark"] .house-document-link,
 html[data-theme="dark"] .survey-room-summary-card,
 html[data-theme="dark"] .survey-room-survey-notes-card,
 html[data-theme="dark"] .survey-room-seai-card,
-html[data-theme="dark"] .survey-room-documents-card,
 html[data-theme="dark"] .survey-room-measurements-card,
 html[data-theme="dark"] .survey-room-work-plan-card { border-color: var(--line); background: #202c29; color: var(--ink); }
 html[data-theme="dark"] .house-document-copy strong { color: #e8f0eb; }
@@ -3850,8 +3837,6 @@ html[data-theme="dark"] .survey-document-upload .file-picker { border-color: #46
 html[data-theme="dark"] .survey-document-upload .file-picker:hover { background: #31483b; }
 html[data-theme="dark"] .survey-document-upload .file-name,
 html[data-theme="dark"] .survey-document-upload > small { color: #a4b3ad; }
-html[data-theme="dark"] .house-documents-list > p { background: #192622; color: #b7c8be; }
-html[data-theme="dark"] .house-documents-list > .house-documents-error { background: #3c2927; color: #ffc0b7; }
 html[data-theme="dark"] .survey-room-form > .helper-text { border-color: #4b765d; background: #192a20; color: #c2d6c9; }
 html[data-theme="dark"] .survey-room-form .survey-row { border-color: #35483f; background: #192622; }
 html[data-theme="dark"] .survey-room-form .survey-add-row { border: 1px solid #405b49; background: #20372a; color: #b6e9c6; }
@@ -3902,7 +3887,6 @@ html[data-theme="dark"] #surveyor-room .survey-room-form .survey-row .survey-rem
   #surveyor-room .survey-room-summary-card .card-heading,
   #surveyor-room .survey-room-survey-notes-card .card-heading,
   #surveyor-room .survey-room-work-plan-card .card-heading,
-  #surveyor-room .survey-room-documents-card .card-heading,
   #surveyor-room .survey-room-measurements-card .card-heading { padding: 16px 14px 12px; }
   #surveyor-room .survey-room-nav { top: 6px; padding: 6px; }
 }
@@ -4135,6 +4119,7 @@ html[data-theme="dark"] .survey-room-seai-section.seai-document-category,
 html[data-theme="dark"] .survey-room-seai-section.seai-document-category[open] { background: #1b2823; }
 html[data-theme="dark"] .seai-document-category > summary:hover { background: #22332b; }
 html[data-theme="dark"] .survey-room-seai-documents .seai-share-toolbar { border-color: #35483f; background: #192622; }
+.survey-room-seai-documents .seai-share-toolbar { margin-left: 14px; margin-right: 14px; }
 html[data-theme="dark"] .survey-room-seai-documents .seai-documents-empty { border-color: #496555; background: #192622; color: #b9d1c2; }
 @media (max-width: 700px) {
   .survey-room-seai-documents { margin-right: 10px; margin-left: 10px; padding: 11px; }

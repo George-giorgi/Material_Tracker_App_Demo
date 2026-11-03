@@ -306,7 +306,6 @@
               <a href="#survey-room-seai-details" data-ready-only>SEAI record</a>
               <a href="#survey-room-seai-details" data-not-started-only>SEAI PDFs</a>
               <a href="#survey-room-measurements">Measurements</a>
-              <a href="#survey-room-documents">House PDFs</a>
               <a href="#survey-room-notes">Survey notes</a>
             </nav>
             <article class="card survey-room-summary-card">
@@ -350,16 +349,6 @@
                 </div>
                 <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Requirement choices and work details save automatically. You can also save manually.</small><button class="button button-secondary" type="submit">Save work plan</button></div>
               </form>
-            </article>
-            <article class="card survey-room-documents-card" id="survey-room-documents">
-              <div class="card-heading"><div><h2>Survey documents</h2><p>PDF plans and documents shared with the surveyor. Share adds the saved survey note on a separate final page.</p></div></div>
-              <form id="house-document-form" class="survey-document-upload">
-                <label class="file-picker"><input id="house-document-file" type="file" accept=".pdf,application/pdf" required><span>Choose PDF</span></label>
-                <span id="house-document-file-name" class="file-name">No file selected</span>
-                <button class="button button-secondary" type="submit">Upload PDF</button>
-                <small>PDF only · Maximum 8 MB · Up to 25 files per house</small>
-              </form>
-              <div id="house-documents-list" class="house-documents-list" aria-live="polite"></div>
             </article>
             <article class="card survey-room-measurements-card" id="survey-room-measurements">
               <div class="card-heading"><div><h2>Survey measurements</h2><p>Measurements are available to the materials calculator.</p></div></div>

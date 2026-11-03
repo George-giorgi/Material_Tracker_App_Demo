@@ -2098,13 +2098,6 @@ function openHouseSurvey(houseId) {
     !isNotStarted && (!house.seai_details || !Object.keys(house.seai_details).length),
   );
   $("#survey-room-measurements").classList.toggle("hidden", !isReady);
-  $("#house-document-file").value = "";
-  $("#house-document-file-name").textContent = "No file selected";
-  $("#house-documents-list").innerHTML = '<p class="muted">Loading survey documents…</p>';
-  $("#house-document-form").classList.toggle(
-    "hidden",
-    !isReady || !(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")),
-  );
   $$(".survey-room-nav a").forEach((link) => {
     const target = $(link.getAttribute("href"));
     const stageHidden =
@@ -2127,13 +2120,6 @@ function openHouseSurvey(houseId) {
     $("#survey-room-seai-documents").innerHTML =
       '<p class="muted">SEAI PDFs are available to administrators and surveyors.</p>';
   }
-  $(".card-heading h2", $("#survey-room-documents")).textContent = isNotStarted
-    ? "House PDFs"
-    : "Survey documents";
-  $(".card-heading p", $("#survey-room-documents")).textContent = isNotStarted
-    ? "View-only PDFs. Uploading, annotations, and sharing are disabled while the house is Not started."
-    : "PDF plans and documents shared with the surveyor. Share adds the saved survey note on a separate final page.";
-  loadHouseDocuments(houseId, state.surveyRoomRequest, isReady);
 }
 function scrollToSurveyRoomSection(target) {
   const nav = $(".survey-room-nav");
@@ -2896,8 +2882,7 @@ async function saveHouseDocumentAnnotations() {
       await loadSeaiDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
       showToast(`Annotated copy saved as ${result.filename}. The original is unchanged.`);
     } else {
-      await loadHouseDocuments(result.house_id, state.surveyRoomRequest);
-      showToast("Annotated PDF saved as a separate copy.");
+      showToast(`Annotated PDF saved as ${result.filename}.`);
     }
   } catch (error) {
     annotator.saving = false;
@@ -5217,18 +5202,11 @@ async function refreshPendingChanges() {
       state.surveyRoomHouseId &&
       !$("#surveyor-room").classList.contains("hidden")
     ) {
-      await Promise.all([
-        loadHouseDocuments(
-          state.surveyRoomHouseId,
-          state.surveyRoomRequest,
-          state.surveyRoomIsReady,
-        ),
-        loadSeaiDocuments(
-          state.surveyRoomHouseId,
-          state.surveyRoomRequest,
-          state.surveyRoomIsReady,
-        ),
-      ]);
+      await loadSeaiDocuments(
+        state.surveyRoomHouseId,
+        state.surveyRoomRequest,
+        state.surveyRoomIsReady,
+      );
       pendingDocumentRefresh = false;
     }
   } finally {
@@ -6739,22 +6717,7 @@ function bindEvents() {
       event.currentTarget.files[0]?.name || "No file selected";
   });
   $("#back-from-surveyor-room").addEventListener("click", closeSurveyorRoom);
-  $("#house-document-form").addEventListener("submit", submitHouseDocument);
   $("#surveyor-house-notes-form").addEventListener("submit", submitSurveyorHouseNotes);
-  $("#house-documents-list").addEventListener("click", (event) => {
-    const deleteButton = event.target.closest(".house-document-delete");
-    if (deleteButton) {
-      deleteHouseDocument(deleteButton);
-      return;
-    }
-    const annotateButton = event.target.closest(".house-document-annotate");
-    if (annotateButton) {
-      openHouseDocumentAnnotator(annotateButton);
-      return;
-    }
-    const shareButton = event.target.closest(".house-document-share");
-    if (shareButton) prepareHouseDocumentShare(shareButton);
-  });
   $("#survey-room-seai-documents").addEventListener("click", (event) => {
     const documentShareButton = event.target.closest("[data-seai-document-share]");
     if (documentShareButton) {
@@ -6931,10 +6894,6 @@ function bindEvents() {
   pdfCanvas.addEventListener("pointerup", finishPdfStroke);
   pdfCanvas.addEventListener("pointercancel", finishPdfStroke);
   new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-viewport"));
-  $("#house-document-file").addEventListener("change", (event) => {
-    $("#house-document-file-name").textContent =
-      event.currentTarget.files[0]?.name || "No file selected";
-  });
   const mapCanvas = $("#house-map-canvas");
   let mapDrag = null;
   mapCanvas.addEventListener("pointerdown", (event) => {
