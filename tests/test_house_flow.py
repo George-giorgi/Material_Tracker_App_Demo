@@ -162,15 +162,17 @@ class HttpBase(FlowBase):
         connection.close()
         return status, result
 
-    def call_raw(self, method, path, cookie=None):
+    def call_raw(self, method, path, cookie=None, body=None, content_type=None):
         headers = {}
+        if content_type:
+            headers["Content-Type"] = content_type
         use_cookie = self.cookie if cookie is None else cookie
         if use_cookie:
             headers["Cookie"] = use_cookie
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.httpd.server_address[1], timeout=5
         )
-        connection.request(method, path, headers=headers)
+        connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
         status = response.status
         content_type = response.getheader("Content-Type")
@@ -757,7 +759,51 @@ class HouseDocumentHttpTests(HttpBase):
             403,
         )
         with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+            selected_document_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, content)
+                VALUES ('DOC-TEST', 'Survey', 'DOC-TEST-selected-seai-pages.pdf', ?)
+                """,
+                (b"%PDF-1.4\nselected\n",),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO selected_seai_documents
+                    (document_id, house_id, created_by, created_at)
+                VALUES (?, 'DOC-TEST', 'Test Surveyor', '2026-11-03T09:00:00')
+                """,
+                (selected_document_id,),
+            )
+        with server.connect_db() as db:
             server._clear_house_survey_records(db, "DOC-TEST")
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM seai_documents WHERE id = ?",
+                    (selected_document_id,),
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM selected_seai_documents WHERE document_id = ?",
+                    (selected_document_id,),
+                ).fetchone()[0],
+                0,
+            )
         status, listing, _ = self.call("GET", "/api/house-vent-documents?house_id=DOC-TEST")
         self.assertEqual(listing["documents"], [])
 
@@ -1019,19 +1065,41 @@ class SurveyorHouseNotesTests(HttpBase):
         )
         self.assertFalse(notes_ready["survey_completed"])
 
+        survey_payload = {
+            "house_id": "NOTES-READY",
+            "survey": {
+                "windows": [],
+                "doors": [],
+                "house_corners": [],
+                "perimeter_m": 42.5,
+                "notes": "Access is via the rear gate.",
+            },
+        }
         status, result, _ = self.call(
             "POST",
             "/api/house-survey",
+            survey_payload,
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Pre-start work plan is not saved", result["error"])
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan",
             {
                 "house_id": "NOTES-READY",
-                "survey": {
-                    "windows": [],
-                    "doors": [],
-                    "house_corners": [],
-                    "perimeter_m": 42.5,
-                    "notes": "Access is via the rear gate.",
-                },
+                "scaffolding_required": False,
+                "esb_required": False,
+                "plumber_required": False,
+                "vent_required": False,
             },
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            survey_payload,
             cookie=self.surveyor_cookie,
         )
         self.assertEqual(status, 200, result)
@@ -1952,9 +2020,15 @@ class CalculatorApiTests(HttpBase):
                                 "page": 1,
                                 "tool": "text",
                                 "color": "#245fbd",
-                                "point": [0.1, 0.2],
-                                "font_size": 0.02,
-                                "text": "Surveyor added blank page",
+                                "point": [0.85, 0.95],
+                                "font_size": 0.05,
+                                "wrap": True,
+                                "text": (
+                                    "Please check all window measurements and confirm "
+                                    "the ventilation details before the survey is shared "
+                                    "with the team. This sentence should wrap inside the "
+                                    "blank page, including averylongwordthatneedstobreak"
+                                ),
                             }
                         ],
                     },
@@ -1971,14 +2045,110 @@ class CalculatorApiTests(HttpBase):
             "Application selected page two",
             blank_page_reader.pages[0].extract_text(),
         )
-        self.assertIn(
-            "Surveyor added blank page",
-            blank_page_reader.pages[1].extract_text(),
-        )
         self.assertAlmostEqual(
             float(blank_page_reader.pages[1].mediabox.width),
             595,
             delta=1,
+        )
+        with fitz.open(stream=blank_page_body, filetype="pdf") as composed:
+            page = composed[1]
+            extracted_text = " ".join(page.get_text().split())
+            self.assertIn(
+                "Please check all window measurements",
+                extracted_text,
+            )
+            self.assertIn(
+                "averylongwordthatneedstobreak",
+                "".join(extracted_text.split()),
+            )
+            words = page.get_text("words")
+            self.assertGreater(len({round(word[1]) for word in words}), 1)
+            for word in words:
+                self.assertGreaterEqual(word[0], 0)
+                self.assertGreaterEqual(word[1], 0)
+                self.assertLessEqual(word[2], page.rect.width)
+                self.assertLessEqual(word[3], page.rect.height)
+        status, _, _, saved_pdf_body = self.call_raw(
+            "POST",
+            f"/api/seai-documents/save-selected?house_id={house_id}",
+            cookie=surveyor_cookie,
+            body=blank_page_body,
+            content_type="application/pdf",
+        )
+        saved_pdf = json.loads(saved_pdf_body)
+        self.assertEqual(status, 201)
+        self.assertEqual(saved_pdf["category"], "Survey")
+        self.assertEqual(saved_pdf["page_count"], 2)
+        self.assertEqual(
+            saved_pdf["filename"],
+            f"{house_id}-selected-seai-pages.pdf",
+        )
+        status, seai_listing, _ = self.call(
+            "GET",
+            f"/api/seai-documents?house_id={house_id}",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn(
+            saved_pdf["filename"],
+            [document["filename"] for document in seai_listing["documents"]],
+        )
+        selected_entry = next(
+            document for document in seai_listing["documents"]
+            if document["filename"] == saved_pdf["filename"]
+        )
+        self.assertTrue(selected_entry["is_selected_pdf"])
+        status, _, _, persisted_pdf = self.call_raw(
+            "GET",
+            f"/api/seai-documents/{saved_pdf['id']}/file",
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(persisted_pdf, blank_page_body)
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "selected-pdf-assign",
+                "display_name": "Selected PDF Assign",
+                "pin": "456789",
+                "role": "assign",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, _, assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "selected-pdf-assign", "pin": "456789"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/seai-documents/{source_document_ids[0]}/delete-selected",
+                {},
+                cookie=surveyor_cookie,
+            )[0],
+            404,
+        )
+        status, assign_listing, _ = self.call(
+            "GET",
+            f"/api/seai-documents?house_id={house_id}",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn(
+            saved_pdf["filename"],
+            [document["filename"] for document in assign_listing["documents"]],
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/seai-documents/{saved_pdf['id']}/delete-selected",
+                {},
+                cookie=assign_cookie,
+            )[0],
+            403,
         )
         with server.connect_db() as db:
             stored_sources = [
@@ -1994,8 +2164,40 @@ class CalculatorApiTests(HttpBase):
                 (source_document_ids[0], source_pdfs[0]),
                 (source_document_ids[1], source_pdfs[1]),
                 (annotated_document_id, annotated_survey_pdf),
+                (saved_pdf["id"], blank_page_body),
             ],
         )
+        status, deleted, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{saved_pdf['id']}/delete-selected",
+            {},
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(deleted["deleted"])
+        self.assertEqual(
+            self.call_raw(
+                "GET",
+                f"/api/seai-documents/{saved_pdf['id']}/file",
+                cookie=surveyor_cookie,
+            )[0],
+            404,
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM seai_documents WHERE id = ?",
+                    (saved_pdf["id"],),
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM selected_seai_documents WHERE document_id = ?",
+                    (saved_pdf["id"],),
+                ).fetchone()[0],
+                0,
+            )
 
     def test_seai_annotated_copy_can_be_shared_with_survey_note(self):
         house_id = "PDF-ANNOTATED-SHARE"
@@ -2532,6 +2734,20 @@ class EndToEndFlowTests(HttpBase):
             self.call("POST", "/api/houses/plan", {"id": "WH-SURVEY-1", "ready": True})[0],
             200,
         )
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "WH-SURVEY-1",
+                    "scaffolding_required": False,
+                    "esb_required": False,
+                    "plumber_required": False,
+                    "vent_required": False,
+                },
+            )[0],
+            200,
+        )
         _, listed, _ = self.call("GET", "/api/calculator/houses?status=ready&q=WH-SURVEY-1")
         self.assertIsNone(listed["houses"][0]["survey"])
 
@@ -2594,6 +2810,20 @@ class EndToEndFlowTests(HttpBase):
         }
         self.assertEqual(self.call("POST", "/api/houses", details)[0], 409)
         self.assertEqual(self.call("POST", "/api/houses/plan", {"id": house["id"], "ready": True})[0], 200)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": house["id"],
+                    "scaffolding_required": False,
+                    "esb_required": False,
+                    "plumber_required": False,
+                    "vent_required": False,
+                },
+            )[0],
+            200,
+        )
         self.assertEqual(
             self.call(
                 "POST",
@@ -2681,6 +2911,20 @@ class EndToEndFlowTests(HttpBase):
             200,
         )
         self.assertEqual(self.summary()["ready"], 1)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": house_id,
+                    "scaffolding_required": False,
+                    "esb_required": False,
+                    "plumber_required": False,
+                    "vent_required": False,
+                },
+            )[0],
+            200,
+        )
 
         survey = {
             "windows": [{"w": 1.2, "h": 1.5, "qty": 2}],
@@ -3971,6 +4215,19 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(
             self.call(
                 "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "WH-ACTIVE",
+                    "scaffolding_required": False,
+                    "esb_required": False,
+                    "plumber_required": False,
+                },
+            )[0],
+            200,
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
                 "/api/house-survey",
                 {
                     "house_id": "WH-ACTIVE",
@@ -4043,6 +4300,19 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(status, 409)
         self.assertIn("Surveyor review is required", result["error"])
         self.assertEqual(self.call("POST", "/api/movements", {**movement, "material_id": mesh})[0], 409)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "WH1",
+                    "scaffolding_required": False,
+                    "esb_required": False,
+                    "plumber_required": False,
+                },
+            )[0],
+            200,
+        )
         status, survey_result, _ = self.call(
             "POST",
             "/api/house-survey",

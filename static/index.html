@@ -317,6 +317,7 @@
               <a href="#survey-room-work-plan">Work plan</a>
               <a href="#survey-room-seai-details" data-ready-only>SEAI record</a>
               <a href="#survey-room-seai-details" data-not-started-only>SEAI PDFs</a>
+              <a href="#survey-room-saved-pdfs">Saved PDFs</a>
               <a href="#survey-room-measurements">Measurements</a>
             </nav>
             <article class="card survey-room-summary-card">
@@ -334,6 +335,10 @@
                 <button class="text-button" type="button" data-seai-toggle-all="close">Collapse all</button>
               </div>
               <div id="survey-room-seai-content" class="survey-room-seai-content"></div>
+              <section class="survey-room-saved-pdfs" id="survey-room-saved-pdfs" aria-labelledby="survey-room-saved-pdfs-title">
+                <div class="survey-room-saved-pdfs-heading"><div><h3 id="survey-room-saved-pdfs-title">Saved PDFs</h3><p>Selected PDFs saved by surveyors for this house.</p></div></div>
+                <div id="survey-room-saved-pdfs-list" class="survey-room-saved-pdfs-list" aria-live="polite"></div>
+              </section>
               <div id="survey-room-seai-documents" class="survey-room-seai-documents" aria-live="polite"></div>
             </article>
             <article class="card survey-room-work-plan-card" id="survey-room-work-plan">
@@ -412,7 +417,7 @@
           <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
             <div class="page-heading houses-list-toolbar">
               <div><div class="eyebrow">SEAI HOUSE LOCATIONS</div><h2 id="house-map-title">House map</h2><p class="page-subtitle">Explore houses with saved coordinates, or select a house to open its Eircode location in Google Maps.</p><div id="house-map-summary" class="house-map-summary" aria-live="polite"></div></div>
-              <button class="button button-secondary" id="house-map-list-view" type="button">Back to house list</button>
+              <button class="button button-secondary house-map-back-button" id="house-map-list-view" type="button"><svg class="house-map-back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 12H5m7 7-7-7 7-7"></path></svg><span>Back to houses</span></button>
             </div>
             <article class="card house-map-import hidden" id="house-map-import-card">
               <div><strong>Load approved SEAI coordinates</strong><p>Import a CSV with actual Eircodes and latitude/longitude to show exact pins on this tracker map. For houses without coordinates, select the house and open its Eircode pin in Google Maps. Google receives only the Eircode when you click that link. OpenStreetMap receives tile requests for the map area currently in view.</p></div>
@@ -578,7 +583,7 @@
         <iframe id="selected-pdf-preview" title="Preview of selected survey PDF"></iframe>
         <div class="dialog-actions">
           <button class="button button-secondary close-dialog" type="button">Back to Surveyor room</button>
-          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Continue to send</button>
+          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Save selected PDF to house</button>
         </div>
       </div>
     </dialog>
@@ -633,7 +638,7 @@
         </div>
         <div class="pdf-annotator-text-panel hidden" id="pdf-annotator-text-panel">
           <label class="pdf-annotator-text-label" for="pdf-annotator-text">Text note</label>
-          <input id="pdf-annotator-text" type="text" maxlength="240" placeholder="Type a short note, then tap the page">
+          <textarea id="pdf-annotator-text" rows="2" maxlength="240" placeholder="Type a note or sentence, then tap the page"></textarea>
           <label class="pdf-annotator-text-size" for="pdf-annotator-text-size">Text size
             <select id="pdf-annotator-text-size" aria-label="Text note size">
               <option value="12">Small</option>

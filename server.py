@@ -76,8 +76,12 @@ _change_revisions = {
 
 
 def _record_change(path):
-    if path in {"/api/house-documents", "/api/seai-documents"} or re.fullmatch(
-        r"/api/(?:house|seai)-documents/\d+/annotations", path
+    if path in {
+        "/api/house-documents",
+        "/api/seai-documents",
+        "/api/seai-documents/save-selected",
+    } or re.fullmatch(
+        r"/api/(?:house|seai)-documents/\d+/(?:annotations|delete-selected)", path
     ):
         domain = "documents"
     elif path in {"/api/seai-documents/share"} or re.fullmatch(
@@ -282,6 +286,7 @@ def _annotate_pdf_document(content, annotations):
                 text = annotation.get("text")
                 point = annotation.get("point")
                 font_ratio = annotation.get("font_size")
+                wrap_text = annotation.get("wrap", False)
                 if (
                     not isinstance(text, str)
                     or not text.strip()
@@ -290,6 +295,7 @@ def _annotate_pdf_document(content, annotations):
                     or len(point) != 2
                     or not isinstance(font_ratio, (int, float))
                     or not 0.005 <= font_ratio <= 0.1
+                    or not isinstance(wrap_text, bool)
                     or not all(
                         isinstance(value, (int, float)) and 0 <= value <= 1
                         for value in point
@@ -297,6 +303,37 @@ def _annotate_pdf_document(content, annotations):
                 ):
                     raise ApiError(400, "A text annotation is invalid.")
                 font_size = rect.width * font_ratio
+                if wrap_text:
+                    font = fitz.Font("helv")
+                    x = min(point[0] * rect.width, rect.width * 0.62)
+                    max_width = max(24, rect.width - x - 8)
+                    available_height = rect.height - 16
+                    lines = _wrap_pdf_annotation_text(text, font, font_size, max_width)
+                    for _ in range(8):
+                        required_height = font_size * 1.6 * len(lines)
+                        if required_height <= available_height:
+                            break
+                        font_size *= available_height / required_height
+                        lines = _wrap_pdf_annotation_text(
+                            text, font, font_size, max_width
+                        )
+                    required_height = font_size * 1.6 * len(lines)
+                    if required_height > available_height:
+                        raise ApiError(422, "The text does not fit on the blank PDF page.")
+                    y = min(
+                        point[1] * rect.height,
+                        rect.height - 8 - required_height,
+                    )
+                    page.insert_textbox(
+                        fitz.Rect(x, y, rect.width - 8, rect.height - 8),
+                        "\n".join(lines),
+                        fontsize=font_size,
+                        fontname="helv",
+                        color=color,
+                        overlay=True,
+                        lineheight=1.25,
+                    )
+                    continue
                 page.insert_text(
                     (
                         point[0] * rect.width,
@@ -361,6 +398,34 @@ def _annotate_pdf_document(content, annotations):
         raise ApiError(422, "The annotations could not be added to this PDF.") from exc
     finally:
         document.close()
+
+
+def _wrap_pdf_annotation_text(text, font, font_size, max_width):
+    lines = []
+    for paragraph in text.splitlines() or [text]:
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if font.text_length(candidate, fontsize=font_size) <= max_width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+            current = ""
+            for character in word:
+                candidate = current + character
+                if current and font.text_length(candidate, fontsize=font_size) > max_width:
+                    lines.append(current)
+                    current = character
+                else:
+                    current = candidate
+        if current:
+            lines.append(current)
+    return lines
 
 
 def _create_house_document_share_pdf(content, filename, house_id, survey_note):
@@ -664,10 +729,30 @@ def _clear_house_survey_records(db, house_id):
             )
             if _is_annotated_pdf_filename(row["filename"])
         ]
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'selected_seai_documents'"
+        ).fetchone():
+            annotated_ids.extend(
+                row["document_id"]
+                for row in db.execute(
+                    "SELECT document_id FROM selected_seai_documents WHERE house_id = ?",
+                    (house_id,),
+                )
+                if row["document_id"] not in annotated_ids
+            )
         if annotated_ids:
             db.executemany(
                 "DELETE FROM seai_documents WHERE id = ?",
                 ((document_id,) for document_id in annotated_ids),
+            )
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'selected_seai_documents'"
+        ).fetchone():
+            db.execute(
+                "DELETE FROM selected_seai_documents WHERE house_id = ?",
+                (house_id,),
             )
 
 @contextmanager
@@ -1129,6 +1214,16 @@ def initialize_db():
                 shared_by TEXT NOT NULL DEFAULT '',
                 shared_at TEXT NOT NULL,
                 UNIQUE(document_id, recipient_user_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS selected_seai_documents (
+                document_id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
             )
             """
         )
@@ -3530,6 +3625,14 @@ class LegacyRouteHandlers:
             )
             allowed = allowed or (
                 self.command == "POST"
+                and re.fullmatch(
+                    r"/api/seai-documents/(?:save-selected|\d+/delete-selected)",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
+            allowed = allowed or (
+                self.command == "POST"
                 and urlparse(self.path).path == "/api/house-documents"
             )
             allowed = allowed or (
@@ -3759,6 +3862,7 @@ class LegacyRouteHandlers:
                            hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
                            assigned_surveyor.display_name AS assigned_surveyor_name,
                            assigned_surveyor.is_active AS assigned_surveyor_is_active,
+                           surveyor_assignment.assigned_by AS surveyor_assigned_by,
                            surveyor_assignment.assigned_at AS surveyor_assigned_at,
                            EXISTS (
                                SELECT 1 FROM house_role_assignments assignment
@@ -3867,6 +3971,8 @@ class LegacyRouteHandlers:
             houses = []
             for row in rows:
                 house = dict(row)
+                if not _has_access_profile(user, "surveyor"):
+                    house.pop("surveyor_assigned_by", None)
                 house["work_plan_permissions"] = work_plan_permissions
                 if can_see_seai_summary:
                     house["seai_summary"] = seai_summaries.get(row["id"])
@@ -4184,10 +4290,16 @@ class LegacyRouteHandlers:
                 not_started = _is_not_started_house(db, house_id)
                 rows = db.execute(
                     """
-                    SELECT id, category, filename, length(content) AS size_bytes
-                    FROM seai_documents
-                    WHERE application_id = ? AND lower(filename) LIKE '%.pdf'
-                        AND content IS NOT NULL
+                    SELECT documents.id, documents.category, documents.filename,
+                           length(documents.content) AS size_bytes,
+                           CASE WHEN selected.document_id IS NULL THEN 0 ELSE 1 END
+                               AS is_selected_pdf
+                    FROM seai_documents documents
+                    LEFT JOIN selected_seai_documents selected
+                        ON selected.document_id = documents.id
+                    WHERE documents.application_id = ?
+                        AND lower(documents.filename) LIKE '%.pdf'
+                        AND documents.content IS NOT NULL
                     ORDER BY CASE category
                         WHEN 'Application' THEN 0
                         WHEN 'Survey' THEN 1
@@ -4210,6 +4322,7 @@ class LegacyRouteHandlers:
                         {
                             **dict(row),
                             "is_annotated": _is_annotated_pdf_filename(row["filename"]),
+                            "is_selected_pdf": bool(row["is_selected_pdf"]),
                         }
                         for row in rows
                     ],
@@ -5320,6 +5433,139 @@ class LegacyRouteHandlers:
                 share_filename = f"{source['application_id']}-{Path(source['filename']).stem}{suffix}.pdf"
                 self._send_pdf(share_filename, shared_pdf, attachment=True)
                 return
+            if path == "/api/seai-documents/save-selected":
+                if not (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ):
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to save selected SEAI pages.",
+                    )
+                query = parse_qs(urlparse(self.path).query)
+                house_id = query.get("house_id", [""])[0].strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                if content_type != "application/pdf":
+                    raise ApiError(400, "Save the selected pages as a PDF.")
+                file_data = self._body()
+                if not file_data.startswith(b"%PDF-"):
+                    raise ApiError(400, "The selected pages are not a valid PDF.")
+                if len(file_data) > SEAI_DOCUMENT_MAX_BYTES:
+                    raise ApiError(413, "The selected PDF exceeds the 20 MB SEAI document limit.")
+                try:
+                    pdf_document = _open_pdf_document(file_data)
+                except ApiError as exc:
+                    raise ApiError(422, "The selected PDF could not be read.") from exc
+                try:
+                    page_count = pdf_document.page_count
+                finally:
+                    pdf_document.close()
+                if not 1 <= page_count <= HOUSE_DOCUMENT_MAX_PAGES:
+                    raise ApiError(400, "The selected PDF must contain between 1 and 300 pages.")
+                with connect_db() as db:
+                    columns = {
+                        row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+                    }
+                    if "content" not in columns:
+                        raise ApiError(503, "SEAI PDF storage has not been initialized.")
+                    _require_pdf_editable(db, house_id)
+                    filename_stem = f"{house_id}-selected-seai-pages"
+                    filename = f"{filename_stem}.pdf"
+                    suffix = 2
+                    while db.execute(
+                        """
+                        SELECT 1 FROM seai_documents
+                        WHERE application_id = ? AND filename = ? COLLATE NOCASE
+                        """,
+                        (house_id, filename),
+                    ).fetchone():
+                        filename = f"{filename_stem}-{suffix}.pdf"
+                        suffix += 1
+                    with db:
+                        cursor = db.execute(
+                            """
+                            INSERT INTO seai_documents
+                                (application_id, category, filename, extension,
+                                 downloaded, content)
+                            VALUES (?, 'Survey', ?, '.pdf', 1, ?)
+                            """,
+                            (house_id, filename, sqlite3.Binary(file_data)),
+                        )
+                        db.execute(
+                            """
+                            INSERT INTO selected_seai_documents
+                                (document_id, house_id, created_by, created_at)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (
+                                cursor.lastrowid,
+                                house_id,
+                                user["display_name"],
+                                datetime.now().isoformat(timespec="seconds"),
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": house_id,
+                        "category": "Survey",
+                        "filename": filename,
+                        "page_count": page_count,
+                    },
+                )
+                return
+            selected_seai_delete_match = re.fullmatch(
+                r"/api/seai-documents/(\d+)/delete-selected", path
+            )
+            if selected_seai_delete_match:
+                if not (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ):
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to delete saved selected PDFs.",
+                    )
+                document_id = int(selected_seai_delete_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        document = db.execute(
+                            """
+                            SELECT documents.application_id, documents.filename
+                            FROM seai_documents documents
+                            JOIN selected_seai_documents selected
+                                ON selected.document_id = documents.id
+                            WHERE documents.id = ?
+                            """,
+                            (document_id,),
+                        ).fetchone()
+                        if document is None:
+                            raise ApiError(404, "Saved selected PDF was not found.")
+                        _require_pdf_editable(db, document["application_id"])
+                        db.execute(
+                            "DELETE FROM seai_document_shares WHERE document_id = ?",
+                            (document_id,),
+                        )
+                        db.execute(
+                            "DELETE FROM selected_seai_documents WHERE document_id = ?",
+                            (document_id,),
+                        )
+                        db.execute(
+                            "DELETE FROM seai_documents WHERE id = ?",
+                            (document_id,),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "deleted": True,
+                        "house_id": document["application_id"],
+                        "filename": document["filename"],
+                    },
+                )
+                return
             if path == "/api/seai-documents/share":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
@@ -5745,11 +5991,22 @@ class LegacyRouteHandlers:
                 with connect_db() as db:
                     with db:
                         ready = db.execute("""
-                            SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
+                            SELECT p.plan_scaffolding_required,
+                                   p.plan_esb_required,
+                                   p.plan_plumber_required
+                            FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
                             WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
                         """, (house_id,)).fetchone()
                         if not ready:
                             raise ApiError(409, "Survey measurements can only be saved for houses ready for start.")
+                        if any(
+                            ready[f"plan_{trade}_required"] is None
+                            for trade in ("scaffolding", "esb", "plumber")
+                        ):
+                            raise ApiError(
+                                409,
+                                "Pre-start work plan is not saved. Save it before recording survey measurements.",
+                            )
                         if survey.get("perimeter_m") is None:
                             raise ApiError(
                                 400,

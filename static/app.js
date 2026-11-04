@@ -1591,6 +1591,36 @@ function syncWorkPlanCards(form) {
   }
   $("#surveyor-work-plan-progress").textContent = `${chosen} of ${WORK_PLAN_TRADES.length} chosen`;
 }
+function workPlanSnapshot(form) {
+  const values = new FormData(form);
+  return JSON.stringify(
+    WORK_PLAN_TRADES.map((trade) => [
+      trade,
+      values.get(`${trade}_required`) || null,
+      String(values.get(`${trade}_notes`) || "").trim(),
+    ]),
+  );
+}
+function workPlanHasRequiredChoices(form) {
+  return ["scaffolding", "esb", "plumber"].every(
+    (trade) => Boolean(form.elements[`${trade}_required`].value),
+  );
+}
+function updateWorkPlanSaveStatus(form) {
+  const status = $("#surveyor-work-plan-save-status");
+  const saveState = workPlanSaveStates.get(form);
+  if (!status || !saveState) return false;
+  const saved = Boolean(
+    saveState.savedSnapshot &&
+    workPlanHasRequiredChoices(form) &&
+    workPlanSnapshot(form) === saveState.savedSnapshot,
+  );
+  status.textContent = saved
+    ? "Work plan saved."
+    : "Pre-start work plan is not saved. Click Save work plan before saving the survey.";
+  status.classList.toggle("save-error", !saved);
+  return saved;
+}
 function checklistRequirementBadge(required, status) {
   if (required === 1 || required === true) {
     return '<span class="checklist-requirement required">Required</span>';
@@ -1666,6 +1696,18 @@ function houseNoteActionClass(notes) {
 function houseMapButtonHtml(houseId) {
   if (hasAccessProfile(state.user, "assign")) return "";
   return `<button class="text-button house-map-open" type="button" data-house-id="${escapeHtml(houseId)}"><svg class="house-map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg><span>View on map</span></button>`;
+}
+
+function houseActionIcon(name) {
+  const paths = {
+    details: '<path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path>',
+    activate: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8m-4-4h8"></path>',
+    assign: '<circle cx="9" cy="8" r="3"></circle><path d="M3.5 19a5.5 5.5 0 0 1 11 0m3-8v6m-3-3h6"></path>',
+    change: '<path d="M20 7h-9a4 4 0 0 0-4 4m-3 0 3 3 3-3M4 17h9a4 4 0 0 0 4-4m3 0-3-3-3 3"></path>',
+    ready: '<circle cx="12" cy="12" r="9"></circle><path d="m7.5 12 3 3 6-6"></path>',
+    reset: '<path d="M4.5 9A8 8 0 1 1 4 14"></path><path d="M4.5 4.5V9H9"></path>',
+  };
+  return `<svg class="house-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name] || ""}</svg>`;
 }
 
 function findPlanHouse(houseId) {
@@ -1974,8 +2016,20 @@ function renderSurveyorHouses() {
     const surveyStatus = surveyIsComplete(h)
       ? `Survey saved${h.survey_updated_by ? ` by ${escapeHtml(h.survey_updated_by)}` : ""}`
       : "Ready for your survey";
+    const assignmentCredit = h.surveyor_assigned_by
+      ? `<div class="surveyor-house-assignment-credit">
+          <span class="surveyor-assignment-credit-icon" aria-hidden="true">✓</span>
+          <span class="surveyor-assignment-credit-copy">
+            <span>Assigned to you by <strong>${escapeHtml(h.surveyor_assigned_by)}</strong></span>
+            ${h.surveyor_assigned_at
+              ? `<time datetime="${escapeHtml(h.surveyor_assigned_at)}">${escapeHtml(formatAuditDateTime(h.surveyor_assigned_at))}</time>`
+              : ""}
+          </span>
+        </div>`
+      : "";
     return `<article class="card house-card surveyor-house-card${surveyIsComplete(h) ? " is-surveyed" : ""}" data-house-id="${escapeHtml(h.id)}">
     <div class="house-top"><span class="house-avatar" aria-hidden="true">&#8962;</span><div class="house-meta"><h2>${houseCardTitle(h, escapeHtml(h.id))}</h2><p>${escapeHtml(propertySummary)}</p></div></div>
+    ${assignmentCredit}
     <div class="surveyor-house-update"><span class="surveyor-update-indicator ${surveyIsComplete(h) ? "is-complete" : ""}" aria-hidden="true"></span><span>${surveyStatus}</span>${surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at)}</div>
     <button class="button ${surveyIsComplete(h) ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="Open Surveyor room for ${escapeHtml(h.id)}">${surveyIsComplete(h) ? "Review survey" : "Start survey"} <span aria-hidden="true">→</span></button>
     ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
@@ -2250,8 +2304,6 @@ function openHouseSurvey(houseId) {
   const workPlanForm = $("#surveyor-work-plan-form");
   workPlanForm.dataset.houseId = houseId;
   const workPlanStatus = $("#surveyor-work-plan-save-status");
-  workPlanStatus.textContent = "Changes are saved only when you click Save work plan.";
-  workPlanStatus.classList.remove("save-error");
   const isReady = house.status === "ready";
   const isNotStarted = house.status === "not_started";
   const hasSeaiDetails = Boolean(
@@ -2269,7 +2321,15 @@ function openHouseSurvey(houseId) {
     workPlanForm.elements[`${trade}_notes`].value =
       house[`plan_${trade}_notes`] || "";
   }
+  workPlanSaveStates.set(workPlanForm, {
+    revision: 0,
+    pending: Promise.resolve(),
+    savedSnapshot: workPlanHasRequiredChoices(workPlanForm)
+      ? workPlanSnapshot(workPlanForm)
+      : null,
+  });
   syncWorkPlanCards(workPlanForm);
+  updateWorkPlanSaveStatus(workPlanForm);
   const houseNotesForm = $("#surveyor-house-notes-form");
   const canEditHouseNotes = hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor");
   houseNotesForm.dataset.houseId = houseId;
@@ -2301,6 +2361,7 @@ function openHouseSurvey(houseId) {
   $(".survey-room-summary-card").classList.toggle("hidden", isNotStarted);
   $("#survey-room-seai-content").innerHTML = seaiApplicationRecordHtml(house.seai_details, false, []);
   $("#survey-room-seai-documents").innerHTML = "";
+  $("#survey-room-saved-pdfs-list").innerHTML = '<p class="muted">Loading saved PDFs…</p>';
   const seaiDetailsCard = $("#survey-room-seai-details");
   $(".card-heading h2", seaiDetailsCard).textContent = isNotStarted || !hasSeaiDetails
     ? "SEAI PDFs"
@@ -2340,6 +2401,8 @@ function openHouseSurvey(houseId) {
   } else {
     $("#survey-room-seai-documents").innerHTML =
       '<p class="muted">SEAI PDFs are available to administrators and surveyors.</p>';
+    $("#survey-room-saved-pdfs-list").innerHTML =
+      '<p class="muted">Saved PDFs are available to administrators and surveyors.</p>';
   }
 }
 function scrollToSurveyRoomSection(target) {
@@ -2427,8 +2490,15 @@ async function submitHouseWorkPlan(event) {
 async function saveHouseWorkPlan(form, manual = false) {
   const button = $("button[type='submit']", form);
   const status = $("#surveyor-work-plan-save-status");
+  if (!form.reportValidity() || !workPlanHasRequiredChoices(form)) {
+    status.textContent =
+      "Choose a requirement for Scaffolding, ESB work, and Plumber work before saving the work plan.";
+    status.classList.add("save-error");
+    return;
+  }
+  const houseId = form.dataset.houseId;
   const values = new FormData(form);
-  const payload = { house_id: form.dataset.houseId };
+  const payload = { house_id: houseId };
   for (const trade of WORK_PLAN_TRADES) {
     const required = values.get(`${trade}_required`);
     payload[`${trade}_required`] = required === "" ? null : required === "true";
@@ -2436,6 +2506,7 @@ async function saveHouseWorkPlan(form, manual = false) {
   }
   const saveState = workPlanSaveStates.get(form) || { revision: 0, pending: Promise.resolve() };
   const revision = ++saveState.revision;
+  const submittedSnapshot = workPlanSnapshot(form);
   const previousSave = saveState.pending;
   const save = previousSave
     .catch(() => {})
@@ -2453,7 +2524,7 @@ async function saveHouseWorkPlan(form, manual = false) {
   status.classList.remove("save-error");
   try {
     await save;
-    const houseId = form.dataset.houseId;
+    saveState.savedSnapshot = submittedSnapshot;
     const matchingHouses = [
       ...surveyHouses,
       ...Object.values(planCache).flat(),
@@ -2467,7 +2538,7 @@ async function saveHouseWorkPlan(form, manual = false) {
     }
     planStale.add("ready");
     if (revision === saveState.revision) {
-      status.textContent = "Work plan saved.";
+      updateWorkPlanSaveStatus(form);
       if (manual) showToast(`Pre-start work plan for ${houseId} saved.`);
     }
   } catch (error) {
@@ -2527,15 +2598,39 @@ async function deleteHouseDocument(button) {
 }
 async function loadSeaiDocuments(houseId, requestId, canModify = true) {
   const list = $("#survey-room-seai-documents");
+  const savedList = $("#survey-room-saved-pdfs-list");
   list.innerHTML = '<p class="muted">Loading SEAI PDFs…</p>';
+  savedList.innerHTML = '<p class="muted">Loading saved PDFs…</p>';
   try {
     const result = await request(
       `/api/seai-documents?house_id=${encodeURIComponent(houseId)}`,
     );
     if (requestId !== state.surveyRoomRequest) return;
+    const savedDocuments = result.documents.filter(
+      (document) => document.is_selected_pdf,
+    );
+    savedList.innerHTML = savedDocuments.length
+      ? `<div class="saved-pdfs-overview"><span class="saved-pdfs-count">${savedDocuments.length} ${savedDocuments.length === 1 ? "PDF" : "PDFs"}</span><span>Saved for this house</span></div>
+        <div class="saved-pdfs-entries">${savedDocuments.map((document) => `
+        <div class="saved-pdf-entry">
+          <span class="saved-pdf-icon" aria-hidden="true">PDF</span>
+          <div class="saved-pdf-copy">
+            <span class="saved-pdf-label">Saved selection</span>
+            <strong class="saved-pdf-filename">${escapeHtml(document.filename)}</strong>
+            <span class="saved-pdf-meta">PDF document <span aria-hidden="true">·</span> ${(document.size_bytes / 1_000_000).toFixed(1)} MB</span>
+          </div>
+          <div class="saved-pdf-actions">
+            <a class="button button-primary saved-pdf-view" href="/api/seai-documents/${Number(document.id)}/file" target="_blank" rel="noreferrer">View PDF</a>
+            ${canModify ? `<button class="button saved-pdf-delete" type="button" data-selected-seai-delete="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}">Delete</button>` : ""}
+          </div>
+        </div>`).join("")}</div>`
+      : '<div class="saved-pdfs-empty"><span class="saved-pdfs-empty-icon" aria-hidden="true">PDF</span><div><strong>No saved PDFs yet</strong><p>When a surveyor saves selected pages, they will be available here for this house.</p></div></div>';
+    const libraryDocuments = result.documents.filter(
+      (document) => !document.is_selected_pdf,
+    );
     const categories = ["Application", "Survey", "Variation"];
     const extraCategories = [...new Set(
-      result.documents.map((document) => document.category),
+      libraryDocuments.map((document) => document.category),
     )].filter((category) => !categories.includes(category));
     const allCategories = [...categories, ...extraCategories];
     const toolbar = canModify ? `<div class="seai-share-toolbar">
@@ -2549,11 +2644,11 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
       <span class="seai-pdf-library-icon" aria-hidden="true">PDF</span>
       <div><span class="seai-pdf-library-eyebrow">DOCUMENT LIBRARY</span><h3>SEAI PDFs</h3>
       <p>Browse application records, survey plans and variation documents.</p></div>
-      <span class="seai-pdf-library-count">${result.documents.length} ${result.documents.length === 1 ? "file" : "files"}</span>
+      <span class="seai-pdf-library-count">${libraryDocuments.length} ${libraryDocuments.length === 1 ? "file" : "files"}</span>
     </div>`;
-    list.innerHTML = `${libraryHeader}${toolbar}${result.documents.length
+    list.innerHTML = `${libraryHeader}${toolbar}${libraryDocuments.length
       ? allCategories.map((category) => {
-          const documents = result.documents.filter((document) => document.category === category);
+          const documents = libraryDocuments.filter((document) => document.category === category);
           if (!documents.length) return "";
           const hint = seaiPdfCategoryHints[category]
             ? `<p class="survey-room-seai-note">${escapeHtml(seaiPdfCategoryHints[category])}</p>`
@@ -2562,6 +2657,8 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
           <div class="seai-document-entry ${document.is_annotated ? "is-annotated" : "is-original"}">
             <span class="house-document-icon" aria-hidden="true">PDF</span>
             <span class="seai-document-name"><span class="seai-document-status ${document.is_annotated ? "annotated" : "original"}">${document.is_annotated ? "ANNOTATED COPY" : "ORIGINAL PDF"}</span>${escapeHtml(document.filename)}<small>${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
+            <a class="button button-secondary seai-document-open" href="/api/seai-documents/${Number(document.id)}/file" target="_blank" rel="noreferrer">View PDF</a>
+            ${canModify && document.is_selected_pdf ? `<button class="button button-secondary seai-document-delete" type="button" data-selected-seai-delete="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}">Delete saved PDF</button>` : ""}
             ${canModify && document.is_annotated ? `<button class="button button-secondary seai-document-share" type="button" data-seai-document-share="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}">Share annotated PDF</button>` : ""}
             ${canModify
     ? `<button class="button button-secondary seai-document-view" type="button" data-document-id="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}" data-document-category="${escapeHtml(category)}">Open &amp; annotate</button>`
@@ -2573,7 +2670,32 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
   } catch (error) {
     if (requestId === state.surveyRoomRequest) {
       list.innerHTML = `<p class="house-documents-error">Could not load SEAI PDFs: ${escapeHtml(error.message)}</p>`;
+      savedList.innerHTML = `<p class="house-documents-error">Could not load saved PDFs: ${escapeHtml(error.message)}</p>`;
     }
+  }
+}
+async function deleteSavedSelectedSeaiPdf(button) {
+  const documentId = Number(button.dataset.selectedSeaiDelete);
+  const filename = button.dataset.documentName;
+  const houseId = state.surveyRoomHouseId;
+  if (!Number.isInteger(documentId) || documentId < 1) {
+    showToast("This saved PDF has an invalid document ID.", true);
+    return;
+  }
+  if (!window.confirm(`Permanently delete "${filename}"? This cannot be undone.`)) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    await request(`/api/seai-documents/${documentId}/delete-selected`, {
+      method: "POST",
+    });
+    await loadSeaiDocuments(houseId, state.surveyRoomRequest, true);
+    showToast(`${filename} deleted from the house SEAI PDFs.`);
+  } catch (error) {
+    showToast(`Could not delete ${filename}: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
   }
 }
 function seaiSharePageKey(documentId, page) {
@@ -2632,16 +2754,6 @@ function clearSelectedPdfPreview() {
     prepared.previewUrl = "";
   }
 }
-function openPreparedHouseShareDialog() {
-  const prepared = state.preparedHouseShare;
-  if (!prepared) return;
-  $("#house-document-share-title").textContent =
-    `${prepared.houseId} · ${prepared.filename}`;
-  $("#house-document-share-description").textContent =
-    prepared.description ||
-    "Send this PDF straight to a team to add it to the house record, or choose another way to share or download it.";
-  $("#house-document-share-dialog").showModal();
-}
 async function prepareSeaiDocumentShare(button) {
   const categoryOrder = new Map(["Application", "Survey", "Variation"]
     .map((category, index) => [category, index]));
@@ -2695,27 +2807,13 @@ async function prepareSeaiDocumentShare(button) {
       description: blankPageCount
         ? `Selected SEAI pages with ${blankPageCount} temporary annotated blank page${blankPageCount === 1 ? "" : "s"}.`
         : "Selected SEAI pages, without a survey-notes page.",
-      ventShare: {
-        url: "/api/seai-documents/share",
-        method: "POST",
-        body: {
-          house_id: state.surveyRoomHouseId,
-          pages: selectedPages,
-          include_survey_note: false,
-        },
-        filename: `${state.surveyRoomHouseId}-selected-seai-pages.pdf`,
-      },
-      ewiTeamShare: {
-        filename: `${state.surveyRoomHouseId}-selected-seai-pages.pdf`,
-      },
     };
     state.preparedHouseShare.previewUrl = URL.createObjectURL(file);
     $("#selected-pdf-preview-title").textContent =
       `${state.surveyRoomHouseId} · ${filename}`;
     $("#selected-pdf-preview-description").textContent =
-      "Review the complete PDF, including any temporary annotated blank pages, before sending it.";
+      "Review the combined PDF, then save it to this house. It will be available to accounts with access to SEAI PDFs.";
     $("#selected-pdf-preview").src = state.preparedHouseShare.previewUrl;
-    $("#house-document-share-ewi").hidden = false;
     $("#selected-pdf-preview-dialog").showModal();
   } catch (error) {
     showToast(error.message, true);
@@ -2726,6 +2824,35 @@ async function prepareSeaiDocumentShare(button) {
 function clearSeaiShareSelection() {
   state.seaiSharePages.clear();
   updateSeaiShareToolbar();
+}
+async function saveSelectedSeaiPdf() {
+  const prepared = state.preparedHouseShare;
+  const button = $("#selected-pdf-preview-continue");
+  if (!prepared || button.disabled) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(
+      `/api/seai-documents/save-selected?house_id=${encodeURIComponent(prepared.houseId)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/pdf" },
+        body: prepared.file,
+        cache: "no-store",
+      },
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || `Could not save the selected PDF (${response.status}).`);
+    }
+    $("#selected-pdf-preview-dialog").close();
+    clearSeaiShareSelection();
+    await loadSeaiDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
+    showToast(`${result.filename} saved to the house SEAI PDFs.`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 async function prepareSeaiDocumentFileShare(button) {
   const documentId = button.dataset.seaiDocumentShare;
@@ -2826,6 +2953,37 @@ function updatePdfPageZoom(preserveCenter = true) {
     });
   }
 }
+function wrapPdfAnnotationText(context, text, maxWidth) {
+  const lines = [];
+  for (const paragraph of String(text).split(/\r?\n/)) {
+    const words = paragraph.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lines.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (context.measureText(candidate).width <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+      if (line) lines.push(line);
+      line = "";
+      for (const character of word) {
+        const next = line + character;
+        if (line && context.measureText(next).width > maxWidth) {
+          lines.push(line);
+          line = character;
+        } else {
+          line = next;
+        }
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
+}
 function drawPdfAnnotations() {
   const annotator = state.pdfAnnotator;
   const canvas = $("#pdf-annotator-canvas");
@@ -2858,11 +3016,34 @@ function drawPdfAnnotations() {
       if (annotation.tool === "text") {
         context.textBaseline = "top";
         context.font = `600 ${Math.max(14, annotation.font_size * width)}px system-ui, sans-serif`;
-        context.fillText(
-          annotation.text,
-          annotation.point[0] * width,
-          annotation.point[1] * height,
-        );
+        if (annotation.wrap) {
+          const x = Math.min(annotation.point[0] * width, width * 0.62);
+          const maxWidth = Math.max(24, width - x - 8);
+          let fontSize = Math.max(8, annotation.font_size * width);
+          context.font = `600 ${fontSize}px system-ui, sans-serif`;
+          let lines = wrapPdfAnnotationText(context, annotation.text, maxWidth);
+          let lineHeight = fontSize * 1.25;
+          const availableHeight = height - 16;
+          if (lines.length * fontSize * 1.6 > availableHeight) {
+            fontSize *= availableHeight / (lines.length * fontSize * 1.6);
+            context.font = `600 ${fontSize}px system-ui, sans-serif`;
+            lines = wrapPdfAnnotationText(context, annotation.text, maxWidth);
+            lineHeight = fontSize * 1.25;
+          }
+          const y = Math.min(
+            annotation.point[1] * height,
+            height - 8 - lines.length * fontSize * 1.6,
+          );
+          lines.forEach((line, index) => {
+            context.fillText(line, x, y + index * lineHeight);
+          });
+        } else {
+          context.fillText(
+            annotation.text,
+            annotation.point[0] * width,
+            annotation.point[1] * height,
+          );
+        }
       } else {
         context.globalAlpha = annotation.tool === "highlighter" ? 0.38 : 1;
         context.lineWidth = annotation.width * width;
@@ -3435,6 +3616,16 @@ function closeSurveyorRoom() {
 async function submitHouseSurvey(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  const workPlanForm = $("#surveyor-work-plan-form");
+  if (!updateWorkPlanSaveStatus(workPlanForm)) {
+    showToast(
+      "Pre-start work plan is not saved. Save it before saving the survey.",
+      true,
+    );
+    scrollToSurveyRoomSection($("#survey-room-work-plan"));
+    $("button[type='submit']", workPlanForm).focus({ preventScroll: true });
+    return;
+  }
   const button = $("button[type='submit']", form);
   const readRows = (id) => [...$("#survey-" + id).querySelectorAll(".survey-row")];
   const dims = (id) => readRows(id).filter((row) => [...row.querySelectorAll("input")].every((input) => input.value.trim())).map((row) => ({ w: Number(row.querySelectorAll("input")[0].value), h: Number(row.querySelectorAll("input")[1].value), qty: Number(row.querySelector("select").value) }));
@@ -3659,13 +3850,13 @@ async function renderNotStartedHouses(query, mode = "not_started") {
             ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
           </div>
         <div class="house-card-actions">
-        ${isAssign ? `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">View SEAI details <span aria-hidden="true">→</span></button>` : ""}
+        ${isAssign ? `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>` : ""}
         ${isAssign && isReady ? `
-          <button class="text-button assign-house-activate" type="button" data-house-id="${id}"${h.has_assigned_surveyor && surveyIsComplete(h) && h.has_surveyed_perimeter ? "" : ` disabled title="${!h.has_assigned_surveyor ? "Assign a Surveyor first." : !surveyIsComplete(h) ? "Waiting for the assigned Surveyor to complete the survey." : "A valid surveyed perimeter is required."}"`}>＋ Activate house</button>
-          <button class="text-button assign-house-team" type="button" data-house-id="${id}">${h.has_assigned_surveyor ? "Change Surveyor" : "Assign Surveyor"}</button>
-          <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to Not started</button>
+          <button class="text-button assign-house-activate" type="button" data-house-id="${id}"${h.has_assigned_surveyor && surveyIsComplete(h) && h.has_surveyed_perimeter ? "" : ` disabled title="${!h.has_assigned_surveyor ? "Assign a Surveyor first." : !surveyIsComplete(h) ? "Waiting for the assigned Surveyor to complete the survey." : "A valid surveyed perimeter is required."}"`}>${houseActionIcon("activate")}<span>Activate house</span></button>
+          <button class="text-button assign-house-team" type="button" data-house-id="${id}">${houseActionIcon(h.has_assigned_surveyor ? "change" : "assign")}<span>${h.has_assigned_surveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button>
+          <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>
         ` : `
-          ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : `
+          ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${isAssign ? `${houseActionIcon("ready")}<span>Mark ready for start</span>` : "Mark ready for start"}</button>` : `
               <button class="text-button seai-activate" type="button" data-house-id="${id}"${surveyIsComplete(h) ? "" : ' disabled title="Complete a survey before activation."'}>${surveyIsComplete(h) ? "&#43; Activate house" : "Survey required to activate"}</button>
             ${canSurveyHouses ? `<button class="text-button house-survey-open ${surveyIsComplete(h) ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${surveyIsComplete(h) ? "Review completed survey" : "Open surveyor room"}">${surveyIsComplete(h) ? "Review survey" : "Surveyor room"}</button>` : ""}
             ${hasAccessProfile(state.user, "assign") ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}
@@ -4128,7 +4319,16 @@ function mapHouseActions(house) {
       house.assigned_surveyor_name ||
       house.surveyor_assigned_at,
     );
-    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">View SEAI details</button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-team" type="button" data-house-id="${id}">${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to Not started</button>` : ""}`;
+    const canActivate =
+      hasAssignedSurveyor &&
+      surveyIsComplete(house) &&
+      house.has_surveyed_perimeter;
+    const activationTitle = !hasAssignedSurveyor
+      ? "Assign a Surveyor first."
+      : !surveyIsComplete(house)
+        ? "Waiting for the assigned Surveyor to complete the survey."
+        : "A valid surveyed perimeter is required.";
+    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${houseActionIcon("ready")}<span>Mark ready for start</span></button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-activate" type="button" data-house-id="${id}"${canActivate ? "" : ` disabled title="${activationTitle}"`}>${houseActionIcon("activate")}<span>Activate house</span></button><button class="text-button assign-house-team" type="button" data-house-id="${id}">${houseActionIcon(hasAssignedSurveyor ? "change" : "assign")}<span>${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>` : ""}`;
   }
   if (house.status === "not_started") {
     return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open survey-needed" type="button" data-house-id="${id}">View Surveyor room</button>` : ""}`;
@@ -7140,10 +7340,7 @@ function bindEvents() {
     "close",
     clearSelectedPdfPreview,
   );
-  $("#selected-pdf-preview-continue").addEventListener("click", () => {
-    $("#selected-pdf-preview-dialog").close();
-    openPreparedHouseShareDialog();
-  });
+  $("#selected-pdf-preview-continue").addEventListener("click", saveSelectedSeaiPdf);
   $("#movement-kind").addEventListener("change", updateMovementFields);
   $("#movement-material-search").addEventListener(
     "input",
@@ -7289,6 +7486,11 @@ function bindEvents() {
   $("#back-from-surveyor-room").addEventListener("click", closeSurveyorRoom);
   $("#surveyor-house-notes-form").addEventListener("submit", submitSurveyorHouseNotes);
   $("#survey-room-seai-documents").addEventListener("click", (event) => {
+    const deleteSelectedPdf = event.target.closest("[data-selected-seai-delete]");
+    if (deleteSelectedPdf) {
+      deleteSavedSelectedSeaiPdf(deleteSelectedPdf);
+      return;
+    }
     if (event.target.closest("[data-seai-create-blank]")) {
       openBlankSeaiPage();
       return;
@@ -7305,6 +7507,12 @@ function bindEvents() {
     }
     if (event.target.closest("[data-seai-share-clear]")) {
       clearSeaiShareSelection();
+    }
+  });
+  $("#survey-room-saved-pdfs-list").addEventListener("click", (event) => {
+    const deleteSelectedPdf = event.target.closest("[data-selected-seai-delete]");
+    if (deleteSelectedPdf) {
+      deleteSavedSelectedSeaiPdf(deleteSelectedPdf);
     }
   });
   $("#pdf-annotator-page-selection").addEventListener("change", (event) => {
@@ -7420,6 +7628,7 @@ function bindEvents() {
         color,
         point,
         text,
+        wrap: annotator.documentType === "blank",
         font_size: textSize / annotator.fitWidth,
       });
       drawPdfAnnotations();
@@ -7537,6 +7746,12 @@ function bindEvents() {
       )
     ) {
       syncWorkPlanCards(event.currentTarget);
+      updateWorkPlanSaveStatus(event.currentTarget);
+    }
+  });
+  $("#surveyor-work-plan-form").addEventListener("input", (event) => {
+    if (event.target.matches("textarea[name$='_notes']")) {
+      updateWorkPlanSaveStatus(event.currentTarget);
     }
   });
   $("#surveyor-room").addEventListener("click", (event) => {

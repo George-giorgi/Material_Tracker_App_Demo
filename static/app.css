@@ -1341,6 +1341,46 @@ h1 { margin-bottom: 3px; font-size: 24px; }
 
 #house-map-view .houses-list-toolbar { align-items: flex-start; }
 #house-map-view .page-subtitle { max-width: 680px; }
+#house-map-view .house-map-back-button {
+  min-height: 34px;
+  flex: 0 0 auto;
+  gap: 8px;
+  border-color: #d3e2d7;
+  border-radius: 999px;
+  padding: 3px 13px 3px 5px;
+  background: #f5f9f6;
+  color: #315b40;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px #193b240a;
+  transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+#house-map-view .house-map-back-button .house-map-back-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid #dce9df;
+  border-radius: 50%;
+  padding: 4px;
+  background: #eaf3ed;
+  color: #356849;
+  transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+#house-map-view .house-map-back-button:hover {
+  border-color: #a7c7b1;
+  background: #eaf4ed;
+  color: #1d5934;
+  box-shadow: 0 2px 4px #193b2410;
+}
+#house-map-view .house-map-back-button:hover .house-map-back-icon {
+  border-color: #bad8c2;
+  background: #dceee1;
+  color: #205b37;
+}
+#house-map-view .house-map-back-button:focus-visible {
+  outline: 2px solid #477ee5;
+  outline-offset: 2px;
+}
 .house-map-summary { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .house-map-summary span { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #e0e8e2; border-radius: 999px; padding: 5px 9px; background: #fff; color: #65736a; font-size: 10px; }
 .house-map-summary strong { color: #314d3b; font-size: 11px; }
@@ -1391,6 +1431,7 @@ h1 { margin-bottom: 3px; font-size: 24px; }
 }
 @media (max-width: 600px) {
   #house-map-view .houses-list-toolbar { gap: 12px; }
+  #house-map-view .house-map-back-button { min-height: 34px; }
   .house-map-summary { gap: 5px; margin-top: 9px; }
   .house-map-summary span { padding: 5px 7px; font-size: 9px; }
   .house-map-layout { gap: 10px; }
@@ -1399,6 +1440,32 @@ h1 { margin-bottom: 3px; font-size: 24px; }
   .house-map-side { padding: 12px; }
   .house-map-legend { display: flex; }
   .house-map-list-status { max-width: 105px; white-space: normal; }
+}
+html[data-theme="dark"] #house-map-view .house-map-back-button {
+  border-color: #405b48;
+  background: #202f27;
+  color: #c5dec9;
+  box-shadow: 0 1px 2px #0003;
+}
+html[data-theme="dark"] #house-map-view .house-map-back-button .house-map-back-icon {
+  border-color: #45644d;
+  background: #2a4032;
+  color: #a9d8b5;
+}
+html[data-theme="dark"] #house-map-view .house-map-back-button:hover {
+  border-color: #5e8a68;
+  background: #293d31;
+  color: #e5f6e8;
+  box-shadow: 0 2px 5px #0004;
+}
+html[data-theme="dark"] #house-map-view .house-map-back-button:hover .house-map-back-icon {
+  border-color: #598064;
+  background: #34503b;
+  color: #c4edcd;
+}
+@media (prefers-reduced-motion: reduce) {
+  #house-map-view .house-map-back-button,
+  #house-map-view .house-map-back-button .house-map-back-icon { transition: none; }
 }
 
 #surveyor-room { display: grid; gap: 14px; }
@@ -1437,7 +1504,7 @@ h1 { margin-bottom: 3px; font-size: 24px; }
 .survey-room-seai-documents > h3 { margin: 0 0 8px; color: #31533d; font-size: 12px; }
 .seai-document-category { margin-top: 9px; border: 1px solid #e4ebe6; border-radius: 9px; padding: 8px 10px; background: #fbfdfb; }
 .seai-document-category h4 { margin: 0 0 6px; color: #607367; font-size: 10px; }
-.seai-document-entry { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border-top: 1px solid #e8eee9; padding: 7px 0; }
+.seai-document-entry { display: grid; grid-template-columns: auto minmax(0, 1fr) repeat(4, auto); align-items: center; gap: 9px; border-top: 1px solid #e8eee9; padding: 7px 0; }
 .seai-document-category .seai-document-entry { margin-top: 7px; border: 1px solid #d5dde5; border-left: 5px solid #64748b; border-radius: 9px; padding: 10px 11px; background: #f1f3f5; }
 .seai-document-category .seai-document-entry.is-annotated { border-color: #b7cfee; border-left-color: #2563eb; background: #edf5ff; }
 .seai-document-name { min-width: 0; color: #314b3a; font-size: 10px; font-weight: 600; overflow-wrap: anywhere; }
@@ -2031,7 +2098,7 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
 .pdf-annotator-text-panel { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 16px; border-bottom: 1px solid #e7ece9; background: #f4f8fc; color: #415c75; font-size: 11px; }
 .pdf-annotator-text-panel > label { font-weight: 650; }
 .pdf-annotator-text-panel .pdf-annotator-text-label { flex: 0 0 auto; }
-.pdf-annotator-text-panel input { flex: 1 1 220px; min-height: 38px; border: 1px solid #d8e2ea; border-radius: 8px; padding: 7px 10px; background: #fff; color: #263b4f; font-size: 13px; }
+.pdf-annotator-text-panel textarea { flex: 1 1 220px; min-height: 52px; max-height: 100px; resize: vertical; border: 1px solid #d8e2ea; border-radius: 8px; padding: 7px 10px; background: #fff; color: #263b4f; font-family: inherit; font-size: 13px; line-height: 1.4; }
 .pdf-annotator-text-size { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; }
 .pdf-annotator-text-size select { min-height: 38px; border: 1px solid #d8e2ea; border-radius: 8px; padding: 0 9px; background: #fff; color: #263b4f; font-size: 12px; }
 .pdf-annotator-text-panel .pdf-annotator-text-hint { flex: 1 1 100%; color: #718394; }
@@ -2047,7 +2114,11 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
   .house-document-actions { grid-column: 1 / -1; justify-content: stretch; }
   .house-document-actions .button { flex: 1 1 auto; }
   .seai-document-entry { grid-template-columns: auto minmax(0, 1fr); }
-  .seai-document-share, .seai-document-view { grid-column: 2; justify-self: start; }
+  .seai-document-open, .seai-document-delete, .seai-document-share, .seai-document-view { grid-column: 2; justify-self: start; }
+  .survey-room-saved-pdfs-list { padding: 0 12px 12px; }
+  .saved-pdf-entry { grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 11px; }
+  .saved-pdf-actions { grid-column: 2; justify-content: flex-start; }
+  .saved-pdf-actions .button { flex: 0 1 auto; }
   .pdf-annotator-dialog { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
   .pdf-annotator-header { padding: 9px 12px; }
   .pdf-annotator-toolbar { justify-content: flex-start; gap: 6px; padding: 8px; }
@@ -2057,7 +2128,7 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
   .pdf-annotator-size { min-height: 44px; }
   .pdf-annotator-size select { min-height: 42px; }
   .pdf-annotator-text-panel { gap: 7px; padding: 8px 10px; }
-  .pdf-annotator-text-panel input { min-height: 42px; }
+  .pdf-annotator-text-panel textarea { min-height: 48px; }
   .pdf-annotator-text-size select { min-height: 42px; }
   .pdf-annotator-toolbar .button { min-height: 44px; padding: 0 9px; font-size: 11px; }
   .pdf-annotator-zoom .button { width: 42px; }
@@ -2107,8 +2178,8 @@ html[data-theme="dark"] .pdf-annotator-toolbar .button-secondary:hover:not(:disa
 html[data-theme="dark"] .pdf-annotator-toolbar .button-secondary:disabled { border-color: #35483f; background: #202c27; color: #819187; opacity: 1; }
 html[data-theme="dark"] .pdf-annotator-save:disabled { border-color: #3a5045; background: #2a3932; color: #91a399; opacity: 1; }
 html[data-theme="dark"] .pdf-annotator-text-panel { color: #cad9d0; }
-html[data-theme="dark"] .pdf-annotator-text-panel input { border-color: #496555; background: #17211e; color: #eaf4ef; }
-html[data-theme="dark"] .pdf-annotator-text-panel input::placeholder { color: #8fa197; }
+html[data-theme="dark"] .pdf-annotator-text-panel textarea { border-color: #496555; background: #17211e; color: #eaf4ef; }
+html[data-theme="dark"] .pdf-annotator-text-panel textarea::placeholder { color: #8fa197; }
 html[data-theme="dark"] .pdf-annotator-text-panel .pdf-annotator-text-hint { color: #a7b8ae; }
 html[data-theme="dark"] .pdf-annotator-page-selection { color: #c4d4ca; }
 html[data-theme="dark"] .pdf-annotator-help { color: #a7b8ae; }
@@ -3826,6 +3897,11 @@ body.surveyor-mode .heading-actions { align-items: center; }
 .surveyor-house-card .house-avatar { width: 42px; height: 42px; border-radius: 12px; background: #edf5ef; font-size: 21px; }
 .surveyor-house-card .house-meta h2 { color: #1d3729; font-size: 17px; }
 .surveyor-house-card .house-meta p { font-size: 11px; line-height: 1.5; }
+.surveyor-house-assignment-credit { display: flex; width: fit-content; max-width: 100%; align-items: center; gap: 9px; margin: 2px 0 0 55px; border: 1px solid #dcebe0; border-radius: 10px; padding: 7px 11px 7px 8px; background: #f5faf6; color: #536b5b; font-size: 10px; line-height: 1.4; }
+.surveyor-assignment-credit-icon { display: grid; width: 25px; height: 25px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: #e4f2e8; color: #34764d; font-size: 13px; font-weight: 800; }
+.surveyor-assignment-credit-copy { display: grid; min-width: 0; gap: 2px; }
+.surveyor-house-assignment-credit strong { color: #315b3d; font-weight: 750; }
+.surveyor-house-assignment-credit time { color: #75867a; font-size: 9px; font-variant-numeric: tabular-nums; }
 .surveyor-house-card .house-status-stack { align-items: flex-end; }
 .surveyor-house-card.is-surveyed { border-color: #b7ddc5; }
 .surveyor-house-card .house-status-stack .status-pill.survey-complete { border: 1px solid #a9d8b8; background: #e7f6ec; color: #176b3a; font-weight: 750; }
@@ -4386,6 +4462,29 @@ html[data-theme="dark"] .survey-room-seai-section > summary::after { border-colo
 .seai-document-category[open] > summary { border-radius: 11px 11px 0 0; }
 .seai-document-entries { display: grid; gap: 8px; padding: 10px 12px 12px; }
 .seai-document-entries .seai-document-entry { margin-top: 0; }
+.survey-room-saved-pdfs { margin-top: 4px; border-top: 1px solid #e1eae4; }
+.survey-room-saved-pdfs-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 10px; }
+.survey-room-saved-pdfs-heading h3 { margin: 0 0 3px; color: #31533d; font-size: 13px; }
+.survey-room-saved-pdfs-heading p { margin: 0; color: #718078; font-size: 10px; line-height: 1.45; }
+.survey-room-saved-pdfs-list { display: grid; gap: 12px; padding: 0 18px 18px; }
+.saved-pdfs-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #64756a; font-size: 11px; }
+.saved-pdfs-count { border: 1px solid #cfe2d4; border-radius: 999px; padding: 4px 9px; background: #edf7f0; color: #24633f; font-size: 10px; font-weight: 800; }
+.saved-pdfs-entries { display: grid; gap: 10px; }
+.saved-pdf-entry { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; border: 1px solid #dce8df; border-left: 4px solid #328454; border-radius: 12px; padding: 13px 15px; background: linear-gradient(120deg, #f5faf6, #fff 70%); box-shadow: 0 2px 8px #24463008; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.saved-pdf-entry:hover { border-color: #9dc4a9; box-shadow: 0 5px 16px #24463012; transform: translateY(-1px); }
+.saved-pdf-icon { display: grid; width: 44px; height: 48px; place-items: center; border: 1px solid #c9e0d0; border-radius: 10px; background: #e6f3ea; color: #287348; font-size: 10px; font-weight: 900; letter-spacing: .04em; }
+.saved-pdf-copy { display: grid; min-width: 0; gap: 3px; }
+.saved-pdf-label { width: fit-content; color: #378052; font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.saved-pdf-filename { overflow-wrap: anywhere; color: #263d30; font-size: 12px; line-height: 1.4; }
+.saved-pdf-meta { color: #75847a; font-size: 10px; }
+.saved-pdf-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
+.saved-pdf-actions .button { min-height: 36px; padding: 7px 12px; font-size: 11px; white-space: nowrap; }
+.saved-pdf-delete { border-color: #e5d6d4; background: #fff; color: #874b45; }
+.saved-pdf-delete:hover:not(:disabled) { border-color: #d3a6a0; background: #fff7f6; color: #713831; }
+.saved-pdfs-empty { display: flex; align-items: center; gap: 13px; border: 1px dashed #cbd9cf; border-radius: 12px; padding: 16px; background: #f8fbf8; }
+.saved-pdfs-empty-icon { display: grid; width: 40px; height: 44px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #eaf3ec; color: #527a5d; font-size: 10px; font-weight: 800; }
+.saved-pdfs-empty strong { color: #344c3b; font-size: 12px; }
+.saved-pdfs-empty p { margin: 3px 0 0; color: #718078; font-size: 11px; line-height: 1.5; }
 .seai-document-entries .seai-document-name { font-size: 12px; }
 .survey-room-seai-pdfs > summary > .seai-sec-title { font-size: 14px; }
 html[data-theme="dark"] .survey-room-seai-documents { border-color: #3a5546; border-left-color: #54b77b; background: linear-gradient(145deg, #20352b, #1b2823 68%, #192320); box-shadow: 0 4px 16px #0002; }
@@ -4398,10 +4497,28 @@ html[data-theme="dark"] .survey-room-seai-section.seai-document-category,
 html[data-theme="dark"] .survey-room-seai-section.seai-document-category[open] { background: #1b2823; }
 html[data-theme="dark"] .seai-document-category > summary:hover { background: #22332b; }
 html[data-theme="dark"] .survey-room-seai-documents .seai-share-toolbar { border-color: #35483f; background: #192622; }
+html[data-theme="dark"] .survey-room-saved-pdfs { border-top-color: #35483f; }
+html[data-theme="dark"] .survey-room-saved-pdfs-heading h3 { color: #e2eee6; }
+html[data-theme="dark"] .survey-room-saved-pdfs-heading p { color: #a7b8ae; }
+html[data-theme="dark"] .saved-pdfs-overview { color: #b6c8bc; }
+html[data-theme="dark"] .saved-pdfs-count { border-color: #42604c; background: #243a2c; color: #b9e2c4; }
+html[data-theme="dark"] .saved-pdf-entry { border-color: #354b3c; border-left-color: #5bc184; background: linear-gradient(120deg, #202f26, #1b2822 70%); box-shadow: 0 2px 8px #0002; }
+html[data-theme="dark"] .saved-pdf-entry:hover { border-color: #587d63; box-shadow: 0 5px 16px #0003; }
+html[data-theme="dark"] .saved-pdf-icon { border-color: #45634e; background: #293e30; color: #bce7c8; }
+html[data-theme="dark"] .saved-pdf-label { color: #8fd4a3; }
+html[data-theme="dark"] .saved-pdf-filename { color: #e5efe8; }
+html[data-theme="dark"] .saved-pdf-meta { color: #a7b8ad; }
+html[data-theme="dark"] #surveyor-room .saved-pdf-delete { border-color: #634543; background: #332725; color: #f0b7ad; }
+html[data-theme="dark"] #surveyor-room .saved-pdf-delete:hover:not(:disabled) { border-color: #98625a; background: #432d2a; color: #ffd2ca; }
+html[data-theme="dark"] .saved-pdfs-empty { border-color: #405649; background: #1b2822; }
+html[data-theme="dark"] .saved-pdfs-empty-icon { background: #293e30; color: #b7ddc1; }
+html[data-theme="dark"] .saved-pdfs-empty strong { color: #e0ebe3; }
+html[data-theme="dark"] .saved-pdfs-empty p { color: #a7b8ad; }
 .survey-room-seai-documents .seai-share-toolbar { margin-left: 14px; margin-right: 14px; }
 html[data-theme="dark"] .survey-room-seai-documents .seai-documents-empty { border-color: #496555; background: #192622; color: #b9d1c2; }
 @media (max-width: 700px) {
   .survey-room-seai-documents { margin-right: 10px; margin-left: 10px; padding: 11px; }
+  .survey-room-saved-pdfs-heading { padding: 14px 12px 10px; }
   .seai-pdf-library-heading { grid-template-columns: auto minmax(0, 1fr); gap: 9px; }
   .seai-pdf-library-icon { width: 38px; height: 38px; }
   .seai-pdf-library-count { grid-column: 2; justify-self: start; }
@@ -4573,12 +4690,211 @@ html[data-theme="dark"] #houses-list .supervisor-house-card .supervisor-assignme
 #houses-list .surveyor-house-card .house-meta { flex: 1 1 auto; }
 #houses-list .surveyor-house-card .house-meta h2 { margin: 0; font-size: 17px; font-weight: 800; line-height: 1.15; letter-spacing: .01em; }
 #houses-list .surveyor-house-card .house-seai-line { font-size: 12px; }
+
+#houses-list .assign-house-card .house-card-actions .text-button,
+#house-map-selection .house-card-actions .text-button {
+  min-height: 42px;
+  border-width: 1px;
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  box-shadow: 0 1px 2px #19332310;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .16s ease, box-shadow .16s ease;
+}
+#houses-list .assign-house-card .house-card-actions .house-action-icon,
+#house-map-selection .house-card-actions .house-action-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+#house-map-list-view .house-map-back-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+#houses-list .assign-house-card .house-card-actions .text-button > span,
+#house-map-selection .house-card-actions .text-button > span {
+  margin: 0;
+}
+#houses-list .assign-house-card .house-card-actions .text-button:hover,
+#house-map-selection .house-card-actions .text-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px #19332320;
+}
+#houses-list .assign-house-card .house-card-actions .text-button:active,
+#house-map-selection .house-card-actions .text-button:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px #19332318;
+}
+#houses-list .assign-house-card .house-card-actions .text-button:focus-visible,
+#house-map-selection .house-card-actions .text-button:focus-visible {
+  outline: 3px solid #477ee5;
+  outline-offset: 2px;
+}
+#houses-list .assign-house-card .house-card-actions .assign-seai-details,
+#house-map-selection .house-card-actions .assign-seai-details {
+  border-color: #b9d6c3;
+  background: #edf7f0;
+  color: #205b36;
+}
+#houses-list .assign-house-card .house-card-actions .assign-seai-details:hover,
+#house-map-selection .house-card-actions .assign-seai-details:hover {
+  border-color: #8cbd9c;
+  background: #e0f1e5;
+}
+#houses-list .assign-house-card .house-card-actions .plan-ready-toggle[data-ready="true"],
+#house-map-selection .house-card-actions .plan-ready-toggle[data-ready="true"],
+#house-map-selection .house-card-actions .assign-house-activate:not(:disabled),
+#houses-list .assign-house-card .house-card-actions .assign-house-activate:not(:disabled) {
+  border-color: #176b4a;
+  background: #176b4a;
+  color: #fff;
+  box-shadow: 0 2px 5px #176b4a30;
+}
+#houses-list .assign-house-card .house-card-actions .plan-ready-toggle[data-ready="true"]:hover,
+#house-map-selection .house-card-actions .plan-ready-toggle[data-ready="true"]:hover,
+#house-map-selection .house-card-actions .assign-house-activate:not(:disabled):hover,
+#houses-list .assign-house-card .house-card-actions .assign-house-activate:not(:disabled):hover {
+  border-color: #10583c;
+  background: #10583c;
+  box-shadow: 0 4px 10px #176b4a40;
+}
+#houses-list .assign-house-card .house-card-actions .assign-house-team,
+#house-map-selection .house-card-actions .assign-house-team {
+  border-color: #b8d0f0;
+  background: #edf4ff;
+  color: #285b9c;
+}
+#houses-list .assign-house-card .house-card-actions .assign-house-team:hover,
+#house-map-selection .house-card-actions .assign-house-team:hover {
+  border-color: #91b5e5;
+  background: #e0edff;
+}
+#houses-list .assign-house-card .house-card-actions .plan-ready-toggle[data-ready="false"],
+#house-map-selection .house-card-actions .plan-ready-toggle[data-ready="false"] {
+  border-color: #e3c88e;
+  background: #fff8e9;
+  color: #795314;
+}
+#houses-list .assign-house-card .house-card-actions .plan-ready-toggle[data-ready="false"]:hover,
+#house-map-selection .house-card-actions .plan-ready-toggle[data-ready="false"]:hover {
+  border-color: #d3ae61;
+  background: #fff0cb;
+}
+#houses-list .assign-house-card .house-card-actions .assign-house-activate:disabled {
+  border-color: #d8dfda;
+  background: #edf1ee;
+  color: #647169;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+#houses-list .assign-house-card .house-card-actions .assign-house-activate:disabled:hover {
+  transform: none;
+}
+#house-map-selection .house-card-actions .assign-house-activate:disabled {
+  border-color: #d8dfda;
+  background: #edf1ee;
+  color: #647169;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+#house-map-selection .house-card-actions .assign-house-activate:disabled:hover {
+  transform: none;
+  border-color: #d8dfda;
+  background: #edf1ee;
+}
+html[data-theme="dark"] #houses-list .assign-house-card .house-card-actions .text-button,
+html[data-theme="dark"] #house-map-selection .house-card-actions .text-button {
+  box-shadow: 0 1px 3px #0004;
+}
+html[data-theme="dark"] #houses-list .assign-house-card .house-card-actions .text-button:hover,
+html[data-theme="dark"] #house-map-selection .house-card-actions .text-button:hover {
+  box-shadow: 0 4px 11px #0007;
+}
+html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending.assign-house-card .house-card-actions .assign-seai-details,
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .assign-seai-details,
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-seai-details {
+  border-color: #426b50;
+  background: #20392a;
+  color: #c1e7cc;
+}
+html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending.assign-house-card .house-card-actions .assign-seai-details:hover,
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .assign-seai-details:hover,
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-seai-details:hover {
+  border-color: #5b966d;
+  background: #294a35;
+}
+html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending.assign-house-card .house-card-actions .plan-ready-toggle[data-ready="true"],
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .assign-house-activate:not(:disabled),
+html[data-theme="dark"] #house-map-selection .house-card-actions .plan-ready-toggle[data-ready="true"],
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-house-activate:not(:disabled) {
+  border-color: #176b4a;
+  background: #176b4a;
+  color: #fff;
+}
+html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending.assign-house-card .house-card-actions .plan-ready-toggle[data-ready="true"]:hover,
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .assign-house-activate:not(:disabled):hover,
+html[data-theme="dark"] #house-map-selection .house-card-actions .plan-ready-toggle[data-ready="true"]:hover,
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-house-activate:not(:disabled):hover {
+  border-color: #10583c;
+  background: #10583c;
+}
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .assign-house-team,
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-house-team {
+  border-color: #49688e;
+  background: #25364a;
+  color: #d3e4ff;
+}
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .assign-house-team:hover,
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-house-team:hover {
+  border-color: #6289b8;
+  background: #304866;
+}
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .plan-ready-toggle[data-ready="false"],
+html[data-theme="dark"] #house-map-selection .house-card-actions .plan-ready-toggle[data-ready="false"] {
+  border-color: #806639;
+  background: #3a3021;
+  color: #f0d7a4;
+}
+html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready.assign-house-card .house-card-actions .plan-ready-toggle[data-ready="false"]:hover,
+html[data-theme="dark"] #house-map-selection .house-card-actions .plan-ready-toggle[data-ready="false"]:hover {
+  border-color: #a58243;
+  background: #4a3b25;
+}
+html[data-theme="dark"] #houses-list .assign-house-card .house-card-actions .assign-house-activate:disabled {
+  border-color: #3a4b42;
+  background: #26332c;
+  color: #9caca2;
+  box-shadow: none;
+}
+html[data-theme="dark"] #house-map-selection .house-card-actions .assign-house-activate:disabled {
+  border-color: #3a4b42;
+  background: #26332c;
+  color: #9caca2;
+  box-shadow: none;
+}
+html[data-theme="dark"] #houses-list .house-card.house-plan-ready.assign-house-card .house-card-actions button.assign-house-activate:disabled {
+  border-color: #3a4b42;
+  background: #26332c;
+  color: #9caca2;
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #houses-list .assign-house-card .house-card-actions .text-button,
+  #house-map-selection .house-card-actions .text-button { transition: none; }
+}
 #houses-list .surveyor-house-card .house-top { align-items: center; gap: 14px; margin: 0 0 12px; padding: 0 0 10px !important; border-bottom: 1px dashed #c9d8ce; }
 #houses-list .surveyor-house-card .house-avatar { width: 40px; height: 40px; border-radius: 12px; font-size: 20px; }
 #houses-list .surveyor-house-card .house-meta h2 { font-size: 21px; font-weight: 800; line-height: 1.15; letter-spacing: .01em; }
 #houses-list .surveyor-house-card .house-app-id-label { margin: 3px 0 0; }
 #houses-list .surveyor-house-card .house-seai-line { margin: 0; color: #5a7566; font-size: 12px; font-weight: 700; line-height: 1.35; }
 html[data-theme="dark"] #houses-list .surveyor-house-card .house-top { border-bottom-color: #3f5a4c; }
+html[data-theme="dark"] #houses-list .surveyor-house-assignment-credit { border-color: #3a5544; background: #202f26; color: #bdcfc2; }
+html[data-theme="dark"] #houses-list .surveyor-assignment-credit-icon { background: #293e30; color: #a7d8b3; }
+html[data-theme="dark"] #houses-list .surveyor-house-assignment-credit strong { color: #e0eee4; }
+html[data-theme="dark"] #houses-list .surveyor-house-assignment-credit time { color: #a6b9aa; }
 html[data-theme="dark"] #houses-list .surveyor-house-card .house-seai-line { color: #9db8a8; }
 #houses-list .surveyor-house-card .surveyor-house-update { flex-wrap: wrap; }
 #houses-list .surveyor-house-card .surveyor-house-update .status-pill { margin-left: auto; }

@@ -2428,6 +2428,15 @@ class TrackerTests(unittest.TestCase):
                     )
                     db.execute(
                         """
+                        UPDATE provided_houses
+                        SET plan_scaffolding_required = 0,
+                            plan_esb_required = 0,
+                            plan_plumber_required = 0
+                        WHERE id = 'H-READY'
+                        """
+                    )
+                    db.execute(
+                        """
                         INSERT INTO house_role_assignments
                             (house_id, role, user_id, assigned_by, assigned_at)
                         SELECT 'H-READY', 'surveyor', id, 'Admin',

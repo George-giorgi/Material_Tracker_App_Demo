@@ -841,6 +841,22 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.reload()
         self.page.get_by_role("heading", name="My survey dashboard").wait_for()
         self.page.locator("#houses-list article[data-house-id='DASHBOARD-1']").wait_for()
+        assignment_credit = self.page.locator(
+            "#houses-list article[data-house-id='DASHBOARD-1'] "
+            ".surveyor-house-assignment-credit"
+        )
+        self.assertIn("Assigned to you by Test Admin", assignment_credit.inner_text())
+        assignment_time = assignment_credit.locator("time")
+        self.assertEqual(assignment_time.get_attribute("datetime"), "2026-10-29T10:00:00")
+        self.assertIn("29 Oct 2026", assignment_time.inner_text())
+        self.assertIn("10:00", assignment_time.inner_text())
+        self.assertEqual(
+            self.page.locator(
+                "#houses-list article[data-house-id='DASHBOARD-2'] "
+                ".surveyor-house-assignment-credit"
+            ).count(),
+            1,
+        )
         self.assertFalse(self.page.locator(".surveyor-brand").evaluate(
             "(link) => link.classList.contains('has-new-information')"
         ))
@@ -1215,6 +1231,52 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.page.locator("[data-assign-house-filter='seai']").click()
         self.page.locator("#house-map-view").wait_for(state="visible")
+        map_back_button = self.page.locator("#house-map-list-view")
+        self.assertEqual(map_back_button.inner_text(), "Back to houses")
+        self.assertEqual(map_back_button.locator("svg.house-map-back-icon").count(), 1)
+        self.assertEqual(
+            map_back_button.locator("svg").get_attribute("aria-hidden"),
+            "true",
+        )
+        light_back_button_style = map_back_button.evaluate(
+            """button => ({
+              height: getComputedStyle(button).minHeight,
+              radius: getComputedStyle(button).borderRadius,
+              weight: getComputedStyle(button).fontWeight,
+              background: getComputedStyle(button).backgroundColor,
+              iconBackground: getComputedStyle(button.querySelector('svg')).backgroundColor,
+            })"""
+        )
+        self.assertEqual(map_back_button.inner_text(), "Back to houses")
+        self.assertEqual(light_back_button_style["height"], "34px")
+        self.assertEqual(light_back_button_style["radius"], "999px")
+        self.assertEqual(light_back_button_style["weight"], "600")
+        self.assertNotEqual(light_back_button_style["iconBackground"], "rgba(0, 0, 0, 0)")
+        map_back_button.hover()
+        self.page.wait_for_timeout(180)
+        self.assertNotEqual(
+            map_back_button.evaluate(
+                "button => getComputedStyle(button).backgroundColor"
+            ),
+            light_back_button_style["background"],
+        )
+        self.page.mouse.move(0, 0)
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        dark_back_button_style = map_back_button.evaluate(
+            """button => ({
+              background: getComputedStyle(button).backgroundColor,
+              iconBackground: getComputedStyle(button.querySelector('svg')).backgroundColor,
+            })"""
+        )
+        self.assertNotEqual(
+            dark_back_button_style["background"],
+            light_back_button_style["background"],
+        )
+        self.assertNotEqual(
+            dark_back_button_style["iconBackground"],
+            light_back_button_style["iconBackground"],
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
         self.page.locator(
             "#house-map-markers .house-map-marker[data-location-accuracy='approximate']"
         ).first.wait_for()
@@ -1440,11 +1502,31 @@ class NavigationBrowserTests(unittest.TestCase):
               return {details: details.top, ready: ready.top};
             }"""
         )
+        self.assertEqual(pending_card.locator(".house-card-actions .house-action-icon").count(), 2)
         self.assertAlmostEqual(
             pending_action_rows["details"],
             pending_action_rows["ready"],
         )
+        light_action_colors = pending_card.evaluate(
+            """card => ({
+              details: getComputedStyle(card.querySelector('.assign-seai-details')).backgroundColor,
+              ready: getComputedStyle(card.querySelector('.plan-ready-toggle[data-ready="true"]')).backgroundColor,
+              readyHeight: card.querySelector('.plan-ready-toggle[data-ready="true"]').getBoundingClientRect().height,
+            })"""
+        )
+        self.assertNotEqual(light_action_colors["details"], light_action_colors["ready"])
+        self.assertGreaterEqual(light_action_colors["readyHeight"], 42)
+        ready_action = pending_card.locator(".plan-ready-toggle[data-ready='true']")
+        ready_action.hover()
+        self.page.wait_for_timeout(180)
+        light_hover_color = ready_action.evaluate(
+            "button => getComputedStyle(button).backgroundColor"
+        )
+        self.assertNotEqual(light_hover_color, light_action_colors["ready"])
+        self.page.mouse.move(0, 0)
         self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        self.page.mouse.move(1200, 0)
+        self.page.wait_for_timeout(180)
         dark_pending_action_rows = pending_card.evaluate(
             """card => {
               const details = card.querySelector('.assign-seai-details').getBoundingClientRect();
@@ -1456,6 +1538,20 @@ class NavigationBrowserTests(unittest.TestCase):
             dark_pending_action_rows["details"],
             dark_pending_action_rows["ready"],
         )
+        dark_action_colors = pending_card.evaluate(
+            """card => ({
+              details: getComputedStyle(card.querySelector('.assign-seai-details')).backgroundColor,
+              ready: getComputedStyle(card.querySelector('.plan-ready-toggle[data-ready="true"]')).backgroundColor,
+            })"""
+        )
+        self.assertNotEqual(dark_action_colors["details"], dark_action_colors["ready"])
+        ready_action.hover()
+        self.page.wait_for_timeout(180)
+        dark_hover_color = ready_action.evaluate(
+            "button => getComputedStyle(button).backgroundColor"
+        )
+        self.assertNotEqual(dark_hover_color, dark_action_colors["ready"])
+        self.page.mouse.move(0, 0)
         self.page.evaluate("document.documentElement.dataset.theme = 'light'")
         pending_card.locator(".assign-seai-details").click()
         self.page.locator("#assign-seai-house-empty").wait_for(state="visible")
@@ -1492,6 +1588,10 @@ class NavigationBrowserTests(unittest.TestCase):
             ready_card.inner_text(),
         )
         self.assertEqual(ready_card.locator(".house-card-actions .text-button").count(), 4)
+        self.assertEqual(ready_card.locator(".house-card-actions .house-action-icon").count(), 4)
+        self.assertTrue(
+            ready_card.locator(".house-action-icon").first.get_attribute("aria-hidden")
+        )
         self.assertTrue(ready_card.locator(".assign-seai-details").is_visible())
         action_rows = ready_card.evaluate(
             """card => {
@@ -1509,6 +1609,25 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertAlmostEqual(action_rows["activate"]["top"], action_rows["assign"]["top"])
         self.assertAlmostEqual(action_rows["details"]["top"], action_rows["assign"]["top"])
         self.assertTrue(ready_card.locator(".assign-house-activate").is_disabled())
+        self.assertEqual(
+            ready_card.locator(".assign-house-activate").evaluate(
+                "button => getComputedStyle(button).backgroundColor"
+            ),
+            "rgb(237, 241, 238)",
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        self.page.wait_for_timeout(200)
+        self.assertEqual(
+            self.page.locator("html").get_attribute("data-theme"),
+            "dark",
+        )
+        self.assertEqual(
+            ready_card.locator(".assign-house-activate").evaluate(
+                "button => getComputedStyle(button).backgroundColor"
+            ),
+            "rgb(38, 51, 44)",
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'light'")
         self.assertEqual(
             ready_card.locator(".assign-house-team").inner_text(),
             "Assign Surveyor",
@@ -1717,6 +1836,7 @@ class NavigationBrowserTests(unittest.TestCase):
             card_light_colors,
         )
         self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        self.page.wait_for_timeout(250)
         self.assertEqual(
             ready_button.evaluate(
                 """button => ({
@@ -1874,6 +1994,14 @@ class NavigationBrowserTests(unittest.TestCase):
         ).click()
 
         selection = self.page.locator("#house-map-selection")
+        activate_button = selection.locator(".assign-house-activate")
+        self.assertTrue(activate_button.is_disabled())
+        self.assertEqual(
+            activate_button.evaluate(
+                "button => getComputedStyle(button).backgroundColor"
+            ),
+            "rgb(237, 241, 238)",
+        )
         assign_button = selection.locator(".assign-house-team")
         self.assertEqual(assign_button.inner_text(), "Assign Surveyor")
         assign_button.click()
@@ -1900,6 +2028,14 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(
             self.page.locator("#house-map-selection .assign-house-team").inner_text(),
             "Change Surveyor",
+        )
+        activate_button = selection.locator(".assign-house-activate")
+        self.assertFalse(activate_button.is_disabled())
+        self.assertEqual(
+            activate_button.evaluate(
+                "button => getComputedStyle(button).backgroundColor"
+            ),
+            "rgb(23, 107, 74)",
         )
         self.page.locator("#house-map-selection .assign-house-team").click()
         self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
@@ -2315,6 +2451,15 @@ class NavigationBrowserTests(unittest.TestCase):
         surveyor_card.wait_for()
         surveyor_card.locator(".surveyor-house-action").click()
         self.page.locator("#surveyor-room:not(.hidden)").wait_for()
+        work_plan = self.page.locator("#surveyor-work-plan-form")
+        for trade in ("scaffolding", "esb", "plumber"):
+            work_plan.locator(f"[name='{trade}_required']").select_option("false")
+        work_plan.locator("button[type='submit']").click()
+        self.page.wait_for_function(
+            """() => document.querySelector('#toast').textContent.includes(
+              'Pre-start work plan for TEAM-ASSIGN-1 saved'
+            )"""
+        )
         self.page.locator("#survey-perimeter").fill("42.5")
         self.page.locator("#house-survey-form button[type='submit']").click()
         self.page.locator("#surveyor-room").wait_for(state="hidden")
@@ -3918,6 +4063,15 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator(
             '.house-card[data-house-id="ACTIVATE-READY"] .house-survey-open'
         ).click()
+        work_plan = self.page.locator("#surveyor-work-plan-form")
+        for trade in ("scaffolding", "esb", "plumber"):
+            work_plan.locator(f"[name='{trade}_required']").select_option("false")
+        work_plan.locator("button[type='submit']").click()
+        self.page.wait_for_function(
+            """() => document.querySelector('#toast').textContent.includes(
+              'Pre-start work plan for ACTIVATE-READY saved'
+            )"""
+        )
         self.page.locator("#survey-perimeter").fill("42.75")
         self.page.locator("#house-survey-form button[type='submit']").click()
         self.page.wait_for_function(
@@ -4769,7 +4923,7 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(255, 244, 223)",
         )
         nav = self.page.locator(".survey-room-nav")
-        self.assertEqual(nav.locator("a").count(), 4)
+        self.assertEqual(nav.locator("a").count(), 5)
         self.assertEqual(nav.locator("a[href='#survey-room-documents']").count(), 0)
         nav.locator('a[href="#survey-room-work-plan"]').click()
         self.assertEqual(
@@ -4800,6 +4954,25 @@ class NavigationBrowserTests(unittest.TestCase):
                 "",
             ),
         )
+        self.page.locator("#survey-perimeter").fill("42.75")
+        self.page.locator("#house-survey-form button[type='submit']").click()
+        self.page.wait_for_function(
+            """() => document.querySelector('#toast').textContent.includes(
+              'Pre-start work plan is not saved'
+            )"""
+        )
+        self.assertTrue(self.page.locator("#surveyor-room").is_visible())
+        self.assertIn(
+            "Pre-start work plan is not saved",
+            self.page.locator("#surveyor-work-plan-save-status").inner_text(),
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_surveys WHERE house_id = 'SURVEY-ROOM-TEST'"
+                ).fetchone()[0],
+                0,
+            )
         work_plan.locator('button[type="submit"]').click()
         self.page.get_by_text(
             "Pre-start work plan for SURVEY-ROOM-TEST saved."
@@ -4814,7 +4987,6 @@ class NavigationBrowserTests(unittest.TestCase):
             tuple(plan),
             (1, "Rear access only", 0, 1, "Coordinate with owner"),
         )
-        self.page.locator("#survey-perimeter").fill("42.75")
         self.page.locator("#house-survey-form button[type='submit']").click()
         self.page.wait_for_function(
             "() => document.querySelector('#surveyor-room').classList.contains('hidden')"
@@ -4883,6 +5055,19 @@ class NavigationBrowserTests(unittest.TestCase):
                 "'Example Owner', 'government', 1)",
                 (house_id,),
             )
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
         self.page.reload(wait_until="domcontentloaded")
         self.page.locator(".app-shell:not(.hidden)").wait_for()
         self.page.locator('[data-house-view="ready"]').click()
@@ -4908,6 +5093,15 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.mouse.down()
         self.page.mouse.move(canvas_box["x"] + 150, canvas_box["y"] + 120)
         self.page.mouse.up()
+        self.page.locator("[data-pdf-tool='text']").click()
+        self.page.locator("#pdf-annotator-text").fill(
+            "Please check all window measurements and confirm the ventilation details "
+            "before the survey is shared with the team."
+        )
+        self.page.mouse.click(
+            canvas_box["x"] + canvas_box["width"] - 24,
+            canvas_box["y"] + canvas_box["height"] - 30,
+        )
         self.page.get_by_role(
             "button", name="Add blank page to selection"
         ).click()
@@ -4934,22 +5128,50 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(preview_pdf, {"type": "application/pdf", "signature": "%PDF-"})
         self.page.locator("#selected-pdf-preview-continue").click()
         self.page.wait_for_function(
-            """() => document.querySelector('#house-document-share-dialog').open ||
-              !document.querySelector('#toast').classList.contains('hidden')"""
+            """() => !document.querySelector('#selected-pdf-preview-dialog').open &&
+              document.querySelector('#toast').textContent.includes('saved to the house SEAI PDFs')"""
         )
+        self.assertFalse(self.page.locator("#house-document-share-dialog").evaluate(
+            "dialog => dialog.open"
+        ))
+        saved_entry = self.page.locator(
+            "#survey-room-saved-pdfs-list .saved-pdf-entry"
+        ).filter(
+            has_text=f"{house_id}-selected-seai-pages.pdf"
+        )
+        saved_entry.wait_for(state="visible")
         self.assertTrue(
-            self.page.locator("#house-document-share-dialog").evaluate(
-                "dialog => dialog.open"
-            ),
-            self.page.locator("#toast").inner_text(),
+            self.page.locator("#survey-room-saved-pdfs").evaluate(
+                """section => section.parentElement.id === 'survey-room-seai-details' &&
+                  section.nextElementSibling.id === 'survey-room-seai-documents'"""
+            )
         )
-        self.page.locator("#house-document-share-dialog[open]").wait_for()
+        self.assertRegex(
+            saved_entry.locator(".saved-pdf-view").get_attribute("href"),
+            r"^/api/seai-documents/\d+/file$",
+        )
+        self.assertEqual(
+            saved_entry.locator(".saved-pdf-delete[data-selected-seai-delete]").count(),
+            1,
+        )
+        self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
+        self.assertEqual(
+            saved_entry.locator(".saved-pdf-filename").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(229, 239, 232)",
+        )
+        self.page.once("dialog", lambda dialog: dialog.accept())
+        saved_entry.locator(".saved-pdf-delete").click()
+        saved_entry.wait_for(state="detached")
         with server.connect_db() as db:
-            table_exists = db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                "AND name = 'seai_documents'"
-            ).fetchone()
-        self.assertIsNone(table_exists)
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM seai_documents WHERE application_id = ?",
+                    (house_id,),
+                ).fetchone()[0],
+                0,
+            )
         self.assertEqual(self.browser_errors, [])
 
     def test_surveyor_room_hides_the_house_pdfs_card(self):
