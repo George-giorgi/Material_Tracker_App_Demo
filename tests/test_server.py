@@ -62,6 +62,7 @@ class TrackerTests(unittest.TestCase):
             "supervisor": "Supervisor",
             "teamlead": "Teamlead",
             "plumber": "Plumber",
+            "plumbing_coordinator": "Plumbing Coordinator",
             "employee": "Employee",
         }
         with server.connect_db() as db:
@@ -91,6 +92,7 @@ class TrackerTests(unittest.TestCase):
                     "access.supervisor",
                     "access.teamlead",
                     "access.plumber",
+                    "access.plumbing_coordinator",
                     "access.employee",
                 },
             )
@@ -139,6 +141,7 @@ class TrackerTests(unittest.TestCase):
             "supervisor",
             "teamlead",
             "plumber",
+            "plumbing_coordinator",
         )
         httpd, thread = self.start_test_server()
         try:

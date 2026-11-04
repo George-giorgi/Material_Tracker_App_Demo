@@ -928,6 +928,7 @@ def initialize_db():
                 ("supervisor", "Supervisor"),
                 ("teamlead", "Teamlead"),
                 ("plumber", "Plumber"),
+                ("plumbing_coordinator", "Plumbing Coordinator"),
                 ("employee", "Employee"),
             ),
         )
@@ -954,6 +955,7 @@ def initialize_db():
             ("access.supervisor", "Assigned-house supervisor dashboard and team-lead oversight."),
             ("access.teamlead", "Team-lead dashboard and own team roster management."),
             ("access.plumber", "Employee-style operational access for plumbing work."),
+            ("access.plumbing_coordinator", "Plumbing work queue and assignment to Plumbing supervisors."),
             ("access.employee", "Standard employee dashboard and material movement access."),
         )
         db.executemany(
@@ -969,6 +971,7 @@ def initialize_db():
             ("supervisor", "Supervisor"),
             ("teamlead", "Teamlead"),
             ("plumber", "Plumber"),
+            ("plumbing_coordinator", "Plumbing Coordinator"),
             ("employee", "Employee"),
         ):
             db.execute(
@@ -1453,6 +1456,8 @@ def _seed_user_departments():
                 department = user["team_name"] if user["team_name"] in department_ids else "External Wall Insulation"
             elif user["role"] == "plumber":
                 department = "Plumbing"
+            elif user["role"] == "plumbing_coordinator":
+                department = "Plumbing"
             elif user["role"] == "employee":
                 department = "External Wall Insulation"
             else:
@@ -1583,6 +1588,7 @@ def _insert_user(
         "supervisor": supervisor_specialty or "Administration",
         "teamlead": team_name or "External Wall Insulation",
         "plumber": "Plumbing",
+        "plumbing_coordinator": "Plumbing",
         "employee": "External Wall Insulation",
     }.get(role, "Administration")
     department = db.execute(
@@ -3028,6 +3034,82 @@ def _ventilation_house_list(db):
     return houses
 
 
+def _plumbing_coordinator_dashboard(db):
+    supervisors = [
+        {"id": row["id"], "name": row["display_name"]}
+        for row in db.execute(
+            """
+            SELECT users.id, users.display_name
+            FROM app_users users
+            WHERE users.is_active = 1
+              AND EXISTS (
+                  SELECT 1 FROM app_role_permissions access
+                  WHERE access.role_key = users.role
+                    AND access.permission_key = 'access.supervisor'
+                    AND access.is_allowed = 1
+              )
+              AND (
+                  users.supervisor_specialty = 'Plumbing' COLLATE NOCASE
+                  OR EXISTS (
+                      SELECT 1 FROM user_departments memberships
+                      JOIN departments ON departments.id = memberships.department_id
+                      WHERE memberships.user_id = users.id
+                        AND departments.name = 'Plumbing' COLLATE NOCASE
+                        AND departments.is_active = 1
+                  )
+              )
+            ORDER BY users.display_name COLLATE NOCASE
+            """
+        )
+    ]
+    houses = [
+        dict(row)
+        for row in db.execute(
+            """
+            SELECT p.id, p.postcode, p.address, p.owner_name,
+                   COALESCE(p.plan_plumber_notes, '') AS notes,
+                   COALESCE(hc.plumber_status, p.plan_plumber, 'not_done')
+                       AS plumber_status,
+                   COALESCE(surveyor.display_name, '') AS surveyor_name,
+                   COALESCE(p.plan_plumber_done_by, '') AS plumber_done_by,
+                   COALESCE(p.plan_plumber_done_at, '') AS plumber_done_at,
+                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                        WHEN h.id IS NULL THEN 'not_started'
+                        WHEN h.is_finished = 1 THEN 'closed'
+                        ELSE 'active' END AS status,
+                   assignment.user_id AS supervisor_user_id,
+                   assigned_user.display_name AS supervisor_name
+            FROM provided_houses p
+            LEFT JOIN houses h ON h.id = p.id
+            LEFT JOIN house_checklists hc ON hc.house_id = p.id
+            LEFT JOIN house_role_assignments survey_assignment
+              ON survey_assignment.house_id = p.id
+             AND survey_assignment.role = 'surveyor'
+            LEFT JOIN app_users surveyor
+              ON surveyor.id = survey_assignment.user_id
+            LEFT JOIN house_role_assignments assignment
+              ON assignment.house_id = p.id AND assignment.role = 'supervisor'
+            LEFT JOIN app_users assigned_user ON assigned_user.id = assignment.user_id
+            WHERE p.plan_plumber_required = 1
+              AND COALESCE(hc.plumber_status, p.plan_plumber, 'not_done')
+                    != 'not_necessary'
+              AND (
+                  h.id IS NULL
+                  OR h.is_finished = 0
+                  OR COALESCE(hc.plumber_status, p.plan_plumber, 'not_done') = 'done'
+              )
+            ORDER BY
+                CASE WHEN COALESCE(hc.plumber_status, p.plan_plumber, 'not_done') = 'done'
+                     THEN 1 ELSE 0 END,
+                CASE WHEN h.id IS NOT NULL THEN 0
+                     WHEN p.ready_for_start = 1 THEN 1 ELSE 2 END,
+                p.id COLLATE NOCASE
+            """
+        )
+    ]
+    return {"plumbing_houses": houses, "plumbing_supervisors": supervisors}
+
+
 def _team_rosters(db):
     rosters = {}
     for row in db.execute(
@@ -3522,6 +3604,7 @@ class LegacyRouteHandlers:
             return db.execute(
                 """
                 SELECT u.id, u.username, u.display_name, u.role,
+                       u.supervisor_specialty, u.team_name,
                        roles.display_name AS role_name, s.token_hash,
                        COALESCE((
                            SELECT group_concat(permission_key, char(31))
@@ -3552,6 +3635,22 @@ class LegacyRouteHandlers:
             self._send_json(401, {"error": "Sign in to continue."})
             return None
         path = urlparse(self.path).path
+        if _has_access_profile(user, "plumbing_coordinator") and not (
+            (self.command == "GET" and path in {"/api/dashboard", "/api/updates"})
+            or (
+                self.command == "POST"
+                and path in {
+                    "/api/auth/pin",
+                    "/api/auth/logout",
+                    "/api/plumbing-coordinator/assignment",
+                }
+            )
+        ):
+            self._send_json(
+                403,
+                {"error": "Plumbing Coordinator access is limited to plumbing assignments."},
+            )
+            return None
         if not any(
             _has_access_profile(user, profile)
             for profile in (
@@ -3564,6 +3663,7 @@ class LegacyRouteHandlers:
                 "supervisor",
                 "teamlead",
                 "plumber",
+                "plumbing_coordinator",
                 "employee",
             )
         ) and path not in {"/api/auth/pin", "/api/auth/logout"}:
@@ -4616,12 +4716,40 @@ class LegacyRouteHandlers:
                 return
             with connect_db() as db:
                 db.execute("BEGIN")
-                dashboard = _dashboard(db)
+                if _has_access_profile(user, "plumbing_coordinator"):
+                    plumbing = _plumbing_coordinator_dashboard(db)
+                    dashboard = {
+                        "materials": [],
+                        "team_rosters": [],
+                        "demo_mode": False,
+                        "houses": 0,
+                        "house_summary": {
+                            "provided": len(plumbing["plumbing_houses"]),
+                            "active": 0,
+                            "closed": 0,
+                            "ready": 0,
+                            "not_started": 0,
+                        },
+                        "movements": [],
+                        "teams": [],
+                        "team_house_counts": {},
+                        "house_list": [],
+                        "locations": [],
+                        **plumbing,
+                    }
+                else:
+                    dashboard = _dashboard(db)
                 if _has_access_profile(user, "assign"):
                     dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
-                if _in_department(db, user, "Ventilation"):
+                if (
+                    not _has_access_profile(user, "plumbing_coordinator")
+                    and _in_department(db, user, "Ventilation")
+                ):
                     dashboard["ventilation_houses"] = _ventilation_house_list(db)
-            if _has_access_profile(user, "assign"):
+            if (
+                not _has_access_profile(user, "plumbing_coordinator")
+                and _has_access_profile(user, "assign")
+            ):
                 dashboard["materials"] = []
                 dashboard["movements"] = []
                 dashboard["teams"] = []
@@ -4638,7 +4766,10 @@ class LegacyRouteHandlers:
                         for entry in house.get("activity_history", [])
                         if entry.get("type") not in {"movement", "material_request"}
                     ]
-            elif _has_access_profile(user, "supervisor"):
+            elif (
+                not _has_access_profile(user, "plumbing_coordinator")
+                and _has_access_profile(user, "supervisor")
+            ):
                 with connect_db() as db:
                     assigned_house_ids = {
                         row["house_id"]
@@ -4698,6 +4829,47 @@ class LegacyRouteHandlers:
                             (user["id"],),
                         )
                     }
+                    plumbing_team_members = {}
+                    is_plumbing_supervisor = (
+                        user["supervisor_specialty"].strip().casefold()
+                        == "plumbing"
+                    )
+                    if is_plumbing_supervisor and managed_teamlead_ids:
+                        teamlead_placeholders = ",".join(
+                            "?" for _ in managed_teamlead_ids
+                        )
+                        for row in db.execute(
+                            f"""
+                            SELECT lines.manager_user_id AS teamlead_id,
+                                   reports.id AS member_id,
+                                   reports.display_name AS member_name
+                            FROM user_reporting_lines lines
+                            JOIN app_users reports
+                              ON reports.id = lines.report_user_id
+                            JOIN app_role_permissions access
+                              ON access.role_key = reports.role
+                             AND access.permission_key = 'access.plumber'
+                             AND access.is_allowed = 1
+                            JOIN user_departments memberships
+                              ON memberships.user_id = reports.id
+                            JOIN departments
+                              ON departments.id = memberships.department_id
+                             AND departments.name = 'Plumbing' COLLATE NOCASE
+                            WHERE lines.manager_user_id IN ({teamlead_placeholders})
+                              AND reports.is_active = 1
+                            ORDER BY reports.display_name COLLATE NOCASE
+                            """,
+                            tuple(managed_teamlead_ids),
+                        ):
+                            plumbing_team_members.setdefault(
+                                row["teamlead_id"], []
+                            ).append(
+                                {
+                                    "id": row["member_id"],
+                                    "name": row["member_name"],
+                                    "role": "Plumber",
+                                }
+                            )
                 dashboard["house_list"] = [
                     house
                     for house in dashboard["house_list"]
@@ -4732,7 +4904,37 @@ class LegacyRouteHandlers:
                     for roster in dashboard["team_rosters"]
                     if roster["teamlead_id"] in managed_teamlead_ids
                 ]
-            elif _has_access_profile(user, "teamlead"):
+                if is_plumbing_supervisor:
+                    plumbing_crew = []
+                    for roster in dashboard["team_rosters"]:
+                        account_members = plumbing_team_members.get(
+                            roster["teamlead_id"], []
+                        )
+                        account_names = {
+                            member["name"].casefold() for member in account_members
+                        }
+                        roster_members = [
+                            {
+                                "id": member["id"],
+                                "name": member["name"],
+                                "role": "Crew member",
+                            }
+                            for member in roster["members"]
+                            if member["name"].casefold() not in account_names
+                        ]
+                        plumbing_crew.append(
+                            {
+                                "teamlead_id": roster["teamlead_id"],
+                                "teamlead_name": roster["teamlead_name"],
+                                "team_name": roster["team_name"],
+                                "members": [*account_members, *roster_members],
+                            }
+                        )
+                    dashboard["plumbing_crew"] = plumbing_crew
+            elif (
+                not _has_access_profile(user, "plumbing_coordinator")
+                and _has_access_profile(user, "teamlead")
+            ):
                 dashboard["team_rosters"] = [
                     roster
                     for roster in dashboard["team_rosters"]
@@ -6375,6 +6577,9 @@ class LegacyRouteHandlers:
                         403,
                         "Administrator or Assign access is required to manage house assignments.",
                     )
+            elif path == "/api/plumbing-coordinator/assignment":
+                if not _has_access_profile(user, "plumbing_coordinator"):
+                    raise ApiError(403, "Plumbing Coordinator access is required.")
             elif path == "/api/team-roster" or re.fullmatch(
                 r"/api/team-roster/\d+/delete", path
             ):
@@ -6398,7 +6603,110 @@ class LegacyRouteHandlers:
             }:
                 if not self._admin_required(user):
                     return
-            if path == "/api/users":
+            if path == "/api/plumbing-coordinator/assignment":
+                payload = self._json_body()
+                if not isinstance(payload, dict) or set(payload) != {
+                    "house_id",
+                    "supervisor_user_id",
+                }:
+                    raise ApiError(400, "Choose a house and Plumbing Supervisor.")
+                if not isinstance(payload["house_id"], str):
+                    raise ApiError(400, "Enter a valid house ID.")
+                house_id = payload["house_id"].strip()
+                if not house_id or len(house_id) > 120:
+                    raise ApiError(400, "Enter a valid house ID.")
+                supervisor_user_id = payload["supervisor_user_id"]
+                if isinstance(supervisor_user_id, bool):
+                    raise ApiError(400, "Choose an active Plumbing Supervisor.")
+                try:
+                    supervisor_user_id = int(supervisor_user_id)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ApiError(
+                        400, "Choose an active Plumbing Supervisor."
+                    ) from exc
+                now = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        house = db.execute(
+                            """
+                            SELECT p.id, h.is_finished,
+                                   COALESCE(hc.plumber_status, p.plan_plumber, 'not_done')
+                                       AS plumber_status
+                            FROM provided_houses p
+                            LEFT JOIN houses h ON h.id = p.id
+                            LEFT JOIN house_checklists hc ON hc.house_id = p.id
+                            WHERE p.id = ? AND p.plan_plumber_required = 1
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if (
+                            house is None
+                            or house["is_finished"] == 1
+                            or house["plumber_status"] in {"done", "not_necessary"}
+                        ):
+                            raise ApiError(
+                                409,
+                                "Choose a house with outstanding plumbing work.",
+                            )
+                        supervisor = db.execute(
+                            """
+                            SELECT users.id, users.display_name
+                            FROM app_users users
+                            WHERE users.id = ? AND users.is_active = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = users.role
+                                    AND access.permission_key = 'access.supervisor'
+                                    AND access.is_allowed = 1
+                              )
+                              AND (
+                                  users.supervisor_specialty = 'Plumbing' COLLATE NOCASE
+                                  OR EXISTS (
+                                      SELECT 1 FROM user_departments memberships
+                                      JOIN departments ON departments.id = memberships.department_id
+                                      WHERE memberships.user_id = users.id
+                                        AND departments.name = 'Plumbing' COLLATE NOCASE
+                                        AND departments.is_active = 1
+                                  )
+                              )
+                            """,
+                            (supervisor_user_id,),
+                        ).fetchone()
+                        if supervisor is None:
+                            raise ApiError(
+                                400, "Choose an active Plumbing Supervisor."
+                            )
+                        db.execute(
+                            """
+                            INSERT INTO house_role_assignments
+                                (house_id, role, user_id, assigned_by, assigned_at)
+                            VALUES (?, 'supervisor', ?, ?, ?)
+                            ON CONFLICT(house_id, role) DO UPDATE SET
+                                user_id = excluded.user_id,
+                                assigned_by = excluded.assigned_by,
+                                assigned_at = excluded.assigned_at
+                            """,
+                            (
+                                house_id,
+                                supervisor["id"],
+                                user["display_name"],
+                                now,
+                            ),
+                        )
+                        db.execute(
+                            "UPDATE houses SET employee_name = ? WHERE id = ?",
+                            (supervisor["display_name"], house_id),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "supervisor_user_id": supervisor["id"],
+                        "supervisor_name": supervisor["display_name"],
+                        "assigned_at": now,
+                    },
+                )
+            elif path == "/api/users":
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "Employee details must be a JSON object.")

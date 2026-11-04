@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261103-hide-vent-workspace-nav">
+    <link rel="stylesheet" href="/app.css?v=20261104-edge-pin-toggle">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -127,7 +127,7 @@
             <div><div class="eyebrow" id="overview-eyebrow">YOUR MATERIALS, AT A GLANCE</div><h1 id="overview-title">Overview</h1><p class="page-subtitle" id="overview-subtitle">A clear picture of warehouse stock and where materials are going.</p></div>
             <span class="date-chip" id="today-label"></span>
           </div>
-          <section class="surveyor-dashboard-summary overview-dashboard-summary ventilation-dashboard-summary" aria-label="Ventilation team progress">
+          <section id="overview-work-summary" class="surveyor-dashboard-summary overview-dashboard-summary ventilation-dashboard-summary" aria-label="Work overview">
             <div class="surveyor-dashboard-message">
               <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
               <div>
@@ -142,6 +142,42 @@
               <button type="button" class="dashboard-stat-link" data-house-view="closed"><strong id="stat-closed">0</strong><span id="stat-closed-label">Closed</span></button>
               <button type="button" class="dashboard-stat-link" data-house-view="not_started"><strong id="stat-not-started">0</strong><span id="stat-not-started-label">Not started</span></button>
             </div>
+          </section>
+          <section id="plumbing-supervisor-workload" class="plumbing-coordinator-workload hidden" aria-label="Plumbing team supervisor work">
+            <div class="ventilation-workload-heading">
+              <div>
+                <p class="plumbing-workload-intro">Find an assigned house, check its plumbing progress, and update delivery and Teamlead details.</p>
+              </div>
+              <div class="ventilation-workload-actions">
+                <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="plumbing-supervisor-house-search" type="search" placeholder="Search your plumbing houses" aria-label="Search assigned plumbing houses"></label>
+                <button class="ventilation-refresh-button" id="refresh-plumbing-supervisor-houses" type="button" aria-label="Refresh assigned plumbing houses">
+                  <svg class="ventilation-refresh-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.8 8A7 7 0 0 0 4.9 4.7L3.2 6.4M3.2 6.4V2.8M3.2 6.4h3.6M3.2 12a7 7 0 0 0 11.9 3.3l1.7-1.7m0 0v3.6m0-3.6h-3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+            <details id="plumbing-supervisor-crew" class="plumbing-supervisor-crew">
+              <summary id="plumbing-supervisor-crew-summary" class="plumbing-supervisor-crew-heading">
+                <div class="plumbing-supervisor-crew-mark" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M16 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20m6.5-9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm6-6.7a3.5 3.5 0 0 1 0 6.8m2 4.1h.1a3.4 3.4 0 0 1 3.4 3.4V20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 id="plumbing-supervisor-crew-title">Your Plumbing crew</h2>
+                  <p>Your Teamleads and the crew members on their rosters.</p>
+                </div>
+                <span id="plumbing-supervisor-crew-count" class="plumbing-supervisor-crew-count" aria-live="polite"></span>
+              </summary>
+              <div id="plumbing-supervisor-crew-list" class="plumbing-supervisor-crew-list"></div>
+              <p id="plumbing-supervisor-crew-empty" class="plumbing-supervisor-crew-empty hidden">No Plumbing Teamleads are linked to your crew yet.</p>
+            </details>
+            <div id="plumbing-supervisor-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter assigned plumbing houses">
+              <button type="button" class="ventilation-house-filter active" data-plumbing-supervisor-filter="all" aria-pressed="true">All houses <span id="plumbing-supervisor-filter-all-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-plumbing-supervisor-filter="plumbing_complete" aria-pressed="false">Plumbing complete <span id="plumbing-supervisor-filter-completed-count">0</span></button>
+            </div>
+            <div id="plumbing-supervisor-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No plumbing houses assigned yet</strong><p>When a plumbing house is assigned to you, it will appear here.</p></div>
+            <div id="plumbing-supervisor-house-list" class="plumbing-house-list"></div>
           </section>
           <section id="ventilation-workload" class="ventilation-workload hidden" aria-labelledby="ventilation-workload-title">
             <div class="ventilation-workload-heading">
@@ -164,6 +200,28 @@
             </div>
             <div id="ventilation-house-list" class="ventilation-house-list"></div>
             <div id="ventilation-filter-empty" class="ventilation-house-empty hidden"><strong>No houses in this group</strong><p>Choose another filter to see your assigned ventilation work.</p></div>
+          </section>
+          <section id="plumbing-coordinator-workload" class="plumbing-coordinator-workload hidden" aria-label="Plumbing work">
+            <div class="ventilation-workload-heading">
+              <div>
+                <p class="plumbing-workload-intro">Choose a Plumbing Supervisor for every house where the survey identifies plumbing work.</p>
+              </div>
+              <div class="ventilation-workload-actions">
+                <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="plumbing-house-search" type="search" placeholder="Search house, surveyor, or supervisor" aria-label="Search plumbing houses, surveyors, or supervisors"></label>
+                <button class="ventilation-refresh-button" id="refresh-plumbing-houses" type="button" aria-label="Refresh plumbing houses">
+                  <svg class="ventilation-refresh-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.8 8A7 7 0 0 0 4.9 4.7L3.2 6.4M3.2 6.4V2.8M3.2 6.4h3.6M3.2 12a7 7 0 0 0 11.9 3.3l1.7-1.7m0 0v3.6m0-3.6h-3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+            <div id="plumbing-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter plumbing houses">
+              <button type="button" class="ventilation-house-filter active" data-plumbing-filter="all" aria-pressed="true">All work <span id="plumbing-filter-all-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-plumbing-filter="needs_assignment" aria-pressed="false">Needs completion <span id="plumbing-filter-needs-assignment-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-plumbing-filter="assigned" aria-pressed="false">Assigned <span id="plumbing-filter-assigned-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-plumbing-filter="completed" aria-pressed="false">Completed <span id="plumbing-filter-completed-count">0</span></button>
+            </div>
+            <div id="plumbing-house-list" class="plumbing-house-list"></div>
+            <div id="plumbing-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No plumbing work to show</strong><p>When a surveyor marks plumbing work as required, the house will appear here.</p></div>
           </section>
           <div class="kpi-strip">
             <span><b id="stat-movements">—</b> recent movements</span>
@@ -212,7 +270,7 @@
             <section id="supervisor-dashboard-summary" class="surveyor-dashboard-summary hidden" aria-label="Your supervision workload">
               <div class="surveyor-dashboard-message">
                 <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
-                <div><strong id="supervisor-dashboard-greeting">Your assigned houses</strong><p>Only houses assigned to your account appear here. Choose a delivery person and an active Teamlead for each house.</p></div>
+                <div><strong id="supervisor-dashboard-greeting">Your assigned houses</strong><p id="supervisor-dashboard-description">Only houses assigned to your account appear here. Choose a delivery person and an active Teamlead for each house.</p></div>
               </div>
               <div class="surveyor-dashboard-stats" aria-live="polite" aria-atomic="true">
                 <div><strong id="supervisor-stat-assigned">0</strong><span>Assigned houses</span></div>
@@ -915,6 +973,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261103-hide-vent-workspace-nav" defer></script>
+    <script src="/app.js?v=20261104-edge-pin-toggle" defer></script>
   </body>
 </html>

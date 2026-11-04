@@ -23,10 +23,16 @@ py server.py
 Open [http://127.0.0.1:8001](http://127.0.0.1:8001). On the first launch,
 create the administrator account with a username and unique 6-digit PIN. The
 administrator can create Admin, Assign, Boss, Surveyor, Warehouse, Delivery,
-Supervisor, Teamlead, and Plumber accounts from **Account → Manage accounts**.
+Supervisor, Teamlead, Plumber, and Plumbing Coordinator accounts from
+**Account → Manage accounts**.
 Plumber accounts have employee-style access, including editing active-house
 checklists, but cannot administer accounts or change house status. Employee
 accounts remain available for compatibility.
+Plumbing Coordinators see houses with an outstanding plumber-work requirement
+and can assign active houses to active Supervisors who belong to Plumbing or
+have Plumbing as their specialty. This assignment changes the house's
+Supervisor; coordinators do not receive general house-assignment or materials
+access.
 Supervisors see only houses assigned to their account and can set each house's
 delivery person and team from their dashboard.
 Supervisor specialties are stored on supervisor accounts and can be maintained
@@ -59,7 +65,8 @@ lines support Admin -> Assign, Supervisor -> Teamlead, and Teamlead ->
 Employee/Plumber; departments can exist without a Supervisor.
 
 The built-in role catalog includes Admin, Assign, Boss, Surveyor, Warehouse,
-Delivery, Supervisor, Teamlead, Plumber, and Employee. Role permissions are
+Delivery, Supervisor, Teamlead, Plumber, Plumbing Coordinator, and Employee.
+Role permissions are
 server-enforced access profiles (such as Surveyor, Supervisor, or Teamlead),
 and a custom role can combine profiles without changing the user or role
 database schema. Admin's `*` permission grants unrestricted access. Users with

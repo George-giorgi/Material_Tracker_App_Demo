@@ -262,6 +262,8 @@ const navigationTourSteps = [
 let toastTimer;
 let movementSearchRequest = 0;
 let ventilationHouseFilter = "all";
+let plumbingHouseFilter = "all";
+let plumbingSupervisorHouseFilter = "all";
 let weatherRequestId = 0;
 
 function escapeHtml(value) {
@@ -825,6 +827,8 @@ function showWorkspace(user) {
       surveyorAnimationTimeout = 0;
     }
     $(".surveyor-brand")?.classList.remove("has-new-information");
+    plumbingSupervisorHouseFilter = "all";
+    $("#plumbing-supervisor-house-search").value = "";
   }
   state.user = user;
   $("#auth-screen").classList.add("hidden");
@@ -847,31 +851,64 @@ function showWorkspace(user) {
     surveyor: "Surveyor",
     teamlead: "Teamlead",
     plumber: "Plumber",
+    plumbing_coordinator: "Plumbing Coordinator",
     warehouse: "Warehouse",
   };
   $("#account-details").textContent = `${user.username} - ${user.role_name || roleNames[user.role] || user.role}`;
   const isSurveyor = hasAccessProfile(user, "surveyor");
   const isSupervisor = hasAccessProfile(user, "supervisor");
+  const isPlumbingSupervisor =
+    isSupervisor &&
+    user.supervisor_specialty?.trim().toLocaleLowerCase() === "plumbing";
   const isAssign = hasAccessProfile(user, "assign");
+  const isPlumbingCoordinator = hasAccessProfile(user, "plumbing_coordinator");
   const isVentilation = !isSurveyor && isVentilationUser(user);
+  $$("[data-house-view]").forEach((tile) => {
+    tile.disabled = isPlumbingCoordinator || isPlumbingSupervisor;
+  });
   $("#ventilation-workload").classList.toggle("hidden", !isVentilation);
-  $("#page-overview .overview-grid").classList.toggle("hidden", isVentilation);
-  $("#page-overview .kpi-strip").classList.toggle("hidden", isVentilation);
-  $("#page-overview .privacy-note").classList.toggle("hidden", isVentilation);
-  $("#today-label").classList.toggle("hidden", isVentilation);
+  $("#plumbing-supervisor-workload").classList.toggle(
+    "hidden",
+    !isPlumbingSupervisor,
+  );
+  $("#plumbing-coordinator-workload").classList.toggle("hidden", !isPlumbingCoordinator);
+  $("#overview-work-summary").classList.toggle(
+    "hidden",
+    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+  );
+  $("#page-overview .overview-grid").classList.toggle(
+    "hidden",
+    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+  );
+  $("#page-overview .kpi-strip").classList.toggle(
+    "hidden",
+    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+  );
+  $("#page-overview .privacy-note").classList.toggle(
+    "hidden",
+    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+  );
+  $("#today-label").classList.toggle(
+    "hidden",
+    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+  );
   const housesNavLabel = $('[data-tab="houses"] .nav-label');
   if (housesNavLabel) {
     housesNavLabel.textContent =
-      isAssign || isSurveyor ? "Houses" : "Houses & teams";
+      isAssign || isSurveyor || isPlumbingSupervisor
+        ? "Houses"
+        : "Houses & teams";
   }
   $("#assign-weather-panel").classList.toggle("hidden", !isAssign);
   $("#house-map-activity").classList.toggle("hidden", isAssign);
   document.body.classList.toggle("surveyor-mode", isSurveyor);
   document.body.classList.toggle("supervisor-mode", isSupervisor);
   document.body.classList.toggle("ventilation-mode", isVentilation);
+  document.body.classList.toggle("plumbing-coordinator-mode", isPlumbingCoordinator);
+  document.body.classList.toggle("plumbing-supervisor-mode", isPlumbingSupervisor);
   $(".main-nav.workspace-nav").classList.toggle(
     "hidden",
-    isVentilation || isAssign || isSurveyor,
+    isVentilation || isAssign || isSurveyor || isPlumbingCoordinator || isPlumbingSupervisor,
   );
   $("#surveyor-dashboard-summary").classList.toggle("hidden", !isSurveyor);
   $("#supervisor-dashboard-summary").classList.toggle("hidden", !isSupervisor);
@@ -886,18 +923,20 @@ function showWorkspace(user) {
     item.classList.toggle(
       "hidden",
       (isSurveyor && item.dataset.tab === "houses") ||
-        ((isSurveyor || isSupervisor || isAssign) &&
+        ((isPlumbingCoordinator || isPlumbingSupervisor) &&
+          item.dataset.tab !== "overview") ||
+        ((isSurveyor || (isSupervisor && !isPlumbingSupervisor) || isAssign) &&
           item.dataset.tab !== "houses"),
     ),
   );
   $("#new-movement-top").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign || isVentilation,
+    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
   );
   $("#start-presentation").classList.toggle("hidden", isSurveyor || !hasAccessProfile(user, "admin"));
   $("#start-navigation-tour").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign || isVentilation,
+    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
   );
   $("#houses-teams-tabs").classList.toggle(
     "hidden",
@@ -908,7 +947,29 @@ function showWorkspace(user) {
     isSurveyor || isAssign,
   );
   $("#open-house").classList.toggle("hidden", isSurveyor || isSupervisor);
-  if (isVentilation) {
+  if (isPlumbingSupervisor) {
+    $("#overview-eyebrow").textContent = "PLUMBING TEAM SUPERVISOR";
+    $("#overview-title").textContent = "My plumbing dashboard";
+    $("#overview-subtitle").textContent =
+      `Welcome back, ${user.display_name}. Here’s your Plumbing crew and assigned house progress.`;
+  } else if (isPlumbingCoordinator) {
+    $("#stat-provided-label").textContent = "Plumbing houses";
+    $("#stat-houses-label").textContent = "Assigned";
+    $("#stat-ready-label").textContent = "Needs completion";
+    $("#stat-closed-label").textContent = "Completed";
+    $("#stat-closed").parentElement.classList.remove("hidden");
+    $("#stat-not-started").parentElement.classList.add("hidden");
+    $("#stat-ready").parentElement.classList.remove("hidden");
+    $("#overview-eyebrow").textContent = "PLUMBING WORK ALLOCATION";
+    $("#overview-title").textContent = "My plumbing dashboard";
+    $("#overview-subtitle").textContent =
+      "A clear view of plumbing jobs, supervisor assignments, and what needs attention.";
+    $("#overview-summary-title").textContent = `Welcome, ${user.display_name}`;
+    $("#overview-summary-description").textContent =
+      "See who requested the work, choose a Plumbing Supervisor, and keep completed jobs in view.";
+    plumbingHouseFilter = "all";
+    $("#plumbing-house-search").value = "";
+  } else if (isVentilation) {
     $("#stat-provided-label").textContent = "Assigned houses";
     $("#stat-houses-label").textContent = "Vent completed";
     $("#stat-ready-label").textContent = "To do";
@@ -929,6 +990,7 @@ function showWorkspace(user) {
     $("#stat-provided-label").textContent = "From SEAI";
     $("#stat-houses-label").textContent = "Active";
     $("#stat-ready-label").textContent = "Ready";
+    $("#stat-closed-label").textContent = "Closed";
     $("#stat-closed").parentElement.classList.remove("hidden");
     $("#stat-not-started").parentElement.classList.remove("hidden");
     $("#stat-ready").parentElement.classList.remove("hidden");
@@ -959,6 +1021,8 @@ function showWorkspace(user) {
     $("#house-search").placeholder = "Search your houses";
     $("#house-search").setAttribute("aria-label", "Search your assigned houses");
     loadSurveyorHouses();
+  } else if (isPlumbingCoordinator) {
+    setTab("overview");
   } else if (isAssign) {
     surveyorStatusFilter = "all";
     state.houseMapMode = false;
@@ -976,14 +1040,24 @@ function showWorkspace(user) {
   } else if (isSupervisor) {
     $("#supervisor-dashboard-greeting").textContent =
       `Welcome, ${user.display_name}`;
-    $("#houses-page-eyebrow").textContent = "YOUR SUPERVISION DASHBOARD";
-    $("#houses-page-title").textContent = "My assigned houses";
-    $("#houses-page-subtitle").textContent =
-      "Assign a delivery person and team to each house you supervise.";
-    $("#houses-list-heading").textContent = "Houses assigned to you";
+    if (isPlumbingSupervisor) {
+      $("#supervisor-dashboard-description").textContent =
+        "Only plumbing houses assigned to your account appear here. Choose a delivery person and active Teamlead for each house.";
+      $("#houses-page-eyebrow").textContent = "PLUMBING TEAM SUPERVISION";
+      $("#houses-page-title").textContent = "My plumbing houses";
+      $("#houses-page-subtitle").textContent =
+        "Coordinate delivery people and teams for the plumbing houses assigned to you.";
+      $("#houses-list-heading").textContent = "My assigned plumbing houses";
+    } else {
+      $("#houses-page-eyebrow").textContent = "YOUR SUPERVISION DASHBOARD";
+      $("#houses-page-title").textContent = "My assigned houses";
+      $("#houses-page-subtitle").textContent =
+        "Assign a delivery person and team to each house you supervise.";
+      $("#houses-list-heading").textContent = "Houses assigned to you";
+    }
     $("#house-search").placeholder = "Search your houses";
     $("#house-search").setAttribute("aria-label", "Search your assigned houses");
-    setTab("houses");
+    setTab(isPlumbingSupervisor ? "overview" : "houses");
   } else {
     $("#houses-page-eyebrow").textContent = "SITE ALLOCATION & RESPONSIBILITY";
     $("#houses-page-title").textContent = "Houses & teams";
@@ -1382,6 +1456,11 @@ function renderOverview() {
   const data = state.dashboard;
   const materials = data.materials;
   const ventilationHouses = data.ventilation_houses || [];
+  const plumbingHouses = data.plumbing_houses || [];
+  const isPlumbingCoordinator = hasAccessProfile(
+    state.user,
+    "plumbing_coordinator",
+  );
   const hs = data.house_summary || {
     provided: 0, active: data.houses, closed: 0, not_started: 0,
   };
@@ -1462,6 +1541,140 @@ function renderOverview() {
             </article>`;
         }).join("")
       : `<div class="ventilation-house-empty"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No Vent work assigned yet</strong><p>When a house is marked as needing Vent work in its work plan, it will appear here.</p></div>`;
+  }
+  if (isPlumbingCoordinator) {
+    const supervisors = data.plumbing_supervisors || [];
+    const plumbingSupervisorIds = new Set(
+      supervisors.map((supervisor) => String(supervisor.id)),
+    );
+    const isAssigned = (house) =>
+      plumbingSupervisorIds.has(String(house.supervisor_user_id));
+    const isComplete = (house) => house.plumber_status === "done";
+    const completedCount = plumbingHouses.filter(isComplete).length;
+    const assignedCount = plumbingHouses.filter(
+      (house) => !isComplete(house) && isAssigned(house),
+    ).length;
+    const needsSupervisorCount =
+      plumbingHouses.length - completedCount - assignedCount;
+    const search = $("#plumbing-house-search").value.trim().toLocaleLowerCase();
+    const matchesFilter = (house) => {
+      if (plumbingHouseFilter === "completed") return isComplete(house);
+      if (plumbingHouseFilter === "needs_assignment") {
+        return !isComplete(house) && !isAssigned(house);
+      }
+      if (plumbingHouseFilter === "assigned") {
+        return !isComplete(house) && isAssigned(house);
+      }
+      return true;
+    };
+    const filteredHouses = plumbingHouses.filter((house) =>
+      matchesFilter(house) &&
+      [
+        house.id,
+        house.owner_name,
+        house.address,
+        house.postcode,
+        house.status,
+        house.plumber_status,
+        house.notes,
+        house.surveyor_name,
+        house.supervisor_name,
+        house.plumber_done_by,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase().includes(search)),
+    );
+    $("#stat-provided").textContent = plumbingHouses.length;
+    $("#stat-houses").textContent = assignedCount;
+    $("#stat-ready").textContent = needsSupervisorCount;
+    $("#stat-closed").textContent = completedCount;
+    $("#plumbing-filter-all-count").textContent = plumbingHouses.length;
+    $("#plumbing-filter-needs-assignment-count").textContent =
+      needsSupervisorCount;
+    $("#plumbing-filter-assigned-count").textContent = assignedCount;
+    $("#plumbing-filter-completed-count").textContent = completedCount;
+    $$("#plumbing-house-filters [data-plumbing-filter]").forEach((button) => {
+      const active = button.dataset.plumbingFilter === plumbingHouseFilter;
+      button.setAttribute("aria-pressed", String(active));
+      button.classList.toggle("active", active);
+    });
+    $("#plumbing-house-empty").classList.toggle(
+      "hidden",
+      filteredHouses.length > 0,
+    );
+    $("#plumbing-house-empty strong").textContent = plumbingHouses.length
+      ? search
+        ? "No matching houses"
+        : "No houses in this group"
+      : "No plumbing work has been requested yet";
+    $("#plumbing-house-empty p").textContent = plumbingHouses.length
+      ? search
+        ? "Try another house ID, owner, address, or work status."
+        : "Choose another filter to see the rest of the plumbing work queue."
+      : "When a surveyor marks plumbing work as required, the house will appear here.";
+    $("#plumbing-house-list").innerHTML = filteredHouses
+      .map((house) => {
+        const address = [house.address, house.postcode].filter(Boolean).join(" · ");
+        const assignedSupervisor = house.supervisor_user_id
+          ? String(house.supervisor_user_id)
+          : "";
+        const hasSupervisor = isAssigned(house);
+        const isCompleted = isComplete(house);
+        const supervisorOptions = supervisors.length
+          ? supervisors
+              .map((supervisor) => {
+                const initials = supervisor.name
+                  .split(/\s+/)
+                  .map((part) => part[0] || "")
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase();
+                const selected =
+                  String(supervisor.id) === assignedSupervisor;
+                return `
+                  <label class="plumbing-supervisor-option${selected ? " selected" : ""}">
+                    <input type="radio" name="supervisor_user_id" value="${supervisor.id}"${selected ? " checked" : ""} required>
+                    <span class="supervisor-account-avatar" aria-hidden="true">${escapeHtml(initials || "S")}</span>
+                    <span class="supervisor-account-identity"><strong>${escapeHtml(supervisor.name)}</strong><small>Plumbing Supervisor</small></span>
+                    <span class="plumbing-supervisor-check" aria-hidden="true">${selected ? "Selected" : "Choose"}</span>
+                  </label>`;
+              })
+              .join("")
+          : `<p class="plumbing-supervisor-empty">No active Plumbing Supervisors are available. Ask an administrator to check the Plumbing team accounts.</p>`;
+        return `
+          <article class="card plumbing-house-card ventilation-house-card${isCompleted ? " is-complete" : ""}">
+            <div class="ventilation-house-top">
+              <span class="ventilation-house-icon" aria-hidden="true">⌂</span>
+              <div class="ventilation-house-identity">
+                <h3>${escapeHtml(house.id)}</h3>
+                <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
+                ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
+              </div>
+              ${isCompleted
+                ? '<span class="plumbing-job-status is-complete">Completed</span>'
+                : hasSupervisor
+                  ? '<span class="plumbing-job-status is-assigned">Assigned</span>'
+                  : '<span class="plumbing-job-status is-needed">Needs completion</span>'}
+            </div>
+            <div class="plumbing-work-detail">
+              <div class="plumbing-surveyor-detail"><span class="plumbing-surveyor-avatar" aria-hidden="true">${escapeHtml((house.surveyor_name || "?").split(/\s+/).map((part) => part[0] || "").slice(0, 2).join("").toUpperCase())}</span><span class="plumbing-surveyor-label">Requested by surveyor</span><strong>${escapeHtml(house.surveyor_name || "Surveyor not recorded")}</strong></div>
+              <strong>Requested plumbing work</strong>
+              <p>${escapeHtml(house.notes || "Plumbing work is required. No extra survey notes were added.")}</p>
+            </div>
+            ${isCompleted
+              ? `<div class="plumbing-completion-detail"><strong>Plumbing work completed</strong>${house.plumber_done_by ? `<span>Completed by ${escapeHtml(house.plumber_done_by)}</span>` : ""}${house.plumber_done_at ? `<time datetime="${escapeHtml(house.plumber_done_at)}">${escapeHtml(formatAuditDateTime(house.plumber_done_at))}</time>` : ""}</div>`
+              : `              <form class="plumbing-house-assignment" data-plumbing-assignment data-house-id="${escapeHtml(house.id)}" data-current-supervisor="${escapeHtml(assignedSupervisor)}">
+                  <fieldset class="plumbing-supervisor-picker">
+                    <legend>${hasSupervisor ? "Assigned Plumbing Supervisor" : "Choose a Plumbing Supervisor"}</legend>
+                    <div class="plumbing-supervisor-options" role="radiogroup" aria-label="Choose a Plumbing Supervisor">
+                      ${supervisorOptions}
+                    </div>
+                  </fieldset>
+                  <button class="button button-primary" type="submit"${!supervisors.length || !assignedSupervisor ? " disabled" : ""}>${hasSupervisor ? "Save supervisor" : supervisors.length ? "Select a supervisor" : "No supervisors available"}</button>
+                </form>`}
+          </article>`;
+      })
+      .join("");
   }
   $("#today-label").textContent = new Date().toLocaleDateString(undefined, {
     weekday: "short",
@@ -2086,8 +2299,58 @@ function renderSupervisorAssignmentSummary(houses) {
     "No teams assigned yet.",
   );
 }
+function renderPlumbingSupervisorCrew() {
+  const rosters = state.dashboard?.plumbing_crew || [];
+  const memberCount = rosters.reduce(
+    (total, roster) => total + roster.members.length,
+    0,
+  );
+  const teamleadLabel = `${rosters.length} Teamlead${rosters.length === 1 ? "" : "s"}`;
+  const memberLabel = `${memberCount} crew member${memberCount === 1 ? "" : "s"}`;
+  $("#plumbing-supervisor-crew-count").textContent =
+    `${teamleadLabel} · ${memberLabel}`;
+  $("#plumbing-supervisor-crew-list").innerHTML = rosters
+    .map((roster) => {
+      const initials = roster.teamlead_name
+        .split(/\s+/)
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join("")
+        .toLocaleUpperCase();
+      const members = roster.members.length
+        ? `<ul class="plumbing-supervisor-crew-members">${roster.members
+            .map(
+              (member) =>
+                `<li><span class="plumbing-supervisor-crew-member-dot" aria-hidden="true"></span><span>${escapeHtml(member.name)}</span><small>${escapeHtml(member.role || "Crew member")}</small></li>`,
+            )
+            .join("")}</ul>`
+        : '<p class="plumbing-supervisor-crew-no-members">No crew members added to this roster yet.</p>';
+      return `<article class="plumbing-supervisor-crew-card">
+        <div class="plumbing-supervisor-crew-teamlead">
+          <span class="plumbing-supervisor-crew-avatar" aria-hidden="true">${escapeHtml(initials)}</span>
+          <div><span class="plumbing-supervisor-crew-role">TEAMLEAD</span><strong>${escapeHtml(roster.teamlead_name)}</strong></div>
+          <span class="plumbing-supervisor-crew-team">${escapeHtml(roster.team_name || "Plumbing")}</span>
+        </div>
+        ${members}
+      </article>`;
+    })
+    .join("");
+  $("#plumbing-supervisor-crew-empty").classList.toggle(
+    "hidden",
+    rosters.length > 0,
+  );
+}
 function renderSupervisorHouses() {
-  const query = $("#house-search").value.trim().toLocaleLowerCase();
+  const isPlumbingSupervisor =
+    hasAccessProfile(state.user, "supervisor") &&
+    state.user.supervisor_specialty?.trim().toLocaleLowerCase() === "plumbing";
+  const list = isPlumbingSupervisor
+    ? $("#plumbing-supervisor-house-list")
+    : $("#houses-list");
+  const search = isPlumbingSupervisor
+    ? $("#plumbing-supervisor-house-search").value
+    : $("#house-search").value;
+  const query = search.trim().toLocaleLowerCase();
   const houses = state.dashboard?.house_list || [];
   const assignmentOptions =
     state.dashboard?.supervisor_assignment_options || {
@@ -2101,7 +2364,28 @@ function renderSupervisorHouses() {
   $("#supervisor-stat-assigned").textContent = houses.length;
   $("#supervisor-stat-unassigned").textContent = missingAssignments;
   renderSupervisorAssignmentSummary(houses);
+  const isPlumbingComplete = (house) => house.plumber_status === "done";
+  const isPlumbingOutstanding = (house) =>
+    house.plumber_status === "not_done" ||
+    (house.plumber_status == null &&
+      Number(house.plan_plumber_required) === 1);
+  if (isPlumbingSupervisor) {
+    renderPlumbingSupervisorCrew();
+    $("#plumbing-supervisor-filter-all-count").textContent = houses.length;
+    $("#plumbing-supervisor-filter-completed-count").textContent =
+      houses.filter(isPlumbingComplete).length;
+    $$("#plumbing-supervisor-house-filters [data-plumbing-supervisor-filter]")
+      .forEach((button) => {
+        const active =
+          button.dataset.plumbingSupervisorFilter ===
+          plumbingSupervisorHouseFilter;
+        button.setAttribute("aria-pressed", String(active));
+        button.classList.toggle("active", active);
+      });
+  }
   const rows = houses.filter((house) =>
+    (plumbingSupervisorHouseFilter !== "plumbing_complete" ||
+      isPlumbingComplete(house)) &&
     [
       house.id,
       house.owner_name,
@@ -2115,9 +2399,9 @@ function renderSupervisorHouses() {
       .toLocaleLowerCase()
       .includes(query),
   );
-  $("#houses-list").classList.remove("house-grid-compact");
-  $("#houses-list").classList.add("house-grid-ready");
-  $("#houses-list").innerHTML = rows.length
+  list.classList.remove("house-grid-compact");
+  list.classList.add("house-grid-ready");
+  list.innerHTML = rows.length
     ? rows
         .map((house) => {
           const houseId = escapeHtml(house.id);
@@ -2146,14 +2430,27 @@ function renderSupervisorHouses() {
             )
             .join("");
           const needsAssignment = !house.delivery_person || !house.delivery_team;
-          return `<article class="card house-card surveyor-house-card supervisor-house-card${needsAssignment ? " needs-assignment" : ""}" data-house-id="${houseId}">
+          const plumbingStatus = isPlumbingComplete(house)
+            ? "Plumbing complete"
+            : isPlumbingOutstanding(house)
+              ? "Plumbing outstanding"
+              : house.plumber_status === "not_necessary" ||
+                  Number(house.plan_plumber_required) === 0
+                ? "Plumbing not required"
+                : "Plumbing not marked";
+          const plumbingStatusClass = isPlumbingComplete(house)
+            ? "is-complete"
+            : isPlumbingOutstanding(house)
+              ? "is-needed"
+              : "";
+          return `<article class="card house-card surveyor-house-card supervisor-house-card${isPlumbingSupervisor ? " plumbing-house-card ventilation-house-card" : ""}${needsAssignment ? " needs-assignment" : ""}" data-house-id="${houseId}">
             <div class="house-top">
               <span class="house-avatar" aria-hidden="true">&#8962;</span>
               <div class="house-meta">
                 <h2>${houseCardTitle(house, houseId)}</h2>
                 ${applicationIdLabelHtml(house, [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "Address not provided")}
               </div>
-              <div class="house-status-stack"><span class="status-pill ${house.is_finished ? "closed" : "active"}">${status}</span></div>
+              <div class="house-status-stack"><span class="status-pill ${house.is_finished ? "closed" : "active"}">${status}</span>${isPlumbingSupervisor ? `<span class="plumbing-job-status ${plumbingStatusClass}">${plumbingStatus}</span>` : ""}</div>
             </div>
             <form class="supervisor-house-assignment" data-house-id="${houseId}" aria-label="Delivery assignments for ${houseId}">
               <div class="supervisor-assignment-heading">
@@ -2168,12 +2465,30 @@ function renderSupervisorHouses() {
           </article>`;
         })
         .join("")
-    : `<div class="surveyor-empty-state"><span class="surveyor-empty-icon" aria-hidden="true">&#8962;</span><strong>${query ? "No matching houses" : "No houses assigned yet"}</strong><p>${query ? "Try a different house ID, owner, address, delivery person or team." : "Houses assigned to you will appear here."}</p></div>`;
-  $("#houses-list").insertAdjacentHTML(
-    "beforeend",
-    '<section class="supervisor-shared-seai card" aria-labelledby="supervisor-shared-seai-title"><div class="supervisor-shared-seai-heading"><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><div><h2 id="supervisor-shared-seai-title">PDFs shared with you</h2><p>Annotated survey PDFs sent by the Surveyor team.</p></div></div><div class="supervisor-shared-seai-content" aria-live="polite">Loading shared PDFs...</div></section>',
-  );
-  loadSupervisorSharedSeaiPdfs();
+    : isPlumbingSupervisor
+      ? ""
+      : `<div class="surveyor-empty-state"><span class="surveyor-empty-icon" aria-hidden="true">&#8962;</span><strong>${query ? "No matching houses" : "No houses assigned yet"}</strong><p>${query ? "Try a different house ID, owner, address, delivery person or team." : "Houses assigned to you will appear here."}</p></div>`;
+  if (isPlumbingSupervisor) {
+    const empty = $("#plumbing-supervisor-house-empty");
+    empty.classList.toggle("hidden", rows.length > 0);
+    empty.querySelector("strong").textContent = houses.length
+      ? query
+        ? "No matching plumbing houses"
+        : "No houses in this group"
+      : "No plumbing houses assigned yet";
+    empty.querySelector("p").textContent = houses.length
+      ? query
+        ? "Try another house ID, owner, address, delivery person, or Teamlead."
+        : "There are no houses in this filter yet. Switch to All houses to see your assignments."
+      : "When a plumbing house is assigned to you, it will appear here.";
+  }
+  if (!isPlumbingSupervisor) {
+    list.insertAdjacentHTML(
+      "beforeend",
+      '<section class="supervisor-shared-seai card" aria-labelledby="supervisor-shared-seai-title"><div class="supervisor-shared-seai-heading"><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><div><h2 id="supervisor-shared-seai-title">PDFs shared with you</h2><p>Annotated survey PDFs sent by the Surveyor team.</p></div></div><div class="supervisor-shared-seai-content" aria-live="polite">Loading shared PDFs...</div></section>',
+    );
+    loadSupervisorSharedSeaiPdfs();
+  }
 }
 async function loadSupervisorSharedSeaiPdfs() {
   const section = $(".supervisor-shared-seai");
@@ -2224,6 +2539,14 @@ async function saveSupervisorHouseAssignment(event) {
     if (house) {
       house.delivery_person = result.delivery_person;
       house.delivery_team = result.delivery_team;
+    }
+    if (
+      hasAccessProfile(state.user, "supervisor") &&
+      state.user.supervisor_specialty?.trim().toLocaleLowerCase() === "plumbing"
+    ) {
+      renderSupervisorHouses();
+      showToast(`Delivery assignments saved for ${result.house_id}.`);
+      return;
     }
     renderSupervisorAssignmentSummary(state.dashboard.house_list);
     const card = form.closest(".supervisor-house-card");
@@ -3722,7 +4045,7 @@ function houseWorkPlanSummaryHtml(house) {
       : `<span class="work-plan-icon" aria-hidden="true">${!isSet ? "?" : isDone ? "✓" : isRequired ? "!" : "✓"}</span>`;
     const badge = !isSet ? "Not set" : isDone ? "Done" : isRequired ? "Required" : "Not required";
     return `<div class="work-plan-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${trade}_done_at`], trade))}</small>` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
-  }).join("") : '<p class="muted work-plan-empty">Waiting for the surveyor to record the work plan.</p>'}</div>`;
+  }).join("") : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}</div>`;
 }
 async function toggleWorkPlanDone(button) {
   const { houseId, trade } = button.dataset;
@@ -3853,7 +4176,7 @@ async function renderNotStartedHouses(query, mode = "not_started") {
         ${isAssign ? `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>` : ""}
         ${isAssign && isReady ? `
           <button class="text-button assign-house-activate" type="button" data-house-id="${id}"${h.has_assigned_surveyor && surveyIsComplete(h) && h.has_surveyed_perimeter ? "" : ` disabled title="${!h.has_assigned_surveyor ? "Assign a Surveyor first." : !surveyIsComplete(h) ? "Waiting for the assigned Surveyor to complete the survey." : "A valid surveyed perimeter is required."}"`}>${houseActionIcon("activate")}<span>Activate house</span></button>
-          <button class="text-button assign-house-team" type="button" data-house-id="${id}">${houseActionIcon(h.has_assigned_surveyor ? "change" : "assign")}<span>${h.has_assigned_surveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button>
+          <button class="text-button assign-house-team ${h.has_assigned_surveyor ? "change-surveyor-action" : "assign-surveyor-action"}" type="button" data-house-id="${id}">${houseActionIcon(h.has_assigned_surveyor ? "change" : "assign")}<span>${h.has_assigned_surveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button>
           <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>
         ` : `
           ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${isAssign ? `${houseActionIcon("ready")}<span>Mark ready for start</span>` : "Mark ready for start"}</button>` : `
@@ -4328,7 +4651,7 @@ function mapHouseActions(house) {
       : !surveyIsComplete(house)
         ? "Waiting for the assigned Surveyor to complete the survey."
         : "A valid surveyed perimeter is required.";
-    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${houseActionIcon("ready")}<span>Mark ready for start</span></button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-activate" type="button" data-house-id="${id}"${canActivate ? "" : ` disabled title="${activationTitle}"`}>${houseActionIcon("activate")}<span>Activate house</span></button><button class="text-button assign-house-team" type="button" data-house-id="${id}">${houseActionIcon(hasAssignedSurveyor ? "change" : "assign")}<span>${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>` : ""}`;
+    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${houseActionIcon("ready")}<span>Mark ready for start</span></button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-activate" type="button" data-house-id="${id}"${canActivate ? "" : ` disabled title="${activationTitle}"`}>${houseActionIcon("activate")}<span>Activate house</span></button><button class="text-button assign-house-team ${hasAssignedSurveyor ? "change-surveyor-action" : "assign-surveyor-action"}" type="button" data-house-id="${id}">${houseActionIcon(hasAssignedSurveyor ? "change" : "assign")}<span>${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>` : ""}`;
   }
   if (house.status === "not_started") {
     return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open survey-needed" type="button" data-house-id="${id}">View Surveyor room</button>` : ""}`;
@@ -5989,14 +6312,42 @@ async function pollTrackerChanges() {
   }
 }
 
+async function submitPlumbingAssignment(event) {
+  event.preventDefault();
+  const form = event.target.closest("[data-plumbing-assignment]");
+  if (!form) return;
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  try {
+    const result = await request("/api/plumbing-coordinator/assignment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: form.dataset.houseId,
+        supervisor_user_id: form.elements.supervisor_user_id.value,
+      }),
+    });
+    state.dashboard = await request("/api/dashboard");
+    renderOverview();
+    showToast(`${result.house_id} assigned to ${result.supervisor_name}.`);
+  } catch (error) {
+    showToast(`Could not assign Plumbing Supervisor: ${error.message}`, true);
+    button.disabled = false;
+  }
+}
+
 async function refresh(preserveMovementLines = false) {
   Object.keys(planCache).forEach((mode) => planStale.add(mode));
   const search = $("#movement-search")?.value.trim() || "";
   const isAssign = hasAccessProfile(state.user, "assign");
   const isSupervisor = hasAccessProfile(state.user, "supervisor");
+  const isPlumbingCoordinator = hasAccessProfile(
+    state.user,
+    "plumbing_coordinator",
+  );
   const [dashboard, ledger] = await Promise.all([
     request("/api/dashboard"),
-    isAssign || isSupervisor
+    isAssign || isSupervisor || isPlumbingCoordinator
       ? Promise.resolve({ movements: [] })
       : request(
           `/api/movements${search ? `?q=${encodeURIComponent(search)}` : ""}`,
@@ -7847,6 +8198,11 @@ function bindEvents() {
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
   $("#ventilation-house-search").addEventListener("input", renderOverview);
+  $("#plumbing-house-search").addEventListener("input", renderOverview);
+  $("#plumbing-supervisor-house-search").addEventListener(
+    "input",
+    renderSupervisorHouses,
+  );
   $("#house-search").addEventListener("input", () => {
     if (hasAccessProfile(state.user, "surveyor")) {
       renderSurveyorHouses();
@@ -7858,6 +8214,35 @@ function bindEvents() {
   });
   $("#houses-list").addEventListener("submit", saveSupervisorHouseAssignment);
   $("#houses-list").addEventListener("change", updateSupervisorAssignmentFormState);
+  $("#plumbing-supervisor-house-list").addEventListener(
+    "submit",
+    saveSupervisorHouseAssignment,
+  );
+  $("#plumbing-supervisor-house-list").addEventListener(
+    "change",
+    updateSupervisorAssignmentFormState,
+  );
+  $("#refresh-plumbing-supervisor-houses").addEventListener(
+    "click",
+    async (event) => {
+      const button = event.currentTarget;
+      const label = button.querySelector("span");
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.setAttribute("aria-label", "Refreshing assigned plumbing houses");
+      label.textContent = "Refreshing…";
+      try {
+        await refresh();
+      } catch (error) {
+        showToast(`Could not refresh plumbing houses: ${error.message}`, true);
+      } finally {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        button.setAttribute("aria-label", "Refresh assigned plumbing houses");
+        label.textContent = "Refresh";
+      }
+    },
+  );
   $("#refresh-surveyor-houses").addEventListener("click", async (event) => {
     if (hasAccessProfile(state.user, "surveyor")) {
       await loadSurveyorHouses();
@@ -7898,6 +8283,24 @@ function bindEvents() {
       label.textContent = "Refresh";
     }
   });
+  $("#refresh-plumbing-houses").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const label = button.querySelector("span");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.setAttribute("aria-label", "Refreshing plumbing houses");
+    label.textContent = "Refreshing…";
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(`Could not refresh plumbing houses: ${error.message}`, true);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.setAttribute("aria-label", "Refresh plumbing houses");
+      label.textContent = "Refresh";
+    }
+  });
   $("#surveyor-house-filters").addEventListener("click", (event) => {
     const button = event.target.closest("[data-surveyor-filter]");
     if (!button) return;
@@ -7910,6 +8313,18 @@ function bindEvents() {
     ventilationHouseFilter = button.dataset.ventilationFilter;
     renderOverview();
   });
+  $("#plumbing-house-filters").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-plumbing-filter]");
+    if (!button) return;
+    plumbingHouseFilter = button.dataset.plumbingFilter;
+    renderOverview();
+  });
+  $("#plumbing-supervisor-house-filters").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-plumbing-supervisor-filter]");
+    if (!button) return;
+    plumbingSupervisorHouseFilter = button.dataset.plumbingSupervisorFilter;
+    renderSupervisorHouses();
+  });
   $("#ventilation-house-list").addEventListener("click", (event) => {
     const annotateButton = event.target.closest("[data-vent-pdf-annotate]");
     if (annotateButton) {
@@ -7918,6 +8333,29 @@ function bindEvents() {
     }
     const button = event.target.closest("[data-ventilation-complete]");
     if (button) updateVentilationHouseCompletion(button);
+  });
+  $("#plumbing-house-list").addEventListener("submit", submitPlumbingAssignment);
+  $("#plumbing-house-list").addEventListener("change", (event) => {
+    if (!event.target.matches('input[name="supervisor_user_id"]')) return;
+    const form = event.target.closest("[data-plumbing-assignment]");
+    if (!form) return;
+    form.querySelectorAll(".plumbing-supervisor-option").forEach((option) => {
+      const selected =
+        option.querySelector('input[name="supervisor_user_id"]').checked;
+      option.classList.toggle("selected", selected);
+      option.querySelector(".plumbing-supervisor-check").textContent =
+        selected ? "Selected" : "Choose";
+    });
+    const button = form.querySelector('button[type="submit"]');
+    const selectedSupervisor = form.querySelector(
+      'input[name="supervisor_user_id"]:checked',
+    );
+    button.disabled = !selectedSupervisor;
+    button.textContent = selectedSupervisor
+      ? form.dataset.currentSupervisor
+        ? "Save supervisor"
+        : "Assign selected supervisor"
+      : "Select a supervisor";
   });
   $("#team-search").addEventListener("input", renderHouses);
   $("#team-roster-form").addEventListener("submit", submitTeamRosterMember);

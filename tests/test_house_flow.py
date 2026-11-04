@@ -6309,5 +6309,209 @@ console.log(JSON.stringify([
         self.assertIn("toggleRequestItem", APP_JS)
 
 
+class PlumbingCoordinatorTests(HttpBase):
+    def setUp(self):
+        super().setUp()
+        status, coordinator, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "plumbing.coordinator",
+                "display_name": "Plumbing Coordinator",
+                "pin": "654321",
+                "role": "plumbing_coordinator",
+            },
+        )
+        self.assertEqual(status, 201)
+        self.coordinator_id = coordinator["user"]["id"]
+        status, surveyor, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "plumbing-work-surveyor",
+                "display_name": "Work Surveyor",
+                "pin": "345679",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        self.surveyor_id = surveyor["user"]["id"]
+        self.plumbing_supervisor_id = self.create_plumbing_supervisor(
+            "plumbing-supervisor", "Plumbing Supervisor"
+        )
+        self.other_plumbing_supervisor_id = self.create_plumbing_supervisor(
+            "plumbing-supervisor2", "Second Plumbing Supervisor"
+        )
+        self.other_supervisor_id = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "ewi-supervisor",
+                "display_name": "EWI Supervisor",
+                "pin": "567891",
+                "role": "supervisor",
+                "supervisor_specialty": "External Wall Insulation",
+            },
+        )[1]["user"]["id"]
+        _, _, self.coordinator_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "plumbing.coordinator", "pin": "654321"},
+        )
+
+    def create_plumbing_supervisor(self, username, display_name):
+        status, result, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": username,
+                "display_name": display_name,
+                "pin": "567890",
+                "role": "supervisor",
+                "supervisor_specialty": "Plumbing",
+            },
+        )
+        self.assertEqual(status, 201)
+        return result["user"]["id"]
+
+    def test_coordinator_sees_plumbing_queue_and_assigns_only_plumbing_supervisors(self):
+        self.provide("PLUMBING-ACTIVE", "D01 A1", "1 Main Street", "Owner")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_plumber_required = 1, plan_plumber_notes = 'Repair leak'
+                WHERE id = 'PLUMBING-ACTIVE'
+                """
+            )
+        status, _, _ = self.activate(
+            {
+                "id": "PLUMBING-ACTIVE",
+                "postcode": "D01 A1",
+                "owner_name": "Owner",
+                "employee_name": "Existing Supervisor",
+            }
+        )
+        self.assertEqual(status, 201)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('PLUMBING-ACTIVE', 'surveyor', ?, 'Admin One',
+                        '2026-11-04T09:00:00')
+                """,
+                (self.surveyor_id,),
+            )
+
+        self.provide("PLUMBING-NOT-READY")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_plumber_required = 1 "
+                "WHERE id = 'PLUMBING-NOT-READY'"
+            )
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.coordinator_cookie
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [house["id"] for house in dashboard["plumbing_houses"]],
+            ["PLUMBING-ACTIVE", "PLUMBING-NOT-READY"],
+        )
+        self.assertEqual(
+            dashboard["plumbing_houses"][0]["surveyor_name"],
+            "Work Surveyor",
+        )
+        self.assertEqual(
+            [supervisor["id"] for supervisor in dashboard["plumbing_supervisors"]],
+            [self.plumbing_supervisor_id, self.other_plumbing_supervisor_id],
+        )
+        self.assertEqual(dashboard["house_list"], [])
+        self.assertEqual(dashboard["materials"], [])
+        self.assertEqual(dashboard["movements"], [])
+
+        status, _, _ = self.call(
+            "GET", "/api/movements", cookie=self.coordinator_cookie
+        )
+        self.assertEqual(status, 403)
+        status, _, _ = self.call(
+            "POST",
+            "/api/plumbing-coordinator/assignment",
+            {
+                "house_id": "PLUMBING-ACTIVE",
+                "supervisor_user_id": self.other_supervisor_id,
+            },
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 400)
+        status, _, _ = self.call(
+            "POST",
+            "/api/plumbing-coordinator/assignment",
+            {
+                "house_id": "PLUMBING-NOT-READY",
+                "supervisor_user_id": self.plumbing_supervisor_id,
+            },
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200)
+        with server.connect_db() as db:
+            unactivated_assignment = db.execute(
+                "SELECT user_id FROM house_role_assignments "
+                "WHERE house_id = 'PLUMBING-NOT-READY' AND role = 'supervisor'"
+            ).fetchone()
+        self.assertEqual(
+            unactivated_assignment["user_id"], self.plumbing_supervisor_id
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/plumbing-coordinator/assignment",
+            {
+                "house_id": "PLUMBING-ACTIVE",
+                "supervisor_user_id": self.plumbing_supervisor_id,
+            },
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["supervisor_name"], "Plumbing Supervisor")
+        with server.connect_db() as db:
+            assignment = db.execute(
+                "SELECT user_id, assigned_by FROM house_role_assignments "
+                "WHERE house_id = 'PLUMBING-ACTIVE' AND role = 'supervisor'"
+            ).fetchone()
+            house = db.execute(
+                "SELECT employee_name FROM houses WHERE id = 'PLUMBING-ACTIVE'"
+            ).fetchone()
+        self.assertEqual(assignment["user_id"], self.plumbing_supervisor_id)
+        self.assertEqual(assignment["assigned_by"], "Plumbing Coordinator")
+        self.assertEqual(house["employee_name"], "Plumbing Supervisor")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE house_checklists SET plumber_status = 'done' "
+                "WHERE house_id = 'PLUMBING-NOT-READY'"
+            )
+            db.execute(
+                "UPDATE provided_houses SET plan_plumber = 'done', "
+                "plan_plumber_done_by = 'Plumber One', "
+                "plan_plumber_done_at = '2026-11-04T10:30:00' "
+                "WHERE id = 'PLUMBING-NOT-READY'"
+            )
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.coordinator_cookie
+        )
+        self.assertEqual(status, 200)
+        completed_house = next(
+            house
+            for house in dashboard["plumbing_houses"]
+            if house["id"] == "PLUMBING-NOT-READY"
+        )
+        self.assertEqual(completed_house["plumber_status"], "done")
+        self.assertEqual(completed_house["plumber_done_by"], "Plumber One")
+        self.assertEqual(
+            completed_house["plumber_done_at"], "2026-11-04T10:30:00"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
