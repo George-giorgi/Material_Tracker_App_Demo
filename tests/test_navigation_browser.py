@@ -937,7 +937,11 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#surveyor-work-plan-form").is_visible())
         self.assertTrue(self.page.locator("#house-survey-form").is_visible())
         self.assertTrue(self.page.locator("#go-overview").is_hidden())
-        self.assertTrue(self.page.locator("#surveyor-survey-notes-form").is_visible())
+        self.assertEqual(self.page.locator("#survey-room-notes").count(), 0)
+        self.assertEqual(
+            self.page.locator(".survey-room-nav a[href='#survey-room-notes']").count(),
+            0,
+        )
         dark_styles = self.page.locator("#surveyor-room").evaluate(
             """root => Object.fromEntries([
               ['nav', '.survey-room-nav'],
@@ -1349,6 +1353,59 @@ class NavigationBrowserTests(unittest.TestCase):
             ).evaluate("(element) => getComputedStyle(element).borderLeftColor"),
         )
         self.assertTrue(self.page.locator("#house-team-filter").is_hidden())
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, owner_name, ready_for_start)
+                VALUES ('READY-NEEDS-SURVEY', 'Survey Needed Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (
+                    'READY-ASSIGN',
+                    '{"windows":[],"doors":[],"house_corners":[],"perimeter_m":42,"notes":""}',
+                    '', 'Completed Surveyor', '2026-11-03T10:00:00'
+                )
+                """
+            )
+        self.page.locator("#refresh-surveyor-houses").click()
+        self.page.wait_for_function(
+            "() => !document.querySelector('#refresh-surveyor-houses').hasAttribute('aria-busy')"
+        )
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        survey_filters = self.page.locator("#assign-survey-filters")
+        survey_filters.wait_for(state="visible")
+        self.page.wait_for_function(
+            "() => document.querySelector('#assign-survey-all-count').textContent === '2'"
+        )
+        self.assertEqual(
+            [
+                self.page.locator(f"#assign-survey-{key}-count").inner_text()
+                for key in ("all", "needed", "completed")
+            ],
+            ["2", "1", "1"],
+        )
+        self.page.locator("[data-assign-survey-filter='needed']").click()
+        self.page.locator(
+            "#houses-list article[data-house-id='READY-NEEDS-SURVEY']"
+        ).wait_for()
+        self.assertFalse(
+            self.page.locator(
+                "#houses-list article[data-house-id='READY-ASSIGN']"
+            ).count()
+        )
+        self.page.locator("[data-assign-survey-filter='completed']").click()
+        self.page.locator(
+            "#houses-list article[data-house-id='READY-ASSIGN']"
+        ).wait_for()
+        self.assertFalse(
+            self.page.locator(
+                "#houses-list article[data-house-id='READY-NEEDS-SURVEY']"
+            ).count()
+        )
+        self.page.locator("[data-assign-house-filter='not_started']").click()
         pending_card = self.page.locator(
             "#houses-list article[data-house-id='PENDING-ASSIGN']"
         )
@@ -1434,7 +1491,7 @@ class NavigationBrowserTests(unittest.TestCase):
             "Back to not started",
             ready_card.inner_text(),
         )
-        self.assertEqual(ready_card.locator(".house-card-actions .text-button").count(), 3)
+        self.assertEqual(ready_card.locator(".house-card-actions .text-button").count(), 4)
         self.assertTrue(ready_card.locator(".assign-seai-details").is_visible())
         action_rows = ready_card.evaluate(
             """card => {
@@ -1494,9 +1551,9 @@ class NavigationBrowserTests(unittest.TestCase):
         with server.connect_db() as db:
             db.execute(
                 """
-                INSERT INTO provided_houses(id, postcode, owner_name)
-                VALUES ('WORKLOAD-PENDING', 'T1', 'Pending Owner'),
-                       ('WORKLOAD-COMPLETE', 'T2', 'Completed Owner')
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES ('WORKLOAD-PENDING', 'T1', 'Pending Owner', 1),
+                       ('WORKLOAD-COMPLETE', 'T2', 'Completed Owner', 1)
                 """
             )
             server._insert_user(db, "workload-assign", "Cathy", "234567", "assign")
@@ -1783,8 +1840,21 @@ class NavigationBrowserTests(unittest.TestCase):
                 VALUES ('MAP-READY-ASSIGN', 'ready', 'Cathy', '2026-10-29T11:00:00')
                 """
             )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('MAP-READY-ASSIGN', '{"perimeter_m": 42}', 'survey notes', 'Map Surveyor', '2026-10-29T12:00:00')
+                """
+            )
             surveyor_id = server._insert_user(
                 db, "map-assignment-surveyor", "Map Surveyor", "345678", "surveyor"
+            )
+            alternate_surveyor_id = server._insert_user(
+                db,
+                "map-assignment-surveyor-two",
+                "Alternate Surveyor",
+                "456789",
+                "surveyor",
             )
             server._insert_user(
                 db, "map-assignment-cathy", "Cathy", "234567", "assign"
@@ -1831,6 +1901,19 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator("#house-map-selection .assign-house-team").inner_text(),
             "Change Surveyor",
         )
+        self.page.locator("#house-map-selection .assign-house-team").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
+        original_option = self.page.locator(
+            f'#house-assignment-surveyor input[name="surveyor_user_id"][value="{surveyor_id}"]'
+        )
+        alternate_option = self.page.locator(
+            f'#house-assignment-surveyor input[name="surveyor_user_id"][value="{alternate_surveyor_id}"]'
+        )
+        self.assertTrue(original_option.is_checked())
+        alternate_option.check()
+        self.page.locator("#save-house-assignments").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="hidden")
+        self.page.locator("#house-map-view").wait_for(state="visible")
         with server.connect_db() as db:
             assignment = db.execute(
                 """
@@ -1838,7 +1921,33 @@ class NavigationBrowserTests(unittest.TestCase):
                 WHERE house_id = 'MAP-READY-ASSIGN' AND role = 'surveyor'
                 """
             ).fetchone()
-        self.assertEqual(assignment["user_id"], surveyor_id)
+        self.assertEqual(assignment["user_id"], alternate_surveyor_id)
+        self.page.locator(
+            "#house-map-selection .plan-ready-toggle[data-ready='false']"
+        ).click()
+        self.page.locator("#houses-list article[data-house-id='MAP-READY-ASSIGN']").wait_for()
+        self.assertEqual(
+            self.page.locator("#houses-list-heading").get_attribute("data-status"),
+            "not_started",
+        )
+        self.assertTrue(
+            self.page.locator(
+                "#houses-list article[data-house-id='MAP-READY-ASSIGN'] .plan-ready-toggle[data-ready='true']"
+            ).is_visible()
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_surveys WHERE house_id = 'MAP-READY-ASSIGN'"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_role_assignments WHERE house_id = 'MAP-READY-ASSIGN' AND role = 'surveyor'"
+                ).fetchone()[0],
+                0,
+            )
         self.assertEqual(self.browser_errors, [])
 
     def test_assign_user_not_started_card_hides_surveyor_information(self):
@@ -4660,7 +4769,7 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(255, 244, 223)",
         )
         nav = self.page.locator(".survey-room-nav")
-        self.assertEqual(nav.locator("a").count(), 5)
+        self.assertEqual(nav.locator("a").count(), 4)
         self.assertEqual(nav.locator("a[href='#survey-room-documents']").count(), 0)
         nav.locator('a[href="#survey-room-work-plan"]').click()
         self.assertEqual(
@@ -4670,25 +4779,27 @@ class NavigationBrowserTests(unittest.TestCase):
         work_plan = self.page.locator("#surveyor-work-plan-form")
         self.assertTrue(work_plan.is_visible())
         work_plan.locator('[name="scaffolding_required"]').select_option("true")
-        self.page.get_by_text("Work plan saved automatically.").wait_for()
-        with server.connect_db() as db:
-            saved_requirement = db.execute(
-                "SELECT plan_scaffolding_required FROM provided_houses "
-                "WHERE id = 'SURVEY-ROOM-TEST'"
-            ).fetchone()
-        self.assertEqual(saved_requirement["plan_scaffolding_required"], 1)
         work_plan.locator('[name="scaffolding_notes"]').fill("Rear access only")
         work_plan.locator('[name="esb_required"]').select_option("false")
         work_plan.locator('[name="plumber_required"]').select_option("true")
         work_plan.locator('[name="plumber_notes"]').fill("Coordinate with owner")
-        self.page.get_by_text("Work plan saved automatically.").wait_for()
         with server.connect_db() as db:
-            saved_requirements = db.execute(
+            unsaved_plan = db.execute(
                 "SELECT plan_scaffolding_required, plan_esb_required, "
-                "plan_plumber_required FROM provided_houses "
+                "plan_plumber_required, plan_scaffolding_notes, plan_plumber_notes "
+                "FROM provided_houses "
                 "WHERE id = 'SURVEY-ROOM-TEST'"
             ).fetchone()
-        self.assertEqual(tuple(saved_requirements), (1, 0, 1))
+        self.assertEqual(
+            tuple(unsaved_plan),
+            (
+                None,
+                None,
+                None,
+                "Long pre-start detail that should remain visible without a clipped header",
+                "",
+            ),
+        )
         work_plan.locator('button[type="submit"]').click()
         self.page.get_by_text(
             "Pre-start work plan for SURVEY-ROOM-TEST saved."
@@ -4743,9 +4854,11 @@ class NavigationBrowserTests(unittest.TestCase):
             "#survey-room-summary-house-notes"
         )
         self.assertEqual(surveyor_house_notes.inner_text(), "No house notes")
-        survey_notes_card = self.page.locator("#survey-room-notes")
-        self.assertTrue(survey_notes_card.is_visible())
-        self.assertTrue(self.page.locator(".survey-room-nav a[href='#survey-room-notes']").is_visible())
+        self.assertEqual(self.page.locator("#survey-room-notes").count(), 0)
+        self.assertEqual(
+            self.page.locator(".survey-room-nav a[href='#survey-room-notes']").count(),
+            0,
+        )
         with server.connect_db() as db:
             saved_notes = db.execute(
                 "SELECT notes FROM provided_houses WHERE id = 'SURVEY-ROOM-TEST'"
@@ -4756,37 +4869,87 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-survey-open[data-house-id="SURVEY-ROOM-TEST"]'
         ).click()
         self.assertTrue(self.page.locator("#survey-windows input").first.is_visible())
-        survey_note = self.page.locator("#surveyor-survey-notes-form textarea[name='notes']")
-        self.assertTrue(
-            survey_note.is_visible(),
-            self.page.evaluate(
-                """() => ({
-                  room: document.querySelector('#surveyor-room').className,
-                  notesCard: document.querySelector('#survey-room-notes').className,
-                  form: document.querySelector('#surveyor-survey-notes-form').className,
-                  title: document.querySelector('#house-survey-title').textContent
-                })"""
-            ),
-        )
-        self.assertEqual(survey_note.input_value(), "")
-        survey_note.fill("Survey details for sharing.")
-        self.page.locator("#surveyor-survey-notes-form button[type='submit']").click()
-        self.page.get_by_text("Survey note for SURVEY-ROOM-TEST saved.").wait_for()
-        self.assertEqual(survey_note.input_value(), "Survey details for sharing.")
-        survey_note.fill("Updated survey note for sharing.")
-        self.page.locator("#surveyor-survey-notes-form button[type='submit']").click()
-        self.page.get_by_text("Survey note for SURVEY-ROOM-TEST saved.").wait_for()
-        self.assertEqual(survey_note.input_value(), "Updated survey note for sharing.")
-        with server.connect_db() as db:
-            saved_survey = db.execute(
-                "SELECT data FROM house_surveys WHERE house_id = 'SURVEY-ROOM-TEST'"
-            ).fetchone()["data"]
-        self.assertEqual(
-            json.loads(saved_survey)["notes"],
-            "Updated survey note for sharing.",
-        )
+        self.assertEqual(self.page.locator("#surveyor-survey-notes-form").count(), 0)
         self.page.locator("#back-from-surveyor-room").click()
         self.assertTrue(self.page.locator("#houses-overview").is_visible())
+        self.assertEqual(self.browser_errors, [])
+
+    def test_surveyor_can_add_a_temporary_annotated_blank_page_to_share(self):
+        house_id = "SURVEY-BLANK-PDF-TEST"
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, address, owner_name, "
+                "source, ready_for_start) VALUES (?, 'D01 TEST', '1 Example Road', "
+                "'Example Owner', 'government', 1)",
+                (house_id,),
+            )
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.locator('[data-house-view="ready"]').click()
+        self.page.locator(
+            f'.house-survey-open[data-house-id="{house_id}"]'
+        ).click()
+        self.page.locator(
+            ".survey-room-nav a[data-ready-only][href='#survey-room-seai-details']"
+        ).click()
+        self.page.locator(
+            "#survey-room-seai-documents [data-seai-create-blank]"
+        ).wait_for()
+        self.page.locator(
+            "#survey-room-seai-documents [data-seai-create-blank]"
+        ).click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_box = canvas.bounding_box()
+        self.page.mouse.move(canvas_box["x"] + 40, canvas_box["y"] + 45)
+        self.page.mouse.down()
+        self.page.mouse.move(canvas_box["x"] + 150, canvas_box["y"] + 120)
+        self.page.mouse.up()
+        self.page.get_by_role(
+            "button", name="Add blank page to selection"
+        ).click()
+        self.page.get_by_text("1 page selected").wait_for()
+        self.page.locator(
+            "#survey-room-seai-documents [data-seai-share-selected]"
+        ).click()
+        self.page.locator("#selected-pdf-preview-dialog[open]").wait_for()
+        preview = self.page.locator("#selected-pdf-preview")
+        self.assertTrue(preview.get_attribute("src").startswith("blob:"))
+        preview_pdf = self.page.evaluate(
+            """async url => {
+              const response = await fetch(url);
+              const blob = await response.blob();
+              return {
+                type: blob.type,
+                signature: new TextDecoder().decode(
+                  await blob.slice(0, 5).arrayBuffer()
+                )
+              };
+            }""",
+            preview.get_attribute("src"),
+        )
+        self.assertEqual(preview_pdf, {"type": "application/pdf", "signature": "%PDF-"})
+        self.page.locator("#selected-pdf-preview-continue").click()
+        self.page.wait_for_function(
+            """() => document.querySelector('#house-document-share-dialog').open ||
+              !document.querySelector('#toast').classList.contains('hidden')"""
+        )
+        self.assertTrue(
+            self.page.locator("#house-document-share-dialog").evaluate(
+                "dialog => dialog.open"
+            ),
+            self.page.locator("#toast").inner_text(),
+        )
+        self.page.locator("#house-document-share-dialog[open]").wait_for()
+        with server.connect_db() as db:
+            table_exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'seai_documents'"
+            ).fetchone()
+        self.assertIsNone(table_exists)
         self.assertEqual(self.browser_errors, [])
 
     def test_surveyor_room_hides_the_house_pdfs_card(self):

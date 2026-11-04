@@ -236,6 +236,12 @@
               <button type="button" class="kpi active" data-assign-house-filter="active" aria-pressed="true"><span class="kpi-label">Active houses</span><span class="kpi-value" id="assign-stat-active">0</span></button>
               <button type="button" class="kpi closed" data-assign-house-filter="closed" aria-pressed="false"><span class="kpi-label">Closed houses</span><span class="kpi-value" id="assign-stat-closed">0</span></button>
             </div>
+            <div id="assign-survey-filters" class="assign-survey-filters hidden" role="group" aria-label="Filter ready houses by survey status">
+              <span class="assign-survey-filter-label">Survey status</span>
+              <button type="button" class="surveyor-house-filter active" data-assign-survey-filter="all" aria-pressed="true">All <span id="assign-survey-all-count">0</span></button>
+              <button type="button" class="surveyor-house-filter" data-assign-survey-filter="needed" aria-pressed="false">Needs survey <span id="assign-survey-needed-count">0</span></button>
+              <button type="button" class="surveyor-house-filter" data-assign-survey-filter="completed" aria-pressed="false">Surveyed <span id="assign-survey-completed-count">0</span></button>
+            </div>
             <details id="assign-surveyor-workload" class="assign-surveyor-workload hidden">
               <summary class="assign-surveyor-workload-summary">
                 <h2>Surveyors</h2>
@@ -312,7 +318,6 @@
               <a href="#survey-room-seai-details" data-ready-only>SEAI record</a>
               <a href="#survey-room-seai-details" data-not-started-only>SEAI PDFs</a>
               <a href="#survey-room-measurements">Measurements</a>
-              <a href="#survey-room-notes">Survey notes</a>
             </nav>
             <article class="card survey-room-summary-card">
               <div class="card-heading"><div><h2>Assigned house information (reference copy)</h2><p>Original property details and house notes for this assigned survey.</p></div></div>
@@ -320,13 +325,6 @@
               <form id="surveyor-house-notes-form" class="surveyor-house-notes-form">
                 <label class="field full">House notes<textarea name="notes" rows="3" maxlength="2000" placeholder="Add access details or other notes for this house"></textarea></label>
                 <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Visible in the house record.</small><button class="button button-secondary note-delete" type="button" data-delete-note>Delete note</button><button class="button button-secondary" type="submit">Save house notes</button></div>
-              </form>
-            </article>
-            <article class="card survey-room-survey-notes-card" id="survey-room-notes">
-              <div class="card-heading"><div><h2>Survey notes</h2><p>Editable notes for this survey. Saved survey notes are appended to shared PDFs on a separate final page.</p></div></div>
-              <form id="surveyor-survey-notes-form" class="surveyor-house-notes-form survey-notes-form">
-                <label class="field full">Survey note<textarea name="notes" rows="5" maxlength="2000" placeholder="Record survey observations to include with shared PDFs"></textarea><small class="survey-note-share-hint">Separate from the original house notes. Only the saved survey note is added to shared PDFs.</small></label>
-                <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Save the note before sharing a PDF.</small><button class="button button-secondary note-delete" type="button" data-delete-note>Delete note</button><button class="button button-secondary" type="submit">Save survey note</button></div>
               </form>
             </article>
             <article class="card survey-room-seai-card hidden" id="survey-room-seai-details">
@@ -361,7 +359,7 @@
                   <label class="field">Requirement<select name="vent_required"><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
                   <label class="field">Work details<textarea name="vent_notes" rows="2" maxlength="1000" placeholder="Optional details about the ventilation work"></textarea></label>
                 </div>
-                <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Requirement choices and work details save automatically. You can also save manually.</small><button class="button button-secondary" type="submit">Save work plan</button></div>
+                <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Changes are saved only when you click Save work plan.</small><button class="button button-secondary" type="submit">Save work plan</button></div>
               </form>
             </article>
             <article class="card survey-room-measurements-card" id="survey-room-measurements">
@@ -566,6 +564,21 @@
             <button id="house-document-share-whatsapp" class="button button-secondary" type="button">WhatsApp PDF</button>
             <button id="house-document-share-download" class="button button-secondary" type="button">Download PDF</button>
           </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="selected-pdf-preview-dialog" class="dialog selected-pdf-preview-dialog">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">REVIEW SURVEY PDF</div><h2 id="selected-pdf-preview-title">Review selected pages</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close preview">×</button>
+        </div>
+        <p id="selected-pdf-preview-description" class="page-subtitle">Check the combined pages before sharing.</p>
+        <iframe id="selected-pdf-preview" title="Preview of selected survey PDF"></iframe>
+        <div class="dialog-actions">
+          <button class="button button-secondary close-dialog" type="button">Back to Surveyor room</button>
+          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Continue to send</button>
         </div>
       </div>
     </dialog>

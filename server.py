@@ -518,6 +518,13 @@ def _create_seai_document_share_pdf(selections, documents, house_id, survey_note
     writer = PdfWriter()
     filenames = set()
     for selection in selections:
+        if selection.get("blank_page"):
+            blank_pdf = _create_blank_annotated_pdf_page(
+                selection.get("annotations")
+            )
+            reader = PdfReader(BytesIO(blank_pdf), strict=False)
+            writer.add_page(reader.pages[0])
+            continue
         source = documents[selection["document_id"]]
         try:
             reader = PdfReader(BytesIO(source["content"]), strict=False)
@@ -543,6 +550,17 @@ def _create_seai_document_share_pdf(selections, documents, house_id, survey_note
     return _create_house_document_share_pdf(
         selected_pages.getvalue(), source_label, house_id, survey_note
     )
+
+
+def _create_blank_annotated_pdf_page(annotations):
+    document = fitz.open()
+    try:
+        document.new_page(width=595, height=842)
+        return _annotate_pdf_document(
+            document.tobytes(), annotations
+        )
+    finally:
+        document.close()
 
 
 def _seai_document_source_stem(filename):
@@ -2989,7 +3007,10 @@ def _surveyor_workload_summary(db):
         FROM app_users u
         LEFT JOIN house_role_assignments assignment
           ON assignment.user_id = u.id AND assignment.role = 'surveyor'
-        LEFT JOIN provided_houses p ON p.id = assignment.house_id
+        LEFT JOIN provided_houses p
+          ON p.id = assignment.house_id
+         AND p.ready_for_start = 1
+         AND NOT EXISTS (SELECT 1 FROM houses h WHERE h.id = p.id)
         LEFT JOIN house_surveys hs ON hs.house_id = p.id
         WHERE u.is_active = 1
           AND EXISTS (
@@ -5329,6 +5350,16 @@ class LegacyRouteHandlers:
                 for selection in selections:
                     if not isinstance(selection, dict):
                         raise ApiError(400, "Selected SEAI PDF pages are invalid.")
+                    if selection.get("blank_page") is True:
+                        if "document_id" in selection or "page" in selection:
+                            raise ApiError(400, "Blank PDF page details are invalid.")
+                        normalized_selections.append(
+                            {
+                                "blank_page": True,
+                                "annotations": selection.get("annotations"),
+                            }
+                        )
+                        continue
                     document_id = selection.get("document_id")
                     page_number = selection.get("page")
                     if (
@@ -5371,26 +5402,29 @@ class LegacyRouteHandlers:
                             raise ApiError(
                                 409, "Save a survey note before sharing selected PDF pages."
                             )
-                    placeholders = ",".join("?" for _ in document_ids)
-                    rows = db.execute(
-                        f"""
-                        SELECT id, category, filename, content FROM seai_documents
-                        WHERE application_id = ? AND id IN ({placeholders})
-                            AND lower(filename) LIKE '%.pdf' AND content IS NOT NULL
-                        """,
-                        (house_id, *sorted(document_ids)),
-                    ).fetchall()
-                    annotated_rows = db.execute(
-                        """
-                        SELECT id, category, filename, content FROM seai_documents
-                        WHERE application_id = ?
-                            AND lower(filename) LIKE '%.pdf'
-                            AND lower(filename) LIKE '%-annotated%.pdf'
-                            AND content IS NOT NULL
-                        ORDER BY id DESC
-                        """,
-                        (house_id,),
-                    ).fetchall()
+                    rows = []
+                    annotated_rows = []
+                    if document_ids:
+                        placeholders = ",".join("?" for _ in document_ids)
+                        rows = db.execute(
+                            f"""
+                            SELECT id, category, filename, content FROM seai_documents
+                            WHERE application_id = ? AND id IN ({placeholders})
+                                AND lower(filename) LIKE '%.pdf' AND content IS NOT NULL
+                            """,
+                            (house_id, *sorted(document_ids)),
+                        ).fetchall()
+                        annotated_rows = db.execute(
+                            """
+                            SELECT id, category, filename, content FROM seai_documents
+                            WHERE application_id = ?
+                                AND lower(filename) LIKE '%.pdf'
+                                AND lower(filename) LIKE '%-annotated%.pdf'
+                                AND content IS NOT NULL
+                            ORDER BY id DESC
+                            """,
+                            (house_id,),
+                        ).fetchall()
                 selected_documents = {row["id"]: row for row in rows}
                 if len(selected_documents) != len(document_ids):
                     raise ApiError(
@@ -5407,6 +5441,9 @@ class LegacyRouteHandlers:
                 resolved_selections = []
                 resolved_keys = set()
                 for selection in normalized_selections:
+                    if selection.get("blank_page"):
+                        resolved_selections.append(selection)
+                        continue
                     selected_document = selected_documents[selection["document_id"]]
                     source_stem = _seai_document_source_stem(
                         selected_document["filename"]
@@ -5956,6 +5993,14 @@ class LegacyRouteHandlers:
                                 user["display_name"],
                                 datetime.now().isoformat(timespec="seconds"),
                             ),
+                        )
+                        db.execute(
+                            """
+                            UPDATE provided_houses
+                            SET plan_vent_required = 1
+                            WHERE id = ?
+                            """,
+                            (house_id,),
                         )
                 self._send_json(
                     201,
@@ -6988,11 +7033,11 @@ class LegacyRouteHandlers:
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House details must be a JSON object.")
                 if _has_access_profile(user, "assign") and (
-                    set(payload) != {"id", "ready"} or payload.get("ready") is not True
+                    set(payload) != {"id", "ready"}
                 ):
                     raise ApiError(
                         403,
-                        "Assign accounts can only mark houses ready for start.",
+                        "Assign accounts can only change house readiness.",
                     )
                 house_id = str(payload.get("id") or "").strip()
                 with connect_db() as db:
@@ -7020,8 +7065,48 @@ class LegacyRouteHandlers:
                                 "SELECT ready_for_start FROM provided_houses WHERE id = ?",
                                 (house_id,),
                             ).fetchone()
+                            if payload["ready"] and not current["ready_for_start"]:
+                                stale_assignment = db.execute(
+                                    """
+                                    SELECT assignment.assigned_at, history.changed_at
+                                    FROM house_role_assignments assignment
+                                    JOIN house_status_history history
+                                      ON history.house_id = assignment.house_id
+                                     AND history.status = 'not_started'
+                                    WHERE assignment.house_id = ?
+                                      AND assignment.role = 'surveyor'
+                                      AND history.id = (
+                                          SELECT latest.id
+                                          FROM house_status_history latest
+                                          WHERE latest.house_id = assignment.house_id
+                                            AND latest.status = 'not_started'
+                                          ORDER BY latest.changed_at DESC, latest.id DESC
+                                          LIMIT 1
+                                      )
+                                    """,
+                                    (house_id,),
+                                ).fetchone()
+                                if (
+                                    stale_assignment
+                                    and stale_assignment["assigned_at"]
+                                    < stale_assignment["changed_at"]
+                                ):
+                                    db.execute(
+                                        """
+                                        DELETE FROM house_role_assignments
+                                        WHERE house_id = ? AND role = 'surveyor'
+                                        """,
+                                        (house_id,),
+                                    )
                             if not payload["ready"]:
                                 _clear_house_survey_records(db, house_id)
+                                db.execute(
+                                    """
+                                    DELETE FROM house_role_assignments
+                                    WHERE house_id = ? AND role = 'surveyor'
+                                    """,
+                                    (house_id,),
+                                )
                             db.execute(
                                 "UPDATE provided_houses SET ready_for_start = ? WHERE id = ?",
                                 (int(payload["ready"]), house_id),

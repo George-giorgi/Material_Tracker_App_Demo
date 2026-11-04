@@ -675,9 +675,10 @@ class HouseDocumentHttpTests(HttpBase):
         status, _, _, body = self.call_raw("GET", f"/api/house-vent-documents/{saved['id']}/file")
         self.assertEqual((status, body), (200, b"%PDF-1.4\nvent\n"))
         with server.connect_db() as db:
-            db.execute(
-                "UPDATE provided_houses SET plan_vent_required = 1 WHERE id = 'DOC-TEST'"
-            )
+            plan = db.execute(
+                "SELECT plan_vent_required FROM provided_houses WHERE id = 'DOC-TEST'"
+            ).fetchone()
+            self.assertEqual(plan["plan_vent_required"], 1)
             db.execute(
                 """
                 INSERT INTO provided_houses(id, plan_vent_required)
@@ -707,6 +708,18 @@ class HouseDocumentHttpTests(HttpBase):
             "POST", "/api/auth/login",
             {"username": "vent-doc-reader", "pin": "234567"},
         )[2]
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=vent_cookie
+        )
+        self.assertEqual(status, 200)
+        ventilation_house = next(
+            house for house in dashboard["ventilation_houses"]
+            if house["id"] == "DOC-TEST"
+        )
+        self.assertEqual(
+            [document["filename"] for document in ventilation_house["documents"]],
+            ["vent-pages.pdf"],
+        )
         status, listing, _ = self.call(
             "GET", "/api/house-vent-documents?house_id=DOC-TEST",
             cookie=vent_cookie,
@@ -1924,6 +1937,48 @@ class CalculatorApiTests(HttpBase):
         self.assertNotIn(
             "Saved SEAI survey note.",
             "\n".join(page.extract_text() for page in vent_reader.pages),
+        )
+        status, content_type, _, blank_page_body = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                "house_id": house_id,
+                "pages": [
+                    {"document_id": source_document_ids[0], "page": 2},
+                    {
+                        "blank_page": True,
+                        "annotations": [
+                            {
+                                "page": 1,
+                                "tool": "text",
+                                "color": "#245fbd",
+                                "point": [0.1, 0.2],
+                                "font_size": 0.02,
+                                "text": "Surveyor added blank page",
+                            }
+                        ],
+                    },
+                ],
+                "include_survey_note": False,
+            },
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        blank_page_reader = PdfReader(BytesIO(blank_page_body))
+        self.assertEqual(len(blank_page_reader.pages), 2)
+        self.assertIn(
+            "Application selected page two",
+            blank_page_reader.pages[0].extract_text(),
+        )
+        self.assertIn(
+            "Surveyor added blank page",
+            blank_page_reader.pages[1].extract_text(),
+        )
+        self.assertAlmostEqual(
+            float(blank_page_reader.pages[1].mediabox.width),
+            595,
+            delta=1,
         )
         with server.connect_db() as db:
             stored_sources = [
@@ -3519,7 +3574,7 @@ class ReadyForStartAndNotesTests(HttpBase):
         self.assertEqual(self.listing("ready"), {})
         self.assertEqual(self.summary()["not_started"], 2)
 
-    def test_assign_can_only_mark_a_house_ready(self):
+    def test_assign_can_mark_ready_and_reset_house_to_not_started(self):
         status, _, _ = self.call(
             "POST",
             "/api/users",
@@ -3546,14 +3601,48 @@ class ReadyForStartAndNotesTests(HttpBase):
         )
         self.assertEqual(status, 200, result)
 
+        status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "assigned-house-surveyor",
+                "display_name": "Assigned House Surveyor",
+                "pin": "345678",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201)
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-assignments",
+            {"house_id": "WH1", "surveyor_user_id": self.user_id("assigned-house-surveyor")},
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('WH1', '{"perimeter_m": 42}', 'survey notes', 'Assigned House Surveyor', '2026-11-04T07:00:00')
+                """
+            )
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET notes = 'house notes',
+                    plan_scaffolding_required = 1,
+                    plan_scaffolding_notes = 'scaffold notes'
+                WHERE id = 'WH1'
+                """
+            )
+
         status, result, _ = self.call(
             "POST",
             "/api/houses/plan",
             {"id": "WH1", "ready": False},
             cookie=assign_cookie,
         )
-        self.assertEqual(status, 403)
-        self.assertIn("only mark houses ready", result["error"])
+        self.assertEqual(status, 200, result)
         status, result, _ = self.call(
             "POST",
             "/api/houses/plan",
@@ -3561,13 +3650,41 @@ class ReadyForStartAndNotesTests(HttpBase):
             cookie=assign_cookie,
         )
         self.assertEqual(status, 403)
-        self.assertIn("only mark houses ready", result["error"])
+        self.assertIn("only change house readiness", result["error"])
         with server.connect_db() as db:
             self.assertEqual(
                 db.execute(
                     "SELECT ready_for_start FROM provided_houses WHERE id = 'WH1'"
                 ).fetchone()["ready_for_start"],
-                1,
+                0,
+            )
+            house = db.execute(
+                """
+                SELECT notes, plan_scaffolding_required, plan_scaffolding_notes
+                FROM provided_houses WHERE id = 'WH1'
+                """
+            ).fetchone()
+            self.assertEqual(
+                (house["notes"], house["plan_scaffolding_required"], house["plan_scaffolding_notes"]),
+                ("", None, ""),
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_surveys WHERE house_id = 'WH1'"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_role_assignments WHERE house_id = 'WH1' AND role = 'surveyor'"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM house_status_history WHERE house_id = 'WH1' ORDER BY id DESC LIMIT 1"
+                ).fetchone()["status"],
+                "not_started",
             )
             self.assertEqual(
                 db.execute(
@@ -3579,6 +3696,12 @@ class ReadyForStartAndNotesTests(HttpBase):
             self.call("GET", "/api/movements", cookie=assign_cookie)[0],
             403,
         )
+
+    def user_id(self, username):
+        with server.connect_db() as db:
+            return db.execute(
+                "SELECT id FROM app_users WHERE username = ?", (username,)
+            ).fetchone()["id"]
 
     def test_newly_ready_house_is_first_in_ready_queue(self):
         with server.connect_db() as db:
@@ -4012,8 +4135,56 @@ class HouseRoleAssignmentTests(HttpBase):
                 "SELECT id FROM app_users WHERE username = 'house-supervisor'"
             ).fetchone()["id"]
 
+    def test_ready_transition_clears_only_surveyor_assignments_from_previous_cycle(self):
+        self.provide("ASSIGN-STALE-SURVEYOR", "T2", "2 Elm", "Stale Assignment")
+        self.provide("ASSIGN-FRESH-SURVEYOR", "T3", "3 Elm", "Fresh Assignment")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+                VALUES ('ASSIGN-STALE-SURVEYOR', 'not_started', 'Assign Operator', '2026-02-01T10:00:00'),
+                       ('ASSIGN-FRESH-SURVEYOR', 'not_started', 'Assign Operator', '2026-02-01T10:00:00')
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('ASSIGN-STALE-SURVEYOR', 'surveyor', ?, 'Assign Operator', '2026-01-31T10:00:00'),
+                       ('ASSIGN-FRESH-SURVEYOR', 'surveyor', ?, 'Assign Operator', '2026-02-01T10:01:00')
+                """,
+                (self.surveyor_id, self.surveyor_id),
+            )
+
+        for house_id in ("ASSIGN-STALE-SURVEYOR", "ASSIGN-FRESH-SURVEYOR"):
+            status, result, _ = self.call(
+                "POST",
+                "/api/houses/plan",
+                {"id": house_id, "ready": True},
+                cookie=self.assign_cookie,
+            )
+            self.assertEqual(status, 200, result)
+
+        with server.connect_db() as db:
+            assignments = {
+                row["house_id"]: row["user_id"]
+                for row in db.execute(
+                    """
+                    SELECT house_id, user_id FROM house_role_assignments
+                    WHERE house_id IN ('ASSIGN-STALE-SURVEYOR', 'ASSIGN-FRESH-SURVEYOR')
+                      AND role = 'surveyor'
+                    """
+                )
+            }
+        self.assertNotIn("ASSIGN-STALE-SURVEYOR", assignments)
+        self.assertEqual(
+            assignments["ASSIGN-FRESH-SURVEYOR"],
+            self.surveyor_id,
+        )
+
     def test_assign_dashboard_reports_surveyor_workload(self):
         self.provide("ASSIGN-COMPLETED", "T2", "2 Elm", "Completed Owner")
+        self.provide("ASSIGN-NOT-READY", "T3", "3 Elm", "Not Ready Owner")
         self.call(
             "POST",
             "/api/users",
@@ -4040,6 +4211,17 @@ class HouseRoleAssignmentTests(HttpBase):
                 VALUES ('ASSIGN-COMPLETED', 'surveyor', ?, 'Assign Operator', '2026-10-29T10:00:00')
                 """,
                 (self.surveyor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('ASSIGN-NOT-READY', 'surveyor', ?, 'Assign Operator', '2026-10-29T10:00:00')
+                """,
+                (self.surveyor_id,),
+            )
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'ASSIGN-COMPLETED'"
             )
             db.execute(
                 """
@@ -4070,6 +4252,24 @@ class HouseRoleAssignmentTests(HttpBase):
         self.assertEqual(workload["Available Surveyor"]["pending_count"], 0)
         self.assertFalse(workload["Available Surveyor"]["busy"])
         self.assertNotIn("surveyor_workload", self.call("GET", "/api/dashboard")[1])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "ASSIGN-1", "ready": False},
+            cookie=self.cookie,
+        )
+        self.assertEqual(status, 200, result)
+        _, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.assign_cookie
+        )
+        workload = {
+            surveyor["name"]: surveyor
+            for surveyor in dashboard["surveyor_workload"]
+        }
+        self.assertEqual(workload["House Surveyor"]["pending_house_ids"], [])
+        self.assertEqual(workload["House Surveyor"]["pending_count"], 0)
+        self.assertFalse(workload["House Surveyor"]["busy"])
 
     def test_change_revisions_track_dashboard_and_user_updates_separately(self):
         before = self.call("GET", "/api/updates")[1]["revisions"]
