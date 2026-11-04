@@ -373,10 +373,10 @@ class NavigationBrowserTests(unittest.TestCase):
         filters = self.page.locator(
             "#plumbing-supervisor-house-filters [data-plumbing-supervisor-filter]"
         )
-        self.assertEqual(filters.count(), 2)
+        self.assertEqual(filters.count(), 3)
         self.assertEqual(
             filters.all_text_contents(),
-            ["All houses 3", "Plumbing complete 1"],
+            ["All houses 3", "Active houses 2", "Plumbing complete 1"],
         )
         self.assertFalse(
             self.page.locator(".plumbing-supervisor-summary").count()
@@ -393,6 +393,28 @@ class NavigationBrowserTests(unittest.TestCase):
                 "#plumbing-supervisor-workload .plumbing-workload-intro"
             ).is_visible()
         )
+        self.page.locator(
+            '#plumbing-supervisor-house-filters [data-plumbing-supervisor-filter="active"]'
+        ).click()
+        self.assertEqual(
+            self.page.locator(
+                "#plumbing-supervisor-house-list article[data-house-id]"
+            ).count(),
+            2,
+        )
+        self.assertTrue(
+            self.page.locator(
+                '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-PENDING"]'
+            ).count()
+        )
+        self.assertFalse(
+            self.page.locator(
+                '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-COMPLETE"]'
+            ).count()
+        )
+        self.page.locator(
+            '#plumbing-supervisor-house-filters [data-plumbing-supervisor-filter="all"]'
+        ).click()
         card = self.page.locator(
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
         )

@@ -2375,9 +2375,12 @@ function renderSupervisorHouses() {
     house.plumber_status === "not_done" ||
     (house.plumber_status == null &&
       Number(house.plan_plumber_required) === 1);
+  const isActiveHouse = (house) => !isPlumbingComplete(house);
   if (isPlumbingSupervisor) {
     renderPlumbingSupervisorCrew();
     $("#plumbing-supervisor-filter-all-count").textContent = houses.length;
+    $("#plumbing-supervisor-filter-active-count").textContent =
+      houses.filter(isActiveHouse).length;
     $("#plumbing-supervisor-filter-completed-count").textContent =
       houses.filter(isPlumbingComplete).length;
     $$("#plumbing-supervisor-house-filters [data-plumbing-supervisor-filter]")
@@ -2390,8 +2393,10 @@ function renderSupervisorHouses() {
       });
   }
   const rows = houses.filter((house) =>
-    (plumbingSupervisorHouseFilter !== "plumbing_complete" ||
-      isPlumbingComplete(house)) &&
+    (plumbingSupervisorHouseFilter === "all" ||
+      (plumbingSupervisorHouseFilter === "active" && isActiveHouse(house)) ||
+      (plumbingSupervisorHouseFilter === "plumbing_complete" &&
+        isPlumbingComplete(house))) &&
     [
       house.id,
       house.owner_name,
