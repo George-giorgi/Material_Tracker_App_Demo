@@ -430,8 +430,105 @@ td:first-child { color: #263b32; font-weight: 600; }
 }
 
 .plumbing-coordinator-workload { margin: 0 0 30px; }
+.plumbing-coordinator-greeting {
+  position: relative;
+  display: flex;
+  min-height: 94px;
+  align-items: center;
+  gap: 17px;
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid #d6e8dc;
+  border-radius: 18px;
+  padding: 17px 22px;
+  background:
+    radial-gradient(ellipse at 92% 10%, #d9efdf 0, transparent 34%),
+    linear-gradient(112deg, #fff 0%, #f5faf6 55%, #edf7f0 100%);
+  box-shadow: 0 8px 26px #244a3210, inset 0 1px #ffffffcc;
+}
+.plumbing-coordinator-greeting::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, #49a976, #26734d);
+  content: "";
+}
+.plumbing-coordinator-greeting-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #d3e8da;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #f6fbf7, #e1f1e6);
+  color: #287348;
+  box-shadow: 0 4px 12px #285b3914, inset 0 1px #ffffff;
+}
+.plumbing-coordinator-greeting-icon svg {
+  width: 25px;
+  height: 25px;
+}
+.plumbing-coordinator-greeting-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.plumbing-coordinator-greeting-eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: #4a8a62;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .13em;
+}
+.plumbing-coordinator-greeting h2 {
+  margin: 0;
+  color: #193b28;
+  font: 750 clamp(19px, 2.2vw, 24px) Manrope, sans-serif;
+  letter-spacing: -.035em;
+  line-height: 1.2;
+}
+.plumbing-coordinator-greeting p {
+  margin: 6px 0 0;
+  color: #62776a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.plumbing-coordinator-greeting-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  border: 1px solid #d6e8dc;
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: #ffffffa8;
+  color: #4c6a56;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.plumbing-coordinator-greeting-tag span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #42a76b;
+  box-shadow: 0 0 0 3px #42a76b20;
+}
 .plumbing-house-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 16px; }
 .plumbing-house-card { display: flex; min-width: 0; flex-direction: column; gap: 14px; border-color: #e0e9e3; border-radius: 14px; padding: 18px; background: var(--paper); box-shadow: 0 4px 16px #203a2b0a; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+body.plumbing-coordinator-mode #plumbing-house-list { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-card { display: grid; min-height: 220px; grid-template-columns: minmax(0, .88fr) minmax(0, 1.12fr); grid-template-rows: auto 1fr; align-items: start; column-gap: 22px; row-gap: 12px; padding: 20px; }
+body.plumbing-coordinator-mode #plumbing-house-list .ventilation-house-top { grid-column: 1; grid-row: 1; }
+body.plumbing-coordinator-mode #plumbing-house-list .plumbing-work-detail { grid-column: 1; grid-row: 2; }
+body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment { grid-column: 2; grid-row: 1 / span 2; align-self: stretch; align-content: center; margin: 0; border-top: 0; border-left: 1px solid #e8eee9; padding: 0 0 0 22px; }
+body.plumbing-coordinator-mode #plumbing-house-list .plumbing-assigned-supervisor,
+body.plumbing-coordinator-mode #plumbing-house-list .plumbing-completion-detail { grid-column: 2; grid-row: 1 / span 2; align-self: center; width: 100%; }
+.plumbing-assigned-supervisor { display: flex; align-items: center; gap: 11px; margin-top: auto; border: 1px solid #dcebe0; border-radius: 11px; padding: 11px 13px; background: #f4f9f5; }
+.plumbing-assigned-supervisor-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #e3f2e7; color: #26734d; font-size: 15px; font-weight: 800; }
+.plumbing-assigned-supervisor div { display: grid; gap: 3px; min-width: 0; }
+.plumbing-assigned-supervisor div span { color: #6b7b70; font-size: 10px; }
+.plumbing-assigned-supervisor strong { overflow-wrap: anywhere; color: #29483a; font-size: 12px; }
 .plumbing-house-card:hover { transform: translateY(-2px); border-color: #b7d2c0; box-shadow: 0 10px 24px #203a2b12; }
 .plumbing-house-card .ventilation-house-top { align-items: flex-start; }
 .plumbing-house-card .ventilation-house-icon { background: #edf5ef; color: #32734e; }
@@ -466,7 +563,11 @@ td:first-child { color: #263b32; font-weight: 600; }
 .plumbing-house-assignment .button { min-height: 44px; justify-self: start; padding-right: 17px; padding-left: 17px; }
 .plumbing-completion-detail { display: grid; gap: 5px; margin-top: auto; border-top: 1px solid #e8eee9; padding-top: 14px; color: #41684d; font-size: 11px; }
 .plumbing-completion-detail strong { font-size: 12px; }
-.plumbing-completion-detail time { color: #64746a; font-size: 10px; }
+.plumbing-completion-meta { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.plumbing-completion-meta > span { display: grid; gap: 3px; }
+.plumbing-completion-meta small { color: #6b7b70; font-size: 9px; }
+.plumbing-completion-meta b,
+.plumbing-completion-meta time { color: #29483a; font-size: 11px; font-weight: 700; }
 body.plumbing-coordinator-mode { background: var(--canvas); }
 body.plumbing-supervisor-mode { background: var(--canvas); }
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .sidebar { display: none; }
@@ -3792,6 +3893,7 @@ body.surveyor-mode #houses-teams-tabs { display: none; }
 body.surveyor-mode .surveyor-dashboard-summary,
 body.ventilation-mode .ventilation-dashboard-summary,
 body.plumbing-coordinator-mode .ventilation-dashboard-summary { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin: 0 0 30px; border: 1px solid #dfeae3; border-radius: 14px; padding: 20px 24px; background: linear-gradient(110deg, #fff 0%, #f5faf6 100%); box-shadow: 0 8px 26px #223a2d0a; }
+body.plumbing-supervisor-mode .overview-dashboard-summary .surveyor-dashboard-stats { display: none; }
 body.ventilation-mode { background: #f4f7f5; }
 body.ventilation-mode .sidebar { display: none; }
 body.ventilation-mode .main-content { width: min(100%, 1240px); margin: 0 auto; padding: 0 34px 48px; }
@@ -4008,6 +4110,13 @@ body.surveyor-mode :is(button, input, a):focus-visible { outline: 3px solid #77a
   body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-workload-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-house-search { width: auto; flex: 1; }
   body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-house-list { grid-template-columns: minmax(0, 1fr); }
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-card { min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 14px; padding: 16px; }
+  body.plumbing-coordinator-mode #plumbing-house-list .ventilation-house-top,
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-work-detail,
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment,
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-assigned-supervisor,
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-completion-detail { grid-column: 1; grid-row: auto; }
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment { border-top: 1px solid #e8eee9; border-left: 0; padding: 14px 0 0; }
   body.surveyor-mode .surveyor-dashboard-stats { width: 100%; }
   body.supervisor-mode .surveyor-dashboard-stats { width: 100%; }
   body.ventilation-mode .surveyor-dashboard-stats { width: 100%; }
@@ -4120,6 +4229,11 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-surveyor-detail
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-work-detail > strong { color: #c4e3cc; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-work-detail p { color: #b5c8bb; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-assignment { border-top-color: var(--line); }
+html[data-theme="dark"] body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment { border-left-color: var(--line); }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-assigned-supervisor { border-color: #354c3e; background: #1b2c23; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-assigned-supervisor-icon { background: #263d30; color: #a9dfb9; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-assigned-supervisor div span { color: #a4b3ad; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-assigned-supervisor strong { color: #e5eee8; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-supervisor-picker legend { border-bottom-color: #35463f; color: #d3e2d9; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-supervisor-option { border-color: #3a4b42; background: #1b2823; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-supervisor-option:hover { border-color: #568369; background: #202f27; }
@@ -4131,7 +4245,9 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-supervisor-chec
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-supervisor-option.selected .plumbing-supervisor-check { background: #2b5139; color: #b7e5c4; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-supervisor-empty { border-color: #3b5045; color: #a4b3ad; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-completion-detail { border-top-color: var(--line); color: #b8e4c3; }
-html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-completion-detail time { color: #a4b3ad; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-completion-meta small { color: #a4b3ad; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-completion-meta b,
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-completion-meta time { color: #d3e2d9; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-assignment .button:disabled { border-color: #35463f; background: #29352f; color: #9aaba1; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-completion { background: #3b3020; color: #f0c77e; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-completion-mark { border-color: #765d31; background: #2a241b; color: #f0c77e; }
@@ -4165,6 +4281,42 @@ html[data-theme="dark"] body.plumbing-supervisor-mode .plumbing-house-card:hover
 html[data-theme="dark"] body.plumbing-supervisor-mode .plumbing-house-card .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty { border-color: #476253; background: linear-gradient(145deg, #1d2b26, #192622); color: var(--ink); }
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty-icon { background: #263d30; color: #a9e3bb; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting {
+  border-color: #3a5145;
+  background:
+    radial-gradient(ellipse at 92% 10%, #244431 0, transparent 38%),
+    linear-gradient(112deg, #1b2923 0%, #18231e 100%);
+  box-shadow: 0 8px 26px #0003, inset 0 1px #ffffff0a;
+}
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting::before { background: #62c486; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting-icon {
+  border-color: #3b5d47;
+  background: linear-gradient(145deg, #294735, #20382b);
+  color: #b6edc7;
+  box-shadow: 0 4px 12px #0003, inset 0 1px #ffffff10;
+}
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting-eyebrow { color: #9dd5ae; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting h2 { color: #f0f7f2; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting p { color: #b5c8bb; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting-tag { border-color: #3b5648; background: #ffffff08; color: #c1d5c7; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting-tag span { background: #68ce8c; box-shadow: 0 0 0 3px #68ce8c24; }
+@media (max-width: 560px) {
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting {
+    min-height: 82px;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting-icon {
+    width: 42px;
+    height: 42px;
+  }
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting h2 {
+    font-size: 18px;
+  }
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-greeting-tag {
+    display: none;
+  }
+}
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty strong,
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-workload-heading h2 { color: #eaf4ef; }
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty p,
@@ -5675,6 +5827,45 @@ body.plumbing-supervisor-mode #plumbing-supervisor-house-list .house-status-stac
   justify-content: flex-end;
   gap: 7px;
 }
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #b8d9c2;
+  border-radius: 11px;
+  padding: 8px 13px;
+  background: #edf7f0;
+  color: #21633b;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #81b996;
+  background: #e2f2e7;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle:focus-visible {
+  outline: 3px solid #4a9b7044;
+  outline-offset: 2px;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle:disabled {
+  cursor: wait;
+  opacity: .7;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle.is-complete {
+  border-color: #d7e3da;
+  background: transparent;
+  color: #52665a;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle.is-complete:hover:not(:disabled) {
+  border-color: #d7b1a9;
+  background: #fbf3f1;
+  color: #8a4439;
+}
 body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-assignment {
   gap: 12px;
   border-color: var(--line);
@@ -5787,6 +5978,28 @@ html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house
 }
 html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .house-meta p {
   color: #b4c5ba;
+}
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle {
+  border-color: #3d7754;
+  background: #1d3828;
+  color: #b8e4c3;
+}
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle:hover:not(:disabled) {
+  border-color: #65a87a;
+  background: #254832;
+}
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle:focus-visible {
+  outline-color: #79c99588;
+}
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle.is-complete {
+  border-color: #40564a;
+  background: #202c29;
+  color: #bfd0c5;
+}
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-completion-toggle.is-complete:hover:not(:disabled) {
+  border-color: #76554e;
+  background: #352723;
+  color: #efb9ae;
 }
 html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-assignment {
   border-color: #3b5045;

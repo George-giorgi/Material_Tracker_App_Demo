@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#142237">
     <title>BRUSNA Material Tracker</title>
-    <link rel="stylesheet" href="/app.css?v=20261104-edge-pin-toggle">
+    <link rel="stylesheet" href="/app.css?v=20261104-plumbing-card-layout">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -144,9 +144,16 @@
             </div>
           </section>
           <section id="plumbing-supervisor-workload" class="plumbing-coordinator-workload hidden" aria-label="Plumbing team supervisor work">
+            <div class="plumbing-coordinator-greeting">
+              <span class="plumbing-coordinator-greeting-icon" aria-hidden="true">⌂</span>
+              <div>
+                <h2 id="plumbing-supervisor-greeting-title">Welcome</h2>
+                <p>Your Plumbing crew and assigned house progress.</p>
+              </div>
+            </div>
             <div class="ventilation-workload-heading">
               <div>
-                <p class="plumbing-workload-intro">Find an assigned house, check its plumbing progress, and update delivery and Teamlead details.</p>
+                <p class="plumbing-workload-intro">Find assigned plumbing work, check its progress, and manage delivery details for active houses.</p>
               </div>
               <div class="ventilation-workload-actions">
                 <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="plumbing-supervisor-house-search" type="search" placeholder="Search your plumbing houses" aria-label="Search assigned plumbing houses"></label>
@@ -202,6 +209,20 @@
             <div id="ventilation-filter-empty" class="ventilation-house-empty hidden"><strong>No houses in this group</strong><p>Choose another filter to see your assigned ventilation work.</p></div>
           </section>
           <section id="plumbing-coordinator-workload" class="plumbing-coordinator-workload hidden" aria-label="Plumbing work">
+            <div class="plumbing-coordinator-greeting">
+              <span class="plumbing-coordinator-greeting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M4 10.5 12 4l8 6.5V20h-6v-5H10v5H4v-9.5Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M8 11h.01M16 11h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <div class="plumbing-coordinator-greeting-copy">
+                <span class="plumbing-coordinator-greeting-eyebrow">PLUMBING COORDINATOR</span>
+                <h2 id="plumbing-coordinator-greeting-title">Welcome</h2>
+                <p>Your plumbing workload, all in one place.</p>
+              </div>
+              <span class="plumbing-coordinator-greeting-tag"><span aria-hidden="true"></span> WORKSPACE</span>
+            </div>
             <div class="ventilation-workload-heading">
               <div>
                 <p class="plumbing-workload-intro">Choose a Plumbing Supervisor for every house where the survey identifies plumbing work.</p>
@@ -973,6 +994,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261104-edge-pin-toggle" defer></script>
+    <script src="/app.js?v=20261104-plumbing-card-layout" defer></script>
   </body>
 </html>

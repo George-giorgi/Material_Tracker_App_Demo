@@ -3950,6 +3950,7 @@ class LegacyRouteHandlers:
                            p.area_m2, p.perimeter_m, p.latitude, p.longitude,
                            COALESCE(h.stage, 1) AS stage, p.notes, p.source,
                            p.plan_scaffolding, p.plan_esb, p.plan_plumber,
+                           COALESCE(hc.plumber_status, p.plan_plumber) AS plumber_status,
                            p.plan_scaffolding_required, p.plan_scaffolding_notes,
                            p.plan_esb_required, p.plan_esb_notes,
                            p.plan_plumber_required, p.plan_plumber_notes,
@@ -3996,6 +3997,7 @@ class LegacyRouteHandlers:
                                 ELSE 'active' END AS status
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
+                    LEFT JOIN house_checklists hc ON hc.house_id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
                     LEFT JOIN house_role_assignments surveyor_assignment
                       ON surveyor_assignment.house_id = p.id
@@ -4831,8 +4833,22 @@ class LegacyRouteHandlers:
                     }
                     plumbing_team_members = {}
                     is_plumbing_supervisor = (
-                        user["supervisor_specialty"].strip().casefold()
+                        (user["supervisor_specialty"] or "").strip().casefold()
                         == "plumbing"
+                        or db.execute(
+                            """
+                            SELECT 1
+                            FROM user_departments memberships
+                            JOIN departments
+                              ON departments.id = memberships.department_id
+                            WHERE memberships.user_id = ?
+                              AND departments.name = 'Plumbing' COLLATE NOCASE
+                              AND departments.is_active = 1
+                            LIMIT 1
+                            """,
+                            (user["id"],),
+                        ).fetchone()
+                        is not None
                     )
                     if is_plumbing_supervisor and managed_teamlead_ids:
                         teamlead_placeholders = ",".join(
@@ -4875,10 +4891,70 @@ class LegacyRouteHandlers:
                     for house in dashboard["house_list"]
                     if house["id"] in assigned_house_ids
                 ]
+                if is_plumbing_supervisor:
+                    with connect_db() as plumbing_db:
+                        assigned_before_activation = plumbing_db.execute(
+                            """
+                            SELECT p.id, p.postcode, p.address, p.owner_name,
+                                   COALESCE(p.plan_plumber_notes, '') AS plumbing_notes,
+                                   COALESCE(
+                                       hc.plumber_status, p.plan_plumber, 'not_done'
+                                   ) AS plumber_status,
+                                   COALESCE(surveyor.display_name, '') AS surveyor_name,
+                                   CASE WHEN p.ready_for_start = 1 THEN 'ready'
+                                        ELSE 'not_started' END AS status
+                            FROM house_role_assignments assignment
+                            JOIN provided_houses p ON p.id = assignment.house_id
+                            LEFT JOIN houses h ON h.id = p.id
+                            LEFT JOIN house_checklists hc ON hc.house_id = p.id
+                            LEFT JOIN house_role_assignments survey_assignment
+                              ON survey_assignment.house_id = p.id
+                             AND survey_assignment.role = 'surveyor'
+                            LEFT JOIN app_users surveyor
+                              ON surveyor.id = survey_assignment.user_id
+                            WHERE assignment.role = 'supervisor'
+                              AND assignment.user_id = ?
+                              AND h.id IS NULL
+                              AND p.plan_plumber_required = 1
+                              AND COALESCE(
+                                    hc.plumber_status, p.plan_plumber, 'not_done'
+                                  ) != 'not_necessary'
+                            ORDER BY p.id COLLATE NOCASE
+                            """,
+                            (user["id"],),
+                        ).fetchall()
+                    existing_house_ids = {
+                        house["id"] for house in dashboard["house_list"]
+                    }
+                    for row in assigned_before_activation:
+                        if row["id"] in existing_house_ids:
+                            continue
+                        dashboard["house_list"].append(
+                            {
+                                "id": row["id"],
+                                "postcode": row["postcode"],
+                                "address": row["address"],
+                                "owner_name": row["owner_name"],
+                                "is_finished": False,
+                                "delivery_person": "",
+                                "delivery_team": "",
+                                "plumber_status": row["plumber_status"],
+                                "plan_plumber_required": 1,
+                                "plumbing_notes": row["plumbing_notes"],
+                                "surveyor_name": row["surveyor_name"],
+                                "status": row["status"],
+                                "plumbing_assignment_pending_activation": True,
+                            }
+                        )
                 active_houses = sum(
-                    not house["is_finished"] for house in dashboard["house_list"]
+                    not house["is_finished"]
+                    and not house.get("plumbing_assignment_pending_activation")
+                    for house in dashboard["house_list"]
                 )
-                closed_houses = len(dashboard["house_list"]) - active_houses
+                closed_houses = sum(
+                    house["is_finished"]
+                    for house in dashboard["house_list"]
+                )
                 dashboard["houses"] = active_houses
                 dashboard["house_summary"] = {
                     "provided": len(dashboard["house_list"]),
@@ -4986,16 +5062,16 @@ class LegacyRouteHandlers:
                         """
                         SELECT plan_scaffolding AS scaffolding_status,
                                plan_esb AS esb_unclipped,
-                               plan_plumber AS plumber_status
-                        FROM provided_houses WHERE id = ?
+                               COALESCE(hc.plumber_status, p.plan_plumber) AS plumber_status
+                        FROM provided_houses p
+                        LEFT JOIN house_checklists hc ON hc.house_id = p.id
+                        WHERE p.id = ?
                         """,
                         (house_id,),
                     ).fetchone()
                     if checklist is None:
                         self._send_json(404, {"error": "House was not found."})
                         return
-                    if checklist["scaffolding_status"] is None:
-                        checklist = None
             self._send_json(
                 200,
                 {
@@ -6596,6 +6672,7 @@ class LegacyRouteHandlers:
             elif path not in {
                 "/api/movements",
                 "/api/movements/batch",
+                "/api/plumbing-status",
                 "/api/house-checklist",
                 "/api/house-work-plan",
                 "/api/house-work-plan/complete",
@@ -7232,6 +7309,104 @@ class LegacyRouteHandlers:
                         201,
                         {"id": movement_ids[0], "delivery_number": delivery_number},
                     )
+            elif path == "/api/plumbing-status":
+                payload = self._json_body()
+                if (
+                    not isinstance(payload, dict)
+                    or set(payload) != {"house_id", "plumber_status"}
+                ):
+                    raise ApiError(
+                        400, "House ID and plumbing status are required."
+                    )
+                if (
+                    not _has_access_profile(user, "supervisor")
+                    or not isinstance(user["supervisor_specialty"], str)
+                    or user["supervisor_specialty"].strip().casefold()
+                    != "plumbing"
+                ):
+                    raise ApiError(
+                        403,
+                        "Only Plumbing Supervisors can update assigned plumbing work.",
+                    )
+                house_id = payload["house_id"]
+                plumber_status = payload["plumber_status"]
+                if not isinstance(house_id, str) or not house_id.strip():
+                    raise ApiError(400, "Enter a valid house ID.")
+                house_id = house_id.strip()
+                if len(house_id) > 120:
+                    raise ApiError(400, "Enter a valid house ID.")
+                if (
+                    not isinstance(plumber_status, str)
+                    or plumber_status not in {"done", "not_done"}
+                ):
+                    raise ApiError(
+                        400, "Plumbing status must be complete or outstanding."
+                    )
+                with connect_db() as db:
+                    with db:
+                        assigned = db.execute(
+                            """
+                            SELECT 1
+                            FROM provided_houses provided
+                            JOIN house_role_assignments assignment
+                              ON assignment.house_id = provided.id
+                             AND assignment.role = 'supervisor'
+                            WHERE provided.id = ?
+                              AND assignment.user_id = ?
+                              AND provided.plan_plumber_required = 1
+                            """,
+                            (house_id, user["id"]),
+                        ).fetchone()
+                        if not assigned:
+                            raise ApiError(
+                                404,
+                                "That plumbing house is not assigned to you.",
+                            )
+                        db.execute(
+                            """
+                            INSERT OR IGNORE INTO house_checklists (house_id)
+                            VALUES (?)
+                            """,
+                            (house_id,),
+                        )
+                        db.execute(
+                            """
+                            UPDATE house_checklists
+                            SET plumber_status = ?
+                            WHERE house_id = ?
+                            """,
+                            (plumber_status, house_id),
+                        )
+                        completed_at = (
+                            datetime.now().isoformat(timespec="seconds")
+                            if plumber_status == "done"
+                            else ""
+                        )
+                        db.execute(
+                            """
+                            UPDATE provided_houses
+                            SET plan_plumber_done_by = ?,
+                                plan_plumber_done_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                user["display_name"] if completed_at else "",
+                                completed_at,
+                                house_id,
+                            ),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "plumber_status": plumber_status,
+                        "plumber_done_by": (
+                            user["display_name"] if plumber_status == "done" else ""
+                        ),
+                        "plumber_done_at": completed_at,
+                        "saved": True,
+                    },
+                )
             elif path == "/api/house-checklist":
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -7276,11 +7451,19 @@ class LegacyRouteHandlers:
                                 )
                             planned = db.execute(
                                 "UPDATE provided_houses SET plan_scaffolding = ?, "
-                                "plan_esb = ?, plan_plumber = ? WHERE id = ?",
+                                "plan_esb = ?, plan_plumber = ?, "
+                                "plan_plumber_done_by = ?, plan_plumber_done_at = ? "
+                                "WHERE id = ?",
                                 (
                                     supplied_statuses["scaffolding_status"],
                                     supplied_statuses["esb_unclipped"],
                                     supplied_statuses["plumber_status"],
+                                    user["display_name"]
+                                    if supplied_statuses["plumber_status"] == "done"
+                                    else "",
+                                    datetime.now().isoformat(timespec="seconds")
+                                    if supplied_statuses["plumber_status"] == "done"
+                                    else "",
                                     house_id,
                                 ),
                             )
@@ -7296,6 +7479,25 @@ class LegacyRouteHandlers:
                             db.execute(
                                 f"UPDATE house_checklists SET {name} = ? WHERE house_id = ?",
                                 (value, house_id),
+                            )
+                        if "plumber_status" in supplied_statuses:
+                            completed_at = (
+                                datetime.now().isoformat(timespec="seconds")
+                                if supplied_statuses["plumber_status"] == "done"
+                                else ""
+                            )
+                            db.execute(
+                                """
+                                UPDATE provided_houses
+                                SET plan_plumber_done_by = ?,
+                                    plan_plumber_done_at = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    user["display_name"] if completed_at else "",
+                                    completed_at,
+                                    house_id,
+                                ),
                             )
                 self._send_json(200, {"house_id": house_id, "saved": True})
             elif path == "/api/house-work-plan":

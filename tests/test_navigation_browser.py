@@ -223,6 +223,14 @@ class NavigationBrowserTests(unittest.TestCase):
                         'government', 1)
                 """
             )
+            db.execute(
+                """
+                INSERT INTO provided_houses
+                    (id, owner_name, source, plan_plumber_required)
+                VALUES ('PLUMBING-SUPERVISOR-PENDING', 'Pending Plumbing House',
+                        'government', 1)
+                """
+            )
             server._upsert_house(
                 db,
                 "PLUMBING-SUPERVISOR-COMPLETE",
@@ -248,6 +256,15 @@ class NavigationBrowserTests(unittest.TestCase):
                 INSERT INTO house_role_assignments
                     (house_id, role, user_id, assigned_by, assigned_at)
                 VALUES ('PLUMBING-SUPERVISOR-COMPLETE', 'supervisor', ?,
+                        'Dashboard Test', '2026-11-04T09:30:00')
+                """,
+                (supervisor_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('PLUMBING-SUPERVISOR-PENDING', 'supervisor', ?,
                         'Dashboard Test', '2026-11-04T09:30:00')
                 """,
                 (supervisor_id,),
@@ -324,12 +341,16 @@ class NavigationBrowserTests(unittest.TestCase):
             "My plumbing dashboard",
             self.page.locator("body").get_attribute("class"),
         )
+        self.assertTrue(self.page.locator("#overview-work-summary").is_hidden())
+        self.assertTrue(
+            self.page.locator("#plumbing-supervisor-workload .plumbing-coordinator-greeting").is_visible()
+        )
         self.assertTrue(
             self.page.locator("#plumbing-supervisor-workload").is_visible()
         )
         self.assertIn(
-            "Welcome back, Plumbing Team Supervisor.",
-            self.page.locator("#overview-subtitle").inner_text(),
+            "Welcome back, Plumbing Team Supervisor",
+            self.page.locator("#plumbing-supervisor-greeting-title").inner_text(),
         )
         crew = self.page.locator("#plumbing-supervisor-crew")
         self.assertTrue(crew.is_visible())
@@ -355,7 +376,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(filters.count(), 2)
         self.assertEqual(
             filters.all_text_contents(),
-            ["All houses 2", "Plumbing complete 1"],
+            ["All houses 3", "Plumbing complete 1"],
         )
         self.assertFalse(
             self.page.locator(".plumbing-supervisor-summary").count()
@@ -376,6 +397,110 @@ class NavigationBrowserTests(unittest.TestCase):
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
         )
         card.wait_for()
+        pending_card = self.page.locator(
+            '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-PENDING"]'
+        )
+        self.assertFalse(
+            pending_card.get_by_text("Awaiting activation", exact=True).count()
+        )
+        self.assertTrue(
+            pending_card.get_by_text("Plumbing outstanding", exact=True).is_visible()
+        )
+        pending_completion = pending_card.locator(".plumbing-completion-toggle")
+        self.assertEqual(
+            pending_completion.get_attribute("aria-label"),
+            "Mark plumbing complete for PLUMBING-SUPERVISOR-PENDING",
+        )
+        with self.page.expect_response("**/api/plumbing-status") as pending_response:
+            pending_completion.click()
+        self.assertEqual(
+            pending_response.value.status, 200, pending_response.value.text()
+        )
+        self.page.get_by_text(
+            "Plumbing marked complete for PLUMBING-SUPERVISOR-PENDING.",
+            exact=True,
+        ).wait_for()
+        pending_card = self.page.locator(
+            '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-PENDING"]'
+        )
+        self.assertTrue(
+            pending_card.get_by_text("Plumbing complete", exact=True).is_visible()
+        )
+        with server.connect_db() as db:
+            pending_status = db.execute(
+                """
+                SELECT plumber_status FROM house_checklists
+                WHERE house_id = 'PLUMBING-SUPERVISOR-PENDING'
+                """
+            ).fetchone()
+        self.assertEqual(pending_status["plumber_status"], "done")
+        completion_button = card.locator(".plumbing-completion-toggle")
+        self.assertEqual(
+            completion_button.get_attribute("aria-label"),
+            "Mark plumbing complete for PLUMBING-SUPERVISOR-DASHBOARD",
+        )
+        with self.page.expect_response("**/api/plumbing-status") as response_info:
+            completion_button.click()
+        self.assertEqual(response_info.value.status, 200, response_info.value.text())
+        self.page.get_by_text(
+            "Plumbing marked complete for PLUMBING-SUPERVISOR-DASHBOARD.",
+            exact=True,
+        ).wait_for()
+        card = self.page.locator(
+            '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
+        )
+        self.assertTrue(
+            card.get_by_text("Plumbing complete", exact=True).is_visible()
+        )
+        admin_login = self.page.request.post(
+            f"{self.base_url}/api/auth/login",
+            data={"username": "navigation-test-admin", "pin": "123456"},
+        )
+        self.assertEqual(admin_login.status, 200, admin_login.text())
+        admin_cookie = admin_login.headers["set-cookie"].split(";", 1)[0]
+        shared_dashboard = self.page.request.get(
+            f"{self.base_url}/api/dashboard",
+            headers={"Cookie": admin_cookie},
+        ).json()
+        shared_house = next(
+            house for house in shared_dashboard["house_list"]
+            if house["id"] == "PLUMBING-SUPERVISOR-DASHBOARD"
+        )
+        self.assertEqual(shared_house["plumber_status"], "done")
+        denied_update = self.page.request.post(
+            f"{self.base_url}/api/plumbing-status",
+            data={
+                "house_id": "PLUMBING-SUPERVISOR-DASHBOARD",
+                "plumber_status": "not_done",
+            },
+            headers={"Cookie": admin_cookie},
+        )
+        self.assertEqual(denied_update.status, 403, denied_update.text())
+        self.page.context.add_cookies(
+            [{"name": name, "value": value, "url": self.base_url}]
+        )
+        completion_button = card.locator(".plumbing-completion-toggle")
+        self.assertEqual(
+            completion_button.get_attribute("aria-label"),
+            "Reopen plumbing work for PLUMBING-SUPERVISOR-DASHBOARD",
+        )
+        completion_button.click()
+        self.page.get_by_text(
+            "Plumbing work reopened for PLUMBING-SUPERVISOR-DASHBOARD.",
+            exact=True,
+        ).wait_for()
+        shared_dashboard = self.page.request.get(
+            f"{self.base_url}/api/dashboard",
+            headers={"Cookie": admin_cookie},
+        ).json()
+        shared_house = next(
+            house for house in shared_dashboard["house_list"]
+            if house["id"] == "PLUMBING-SUPERVISOR-DASHBOARD"
+        )
+        self.assertEqual(shared_house["plumber_status"], "not_done")
+        card = self.page.locator(
+            '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
+        )
         self.assertTrue(card.locator(".supervisor-house-assignment").is_visible())
         self.assertEqual(
             self.page.locator("#plumbing-supervisor-workload .supervisor-shared-seai").count(),
@@ -395,6 +520,21 @@ class NavigationBrowserTests(unittest.TestCase):
                 "element => getComputedStyle(element).color"
             ),
             "rgb(239, 247, 241)",
+        )
+        greeting = self.page.locator(
+            "#plumbing-supervisor-workload .plumbing-coordinator-greeting"
+        )
+        self.assertEqual(
+            greeting.locator("h2").evaluate(
+                "element => getComputedStyle(element).color"
+            ),
+            "rgb(240, 247, 242)",
+        )
+        self.assertEqual(
+            greeting.locator("p").evaluate(
+                "element => getComputedStyle(element).color"
+            ),
+            "rgb(181, 200, 187)",
         )
         self.assertEqual(
             crew.locator(".plumbing-supervisor-crew-card").evaluate(
@@ -428,7 +568,7 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator(
                 "#plumbing-supervisor-house-list article[data-house-id]"
             ).count(),
-            1,
+            2,
         )
         self.page.locator(
             '#plumbing-supervisor-house-filters [data-plumbing-supervisor-filter="all"]'
@@ -437,7 +577,7 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator(
                 "#plumbing-supervisor-house-list article[data-house-id]"
             ).count(),
-            2,
+            3,
         )
         card = self.page.locator(
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
@@ -476,7 +616,6 @@ class NavigationBrowserTests(unittest.TestCase):
                 "display_name": "Plumbing Team Supervisor",
                 "pin": "456789",
                 "role": "supervisor",
-                "supervisor_specialty": "Plumbing",
             },
         )
         self.assertEqual(supervisor_created.status, 201, supervisor_created.text())
@@ -491,6 +630,15 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(surveyor_created.status, 201, surveyor_created.text())
         with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO user_departments
+                    (user_id, department_id, is_primary)
+                SELECT ?, id, 0 FROM departments
+                WHERE name = 'Plumbing' COLLATE NOCASE
+                """,
+                (supervisor_created.json()["user"]["id"],),
+            )
             db.execute(
                 """
                 INSERT INTO provided_houses
@@ -539,9 +687,32 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertTrue(self.page.locator(".main-nav.workspace-nav").is_hidden())
         self.assertTrue(self.page.locator("#plumbing-coordinator-workload").is_visible())
-        self.assertEqual(
-            self.page.locator("#plumbing-coordinator-workload h2").count(),
-            0,
+        greeting_title = self.page.locator(
+            "#plumbing-coordinator-greeting-title"
+        ).inner_text()
+        self.assertTrue(
+            greeting_title.startswith(
+                ("Good morning, ", "Good afternoon, ", "Good evening, ")
+            ),
+            greeting_title,
+        )
+        self.assertTrue(greeting_title.endswith("Plumbing Dashboard"))
+        self.assertGreaterEqual(
+            float(self.page.locator(
+                "#plumbing-coordinator-workload .plumbing-coordinator-greeting h2"
+            ).evaluate("element => parseFloat(getComputedStyle(element).fontSize)")),
+            19,
+        )
+        self.assertTrue(
+            self.page.locator(".plumbing-coordinator-greeting-icon svg").is_visible()
+        )
+        self.assertTrue(
+            self.page.locator(".plumbing-coordinator-greeting-tag").is_visible()
+        )
+        self.assertTrue(
+            self.page.locator(
+                "#plumbing-coordinator-workload .plumbing-coordinator-greeting"
+            ).is_visible()
         )
         self.assertEqual(
             self.page.locator("#plumbing-coordinator-count").count(),
@@ -579,6 +750,25 @@ class NavigationBrowserTests(unittest.TestCase):
                 '#plumbing-house-list input[type="radio"][name="supervisor_user_id"]'
             ).is_enabled()
         )
+        card = self.page.locator("#plumbing-house-list .plumbing-house-card")
+        self.assertEqual(card.count(), 1)
+        layout = card.evaluate(
+            """card => {
+              const details = card.querySelector('.plumbing-work-detail').getBoundingClientRect();
+              const assignment = card.querySelector('.plumbing-house-assignment').getBoundingClientRect();
+              return {
+                columns: getComputedStyle(card.parentElement).gridTemplateColumns.split(' ').length,
+                detailLeft: details.left,
+                assignmentLeft: assignment.left,
+                assignmentTop: assignment.top
+              };
+            }"""
+        )
+        self.assertEqual(layout["columns"], 1)
+        self.assertGreater(layout["assignmentLeft"], layout["detailLeft"])
+        self.assertLessEqual(layout["assignmentTop"], card.locator(".ventilation-house-top").evaluate(
+            "element => element.getBoundingClientRect().top + 1"
+        ))
         self.assertEqual(
             self.page.locator(
                 '#plumbing-house-list select[name="supervisor_user_id"]'
@@ -602,20 +792,6 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertTrue(assignment_button.is_enabled())
         self.assertEqual(assignment_button.inner_text(), "Assign selected supervisor")
-        assignment_button.click()
-        self.page.get_by_text(
-            "PLUMBING-DASHBOARD assigned to Plumbing Team Supervisor.",
-            exact=True,
-        ).wait_for()
-        self.assertEqual(
-            self.page.locator(".plumbing-job-status").inner_text(),
-            "Assigned",
-        )
-        dashboard = self.page.request.get(f"{self.base_url}/api/dashboard").json()
-        self.assertEqual(
-            dashboard["plumbing_houses"][0]["supervisor_user_id"],
-            supervisor_id,
-        )
         self.page.locator("#theme-toggle").click()
         self.assertEqual(
             self.page.locator("html").get_attribute("data-theme"),
@@ -637,6 +813,34 @@ class NavigationBrowserTests(unittest.TestCase):
             ),
             "rgb(32, 53, 42)",
         )
+        assignment_button.click()
+        self.page.get_by_text(
+            "PLUMBING-DASHBOARD assigned to Plumbing Team Supervisor.",
+            exact=True,
+        ).wait_for()
+        self.assertEqual(
+            self.page.locator(".plumbing-job-status").inner_text(),
+            "Assigned",
+        )
+        dashboard = self.page.request.get(f"{self.base_url}/api/dashboard").json()
+        self.assertEqual(
+            dashboard["plumbing_houses"][0]["supervisor_user_id"],
+            supervisor_id,
+        )
+        assigned_card = self.page.locator("#plumbing-house-list .plumbing-house-card")
+        self.assertEqual(assigned_card.locator(".plumbing-house-assignment").count(), 0)
+        self.assertEqual(
+            assigned_card.locator(".plumbing-assigned-supervisor strong").inner_text(),
+            "Plumbing Team Supervisor",
+        )
+        self.assertNotIn("Save supervisor", assigned_card.inner_text())
+        self.page.locator('[data-plumbing-filter="assigned"]').click()
+        self.assertEqual(assigned_card.count(), 1)
+        self.assertEqual(
+            assigned_card.locator(".plumbing-house-assignment").count(),
+            0,
+        )
+        self.page.locator('[data-plumbing-filter="all"]').click()
 
         self.page.locator("#plumbing-house-search").fill("no matching house")
         self.assertEqual(
@@ -683,7 +887,22 @@ class NavigationBrowserTests(unittest.TestCase):
             "Completed",
         )
         self.assertTrue(
-            self.page.get_by_text("Completed by Plumber Example", exact=True).is_visible()
+            self.page.get_by_text("Completed by", exact=True).is_visible()
+        )
+        self.assertTrue(
+            self.page.get_by_text("Plumber Example", exact=True).is_visible()
+        )
+        self.assertTrue(
+            self.page.get_by_text("Completed on", exact=True).is_visible()
+        )
+        self.assertTrue(
+            self.page.locator(".plumbing-completion-meta time").is_visible()
+        )
+        self.assertEqual(
+            self.page.locator(".plumbing-completion-meta time").get_attribute(
+                "datetime"
+            ),
+            "2026-11-04T11:00:00",
         )
         self.assertTrue(
             self.page.get_by_text("Surveyor Example", exact=True).is_visible()
@@ -706,6 +925,12 @@ class NavigationBrowserTests(unittest.TestCase):
             "rgb(27, 44, 35)",
         )
         self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertEqual(
+            self.page.locator("#plumbing-house-list .plumbing-house-card").evaluate(
+                "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            1,
+        )
         self.assertLessEqual(
             self.page.locator("#plumbing-coordinator-workload").evaluate(
                 "element => element.scrollWidth"
@@ -715,6 +940,45 @@ class NavigationBrowserTests(unittest.TestCase):
             ),
         )
         self.page.locator("#refresh-plumbing-houses").click()
+        self.assertEqual(self.browser_errors, [])
+        login = self.page.request.post(
+            f"{self.base_url}/api/auth/login",
+            data={"username": "plumbing-team-supervisor", "pin": "456789"},
+        )
+        self.assertEqual(login.status, 200, login.text())
+        cookie = login.headers["set-cookie"].split(";", 1)[0]
+        name, value = cookie.split("=", 1)
+        self.page.context.add_cookies(
+            [{"name": name, "value": value, "url": self.base_url}]
+        )
+        self.page.goto(self.base_url, wait_until="domcontentloaded")
+        self.page.wait_for_function(
+            "document.querySelector('#account-name').textContent === "
+            "'Plumbing Team Supervisor'"
+        )
+        supervisor_dashboard_response = self.page.request.get(
+            f"{self.base_url}/api/dashboard"
+        )
+        self.assertEqual(
+            supervisor_dashboard_response.status,
+            200,
+            supervisor_dashboard_response.text(),
+        )
+        supervisor_dashboard = supervisor_dashboard_response.json()
+        self.assertIn(
+            "PLUMBING-DASHBOARD",
+            [house["id"] for house in supervisor_dashboard["house_list"]],
+        )
+        assigned_house = self.page.locator(
+            '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-DASHBOARD"]'
+        )
+        assigned_house.wait_for()
+        self.assertFalse(assigned_house.locator(".status-pill").count())
+        self.assertFalse(assigned_house.locator(".supervisor-assignment-note").count())
+        self.assertFalse(
+            assigned_house.get_by_text("Requested by Surveyor Example", exact=True).count()
+        )
+        self.assertFalse(assigned_house.locator(".supervisor-house-assignment").count())
         self.assertEqual(self.browser_errors, [])
 
     def test_ventilation_department_uses_surveyor_style_dashboard_without_survey_controls(self):
@@ -1567,8 +1831,16 @@ class NavigationBrowserTests(unittest.TestCase):
         with server.connect_db() as db:
             db.execute(
                 """
-                INSERT INTO provided_houses(id, owner_name, ready_for_start)
-                VALUES ('READY-ASSIGN', 'Ready Owner', 1)
+                INSERT INTO provided_houses(
+                    id, owner_name, ready_for_start, plan_plumber_required
+                )
+                VALUES ('READY-ASSIGN', 'Ready Owner', 1, 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists(house_id, plumber_status)
+                VALUES ('READY-ASSIGN', 'done')
                 """
             )
             db.execute(
@@ -1930,6 +2202,20 @@ class NavigationBrowserTests(unittest.TestCase):
             ).evaluate("(element) => getComputedStyle(element).borderLeftColor"),
         )
         self.page.get_by_role("heading", name="READY-ASSIGN").wait_for()
+        ready_plumbing_row = self.page.locator(
+            "#houses-list article[data-house-id='READY-ASSIGN'] .work-plan-row"
+        ).filter(has_text="Plumber work")
+        self.assertEqual(
+            ready_plumbing_row.locator(".work-plan-badge").inner_text(), "Done"
+        )
+        self.assertFalse(
+            ready_plumbing_row.locator(".work-plan-done-by").count()
+        )
+        shared_checklist = self.page.request.get(
+            f"{self.base_url}/api/house-checklist/READY-ASSIGN"
+        )
+        self.assertEqual(shared_checklist.status, 200, shared_checklist.text())
+        self.assertEqual(shared_checklist.json()["plumber_status"], "done")
         self.page.locator("[data-assign-house-filter='closed']").click()
         self.assertEqual(
             self.page.locator("#houses-list-heading").get_attribute("data-status"),

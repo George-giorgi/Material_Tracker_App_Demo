@@ -6512,6 +6512,62 @@ class PlumbingCoordinatorTests(HttpBase):
             completed_house["plumber_done_at"], "2026-11-04T10:30:00"
         )
 
+    def test_plumbing_supervisor_completion_records_who_and_when(self):
+        house_id = "PLUMBING-COMPLETION-AUDIT"
+        self.provide(house_id, "D02 B2", "2 Pipe Lane", "Audit Owner")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_plumber_required = 1
+                WHERE id = ?
+                """,
+                (house_id,),
+            )
+            server._upsert_house(db, house_id, owner_name="Audit Owner")
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES (?, 'supervisor', ?, 'Plumbing Coordinator', ?)
+                """,
+                (
+                    house_id,
+                    self.plumbing_supervisor_id,
+                    "2026-11-04T09:30:00",
+                ),
+            )
+        _, _, supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "plumbing-supervisor", "pin": "567890"},
+        )
+        status, result, _ = self.call(
+            "POST",
+            "/api/plumbing-status",
+            {"house_id": house_id, "plumber_status": "done"},
+            cookie=supervisor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["plumber_done_by"], "Plumbing Supervisor")
+        self.assertTrue(result["plumber_done_at"])
+        status, dashboard, _ = self.call(
+            "GET",
+            "/api/dashboard",
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200)
+        completed_house = next(
+            house for house in dashboard["plumbing_houses"]
+            if house["id"] == house_id
+        )
+        self.assertEqual(completed_house["plumber_status"], "done")
+        self.assertEqual(completed_house["plumber_done_by"], "Plumbing Supervisor")
+        self.assertEqual(
+            completed_house["plumber_done_at"],
+            result["plumber_done_at"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
