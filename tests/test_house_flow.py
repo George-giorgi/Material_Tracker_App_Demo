@@ -698,9 +698,17 @@ class HouseDocumentHttpTests(HttpBase):
             other_document_id = db.execute(
                 "SELECT id FROM house_vent_documents WHERE house_id = 'DOC-NOT-VENT'"
             ).fetchone()["id"]
-            server._insert_user(
+            vent_reader_id = server._insert_user(
                 db, "vent-doc-reader", "Vent Document Reader", "234567",
                 "teamlead", team_name="Ventilation",
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES ('DOC-TEST', ?, 'Vent Coordinator', '2026-11-04T09:00:00')
+                """,
+                (vent_reader_id,),
             )
             server._insert_user(
                 db, "non-vent-doc-reader", "Other Department", "345678",
@@ -1096,6 +1104,18 @@ class SurveyorHouseNotesTests(HttpBase):
             cookie=self.surveyor_cookie,
         )
         self.assertEqual(status, 200, result)
+        self.assertFalse(result["published"])
+        with server.connect_db() as db:
+            unpublished_plan = db.execute(
+                "SELECT plan_scaffolding_required, plan_esb_required, "
+                "plan_plumber_required FROM provided_houses WHERE id = 'NOTES-READY'"
+            ).fetchone()
+            self.assertEqual(tuple(unpublished_plan), (None, None, None))
+            self.assertIsNotNone(
+                db.execute(
+                    "SELECT 1 FROM house_work_plan_drafts WHERE house_id = 'NOTES-READY'"
+                ).fetchone()
+            )
         status, result, _ = self.call(
             "POST",
             "/api/house-survey",
@@ -1104,6 +1124,18 @@ class SurveyorHouseNotesTests(HttpBase):
         )
         self.assertEqual(status, 200, result)
         self.assertTrue(result["survey_completed"])
+        self.assertTrue(result["work_plan_published"])
+        with server.connect_db() as db:
+            published_plan = db.execute(
+                "SELECT plan_scaffolding_required, plan_esb_required, "
+                "plan_plumber_required FROM provided_houses WHERE id = 'NOTES-READY'"
+            ).fetchone()
+            self.assertEqual(tuple(published_plan), (0, 0, 0))
+            self.assertIsNone(
+                db.execute(
+                    "SELECT 1 FROM house_work_plan_drafts WHERE house_id = 'NOTES-READY'"
+                ).fetchone()
+            )
 
     def test_surveyor_can_save_a_separate_survey_note_without_losing_measurements(self):
         existing_survey = {
@@ -1135,11 +1167,20 @@ class SurveyorHouseNotesTests(HttpBase):
             row = db.execute(
                 "SELECT data, notes, updated_by FROM house_surveys WHERE house_id = 'NOTES-READY'"
             ).fetchone()
+            revision = db.execute(
+                "SELECT before_data, after_data, changed_by, changed_by_username, changed_at "
+                "FROM house_survey_history WHERE house_id = 'NOTES-READY'"
+            ).fetchone()
         saved_survey = json.loads(row["data"])
         self.assertEqual(row["notes"], "Survey access requires ladder.")
         self.assertEqual(row["updated_by"], "House Notes Surveyor")
         self.assertEqual(saved_survey["doors"], existing_survey["doors"])
         self.assertEqual(saved_survey["house_corners"], existing_survey["house_corners"])
+        self.assertEqual(json.loads(revision["before_data"]), existing_survey)
+        self.assertEqual(json.loads(revision["after_data"]), result["survey"])
+        self.assertEqual(revision["changed_by"], "House Notes Surveyor")
+        self.assertEqual(revision["changed_by_username"], "house-notes-surveyor")
+        self.assertTrue(revision["changed_at"])
         _, houses, _ = self.call("GET", "/api/calculator/houses?status=ready")
         notes_ready = next(
             house for house in houses["houses"] if house["id"] == "NOTES-READY"
@@ -1163,6 +1204,89 @@ class SurveyorHouseNotesTests(HttpBase):
         )
         self.assertEqual(status, 409)
         self.assertIn("ready for start", result["error"])
+
+    def test_editing_a_saved_survey_records_each_changed_revision(self):
+        original_survey = {
+            "windows": [{"w": 1.0, "h": 1.2, "qty": 1}],
+            "doors": [],
+            "house_corners": [3.0],
+            "perimeter_m": 40.0,
+            "notes": "Original note",
+        }
+        updated_survey = {
+            "windows": [{"w": 1.1, "h": 1.2, "qty": 2}],
+            "doors": [],
+            "house_corners": [3.0],
+            "perimeter_m": 42.5,
+            "notes": "Updated note",
+        }
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_scaffolding_required = 0,
+                    plan_esb_required = 0,
+                    plan_plumber_required = 0
+                WHERE id = 'NOTES-READY'
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES ('NOTES-READY', ?, ?, 'Previous Surveyor', '2026-10-20T10:00:00')
+                """,
+                (json.dumps(original_survey), original_survey["notes"]),
+            )
+
+        payload = {"house_id": "NOTES-READY", "survey": updated_survey}
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            payload,
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["survey"], updated_survey)
+        with server.connect_db() as db:
+            revision = db.execute(
+                """
+                SELECT before_data, after_data, changed_by,
+                       changed_by_username, changed_at
+                FROM house_survey_history
+                WHERE house_id = 'NOTES-READY'
+                ORDER BY id DESC LIMIT 1
+                """
+            ).fetchone()
+        self.assertEqual(json.loads(revision["before_data"]), original_survey)
+        self.assertEqual(json.loads(revision["after_data"]), updated_survey)
+        self.assertEqual(revision["changed_by"], "House Notes Surveyor")
+        self.assertEqual(revision["changed_by_username"], "house-notes-surveyor")
+        self.assertEqual(revision["changed_at"], result["updated_at"])
+
+        status, _, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            payload,
+            cookie=self.surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_survey_history "
+                    "WHERE house_id = 'NOTES-READY'"
+                ).fetchone()[0],
+                1,
+            )
+            with db:
+                server._clear_house_survey_records(db, "NOTES-READY")
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_survey_history "
+                    "WHERE house_id = 'NOTES-READY'"
+                ).fetchone()[0],
+                1,
+            )
 
 
 class ProvidedHouseSummaryTests(FlowBase):
@@ -5049,6 +5173,39 @@ class WorkPlanCompletionTests(HttpBase):
         self.assertEqual(
             self.call("POST", "/api/house-work-plan", payload, cookie=surveyor)[0], 200
         )
+        _, cathy_before_save_survey, _ = self.call(
+            "GET", "/api/calculator/houses?status=ready", cookie=cathy
+        )
+        unpublished_house = next(
+            house for house in cathy_before_save_survey["houses"]
+            if house["id"] == "PLAN-1"
+        )
+        self.assertEqual(
+            (
+                unpublished_house["plan_scaffolding_required"],
+                unpublished_house["plan_esb_required"],
+                unpublished_house["plan_plumber_required"],
+                unpublished_house["plan_vent_required"],
+            ),
+            (1, 1, 1, None),
+        )
+        status, survey_result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            {
+                "house_id": "PLAN-1",
+                "survey": {
+                    "windows": [],
+                    "doors": [],
+                    "house_corners": [],
+                    "perimeter_m": 42.5,
+                    "notes": "",
+                },
+            },
+            cookie=surveyor,
+        )
+        self.assertEqual(status, 200, survey_result)
+        self.assertTrue(survey_result["work_plan_published"])
         status, result, _ = self.call("GET", "/api/calculator/houses?status=ready", cookie=vent_lead)
         house = next(item for item in result["houses"] if item["id"] == "PLAN-1")
         self.assertEqual((house["plan_vent_required"], house["plan_vent_notes"]), (1, "Fit trickle vents"))

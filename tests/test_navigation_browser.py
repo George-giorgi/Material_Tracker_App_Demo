@@ -152,7 +152,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(created.status, 201, created.text())
         self.assertEqual(
             created.json()["user"]["supervisor_specialty"],
-            "Plumbing",
+            "",
         )
 
         login = self.page.request.post(
@@ -729,7 +729,9 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator(".plumbing-coordinator-greeting-icon svg").is_visible()
         )
         self.assertTrue(
-            self.page.locator(".plumbing-coordinator-greeting-tag").is_visible()
+            self.page.locator(
+                "#plumbing-coordinator-workload .plumbing-coordinator-greeting-tag"
+            ).is_visible()
         )
         self.assertTrue(
             self.page.locator(
@@ -1039,6 +1041,15 @@ class NavigationBrowserTests(unittest.TestCase):
                         "Ventilation Teammate",
                         "2026-11-03T09:00:00",
                     ),
+                    (
+                        "VENT-DASHBOARD-UNASSIGNED",
+                        "V3 3CC",
+                        "3 Vent Road",
+                        "Unassigned Owner",
+                        "",
+                        "",
+                        "",
+                    ),
                 ],
             )
             db.execute(
@@ -1069,11 +1080,32 @@ class NavigationBrowserTests(unittest.TestCase):
                 "username": "ventilation-dashboard",
                 "display_name": "Ventilation Dashboard",
                 "pin": "234567",
-                "role": "employee",
+                "role": "teamlead",
+                "team_name": "Ventilation",
                 "department_ids": [ventilation_id],
             },
         )
         self.assertEqual(created.status, 201, created.text())
+        teamlead_id = created.json()["user"]["id"]
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO team_roster_members (teamlead_user_id, member_name)
+                VALUES (?, 'Nariman Ibrahimov')
+                """,
+                (teamlead_id,),
+            )
+            db.executemany(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES (?, ?, 'Vent Coordinator', '2026-11-04T09:00:00')
+                """,
+                [
+                    ("VENT-DASHBOARD-PENDING", teamlead_id),
+                    ("VENT-DASHBOARD-COMPLETE", teamlead_id),
+                ],
+            )
 
         login = self.page.request.post(
             f"{self.base_url}/api/auth/login",
@@ -1111,42 +1143,57 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator("#overview-summary-title").inner_text(),
             "Welcome, Ventilation Dashboard",
         )
-        self.assertTrue(self.page.locator("#today-label").is_hidden())
-        self.assertTrue(self.page.locator(".overview-dashboard-summary").is_visible())
-        summary_style = self.page.locator(".ventilation-dashboard-summary").evaluate(
-            """element => ({
-              display: getComputedStyle(element).display,
-              direction: getComputedStyle(element).flexDirection,
-              borderRadius: getComputedStyle(element).borderRadius,
-              padding: getComputedStyle(element).padding
-            })"""
+        self.assertEqual(
+            self.page.locator("#ventilation-dashboard-greeting-title").inner_text(),
+            "Welcome back, Ventilation Dashboard",
         )
-        self.assertEqual(summary_style["display"], "flex")
-        self.assertEqual(summary_style["direction"], "row")
-        self.assertEqual(summary_style["borderRadius"], "14px")
+        self.assertTrue(
+            self.page.locator(
+                "#ventilation-workload .ventilation-dashboard-greeting"
+            ).is_visible()
+        )
+        team_roster = self.page.locator("#ventilation-team-roster")
+        self.assertTrue(team_roster.is_visible())
+        self.assertFalse(team_roster.evaluate("element => element.open"))
+        self.assertEqual(
+            self.page.locator("#ventilation-team-roster-count").inner_text(),
+            "1 Teamlead · 1 crew member",
+        )
+        team_roster.locator("summary").click()
+        self.assertTrue(team_roster.evaluate("element => element.open"))
+        self.assertIn(
+            "Nariman Ibrahimov",
+            self.page.locator("#ventilation-team-roster-content").inner_text(),
+        )
+        self.assertTrue(self.page.locator("#today-label").is_hidden())
+        self.assertTrue(self.page.locator("#overview-work-summary").is_hidden())
         self.assertFalse(self.page.locator(".ventilation-summary-progress").count())
         self.assertTrue(self.page.locator("#page-overview .overview-grid").is_hidden())
         self.assertTrue(self.page.locator("#ventilation-house-filters").is_visible())
-        self.assertEqual(self.page.locator("#stat-provided").inner_text(), "2")
-        self.assertEqual(self.page.locator("#stat-houses").inner_text(), "1")
-        self.assertEqual(self.page.locator("#stat-ready").inner_text(), "1")
+        self.assertEqual(self.page.locator("#stat-provided").text_content(), "2")
+        self.assertEqual(self.page.locator("#stat-houses").text_content(), "1")
+        self.assertEqual(self.page.locator("#stat-ready").text_content(), "1")
         self.assertFalse(self.page.locator("#stat-ready").is_hidden())
         self.assertEqual(self.page.locator("#stat-ready-label").inner_text(), "To do")
-        self.assertEqual(
+        self.assertFalse(
             self.page.locator(
-                ".ventilation-dashboard-summary .surveyor-dashboard-stats > .dashboard-stat-link:not(.hidden) span"
-            ).all_inner_texts(),
-            ["Assigned houses", "To do", "Vent completed"],
+                "#ventilation-workload .plumbing-coordinator-greeting-eyebrow, "
+                "#ventilation-workload .plumbing-coordinator-greeting-tag"
+            ).count()
         )
-        self.assertEqual(
-            self.page.locator(".ventilation-dashboard-summary .surveyor-dashboard-stats > .dashboard-stat-link:not(.hidden)").count(),
-            3,
+        self.assertIn(
+            "sr-only",
+            self.page.locator("#ventilation-workload-title").get_attribute("class").split(),
         )
         self.assertTrue(self.page.locator("#ventilation-house-search").is_visible())
         self.assertTrue(self.page.locator("#refresh-ventilation-houses").is_visible())
         self.assertEqual(
             self.page.locator(".ventilation-house-card").count(),
             2,
+        )
+        self.assertNotIn(
+            "VENT-DASHBOARD-UNASSIGNED",
+            self.page.locator("#ventilation-house-list").inner_text(),
         )
         self.page.locator("#ventilation-house-search").fill("VENT-DASHBOARD-PENDING")
         self.assertEqual(self.page.locator(".ventilation-house-card").count(), 1)
@@ -1274,8 +1321,8 @@ class NavigationBrowserTests(unittest.TestCase):
             })"""
         )
         self.assertEqual(ventilation_card_shape["minHeight"], "190px")
-        self.assertEqual(ventilation_card_shape["borderRadius"], "13px")
-        self.assertEqual(ventilation_card_shape["padding"], "20px")
+        self.assertEqual(ventilation_card_shape["borderRadius"], "14px")
+        self.assertEqual(ventilation_card_shape["padding"], "18px")
         self.assertIn(
             "Ventilation Teammate",
             self.page.locator(".ventilation-house-card.is-complete").inner_text(),
@@ -2838,6 +2885,88 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#assign-seai-house-ready").is_hidden())
         self.page.locator("#assign-seai-house-back").click()
         self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.assertEqual(self.browser_errors, [])
+
+    def test_cathy_filters_ready_houses_by_survey_status(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, owner_name, ready_for_start)
+                VALUES ('CATHY-NEEDS-SURVEY', 'Needs Survey Owner', 1),
+                       ('CATHY-SURVEYED', 'Surveyed Owner', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+                VALUES ('CATHY-NEEDS-SURVEY', 'ready', 'Cathy', '2026-11-04T09:00:00'),
+                       ('CATHY-SURVEYED', 'ready', 'Cathy', '2026-11-04T09:00:00')
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
+                VALUES (
+                    'CATHY-SURVEYED',
+                    '{"windows":[],"doors":[],"house_corners":[],"perimeter_m":42,"notes":""}',
+                    '', 'Surveyor', '2026-11-04T10:00:00'
+                )
+                """
+            )
+            server._insert_user(
+                db, "cathy-survey-filter", "Cathy", "234567", "assign"
+            )
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("cathy-survey-filter")
+        self.page.locator("#auth-pin").fill("234567")
+        self.page.locator("#auth-submit").click()
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+
+        survey_filters = self.page.locator("#assign-survey-filters")
+        self.assertTrue(survey_filters.is_hidden())
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        survey_filters.wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector('#assign-survey-all-count').textContent === '2'"""
+        )
+        self.assertEqual(
+            [
+                self.page.locator(f"#assign-survey-{key}-count").inner_text()
+                for key in ("all", "needed", "completed")
+            ],
+            ["2", "1", "1"],
+        )
+
+        needed_filter = self.page.locator(
+            "[data-assign-survey-filter='needed']"
+        )
+        needed_filter.click()
+        self.assertEqual(needed_filter.get_attribute("aria-pressed"), "true")
+        self.page.locator(
+            "#houses-list article[data-house-id='CATHY-NEEDS-SURVEY']"
+        ).wait_for()
+        self.assertFalse(
+            self.page.locator(
+                "#houses-list article[data-house-id='CATHY-SURVEYED']"
+            ).count()
+        )
+
+        surveyed_filter = self.page.locator(
+            "[data-assign-survey-filter='completed']"
+        )
+        surveyed_filter.click()
+        self.assertEqual(surveyed_filter.get_attribute("aria-pressed"), "true")
+        self.page.locator(
+            "#houses-list article[data-house-id='CATHY-SURVEYED']"
+        ).wait_for()
+        self.assertFalse(
+            self.page.locator(
+                "#houses-list article[data-house-id='CATHY-NEEDS-SURVEY']"
+            ).count()
+        )
         self.assertEqual(self.browser_errors, [])
 
     def test_assign_user_can_assign_surveyor_from_ready_house_map(self):
@@ -5882,22 +6011,48 @@ class NavigationBrowserTests(unittest.TestCase):
                 0,
             )
         work_plan.locator('button[type="submit"]').click()
-        self.page.get_by_text(
-            "Pre-start work plan for SURVEY-ROOM-TEST saved."
-        ).wait_for()
+        self.page.wait_for_function(
+            """() => document.querySelector('#surveyor-work-plan-save-status')
+              ?.textContent === 'Work plan saved.'"""
+        )
         with server.connect_db() as db:
             plan = db.execute(
                 "SELECT plan_scaffolding_required, plan_scaffolding_notes, "
                 "plan_esb_required, plan_plumber_required, plan_plumber_notes "
                 "FROM provided_houses WHERE id = 'SURVEY-ROOM-TEST'"
             ).fetchone()
+            draft = db.execute(
+                "SELECT data FROM house_work_plan_drafts WHERE house_id = 'SURVEY-ROOM-TEST'"
+            ).fetchone()
         self.assertEqual(
             tuple(plan),
-            (1, "Rear access only", 0, 1, "Coordinate with owner"),
+            (
+                1,
+                "Rear access only",
+                0,
+                1,
+                "Coordinate with owner",
+            ),
         )
+        self.assertIsNone(draft)
         self.page.locator("#house-survey-form button[type='submit']").click()
         self.page.wait_for_function(
             "() => document.querySelector('#surveyor-room').classList.contains('hidden')"
+        )
+        with server.connect_db() as db:
+            published_plan = db.execute(
+                "SELECT plan_scaffolding_required, plan_scaffolding_notes, "
+                "plan_esb_required, plan_plumber_required, plan_plumber_notes "
+                "FROM provided_houses WHERE id = 'SURVEY-ROOM-TEST'"
+            ).fetchone()
+            self.assertIsNone(
+                db.execute(
+                    "SELECT 1 FROM house_work_plan_drafts WHERE house_id = 'SURVEY-ROOM-TEST'"
+                ).fetchone()
+            )
+        self.assertEqual(
+            tuple(published_plan),
+            (1, "Rear access only", 0, 1, "Coordinate with owner"),
         )
         self.assertFalse(
             self.page.locator(
@@ -5934,10 +6089,12 @@ class NavigationBrowserTests(unittest.TestCase):
             "#survey-room-summary-house-notes"
         )
         self.assertEqual(surveyor_house_notes.inner_text(), "No house notes")
-        self.assertEqual(self.page.locator("#survey-room-notes").count(), 0)
-        self.assertEqual(
-            self.page.locator(".survey-room-nav a[href='#survey-room-notes']").count(),
-            0,
+        self.assertTrue(self.page.locator("#survey-room-notes").is_visible())
+        self.assertTrue(
+            self.page.locator("#surveyor-survey-notes-form").is_visible()
+        )
+        self.assertTrue(
+            self.page.locator(".survey-room-nav a[href='#survey-room-notes']").is_visible()
         )
         with server.connect_db() as db:
             saved_notes = db.execute(
@@ -5949,7 +6106,7 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-survey-open[data-house-id="SURVEY-ROOM-TEST"]'
         ).click()
         self.assertTrue(self.page.locator("#survey-windows input").first.is_visible())
-        self.assertEqual(self.page.locator("#surveyor-survey-notes-form").count(), 0)
+        self.assertTrue(self.page.locator("#surveyor-survey-notes-form").is_visible())
         self.page.locator("#back-from-surveyor-room").click()
         self.assertTrue(self.page.locator("#houses-overview").is_visible())
         self.assertEqual(self.browser_errors, [])

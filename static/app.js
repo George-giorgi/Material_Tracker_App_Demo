@@ -60,6 +60,7 @@ const hasAccessProfile = (user, profile) =>
       (profile === "admin" && user?.permissions?.includes("*")),
   );
 const isVentilationUser = (user) =>
+  !hasAccessProfile(user, "ventilation_coordinator") &&
   (user?.departments || []).some(
     (department) =>
       department.name?.trim().toLocaleLowerCase() === "ventilation",
@@ -270,6 +271,7 @@ let toastTimer;
 let movementSearchRequest = 0;
 let ventilationHouseFilter = "all";
 let plumbingHouseFilter = "all";
+let ventilationCoordinatorHouseFilter = "all";
 let plumbingSupervisorHouseFilter = "all";
 let weatherRequestId = 0;
 
@@ -859,6 +861,7 @@ function showWorkspace(user) {
     teamlead: "Teamlead",
     plumber: "Plumber",
     plumbing_coordinator: "Plumbing Coordinator",
+    ventilation_coordinator: "Vent Coordinator",
     warehouse: "Warehouse",
   };
   $("#account-details").textContent = `${user.username} - ${user.role_name || roleNames[user.role] || user.role}`;
@@ -867,9 +870,20 @@ function showWorkspace(user) {
   const isPlumbingSupervisor = isPlumbingSupervisorUser(user);
   const isAssign = hasAccessProfile(user, "assign");
   const isPlumbingCoordinator = hasAccessProfile(user, "plumbing_coordinator");
+  const isVentilationCoordinator = hasAccessProfile(
+    user,
+    "ventilation_coordinator",
+  );
   const isVentilation = !isSurveyor && isVentilationUser(user);
+  const dashboardStats = $(".surveyor-dashboard-stats");
+  if (isVentilation) {
+    $("#ventilation-dashboard-stats").append(dashboardStats);
+  } else {
+    $("#overview-work-summary").append(dashboardStats);
+  }
   $$("[data-house-view]").forEach((tile) => {
-    tile.disabled = isPlumbingCoordinator || isPlumbingSupervisor;
+    tile.disabled =
+      isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor;
   });
   $("#ventilation-workload").classList.toggle("hidden", !isVentilation);
   $("#plumbing-supervisor-workload").classList.toggle(
@@ -877,25 +891,29 @@ function showWorkspace(user) {
     !isPlumbingSupervisor,
   );
   $("#plumbing-coordinator-workload").classList.toggle("hidden", !isPlumbingCoordinator);
+  $("#ventilation-coordinator-workload").classList.toggle(
+    "hidden",
+    !isVentilationCoordinator,
+  );
   $("#overview-work-summary").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isPlumbingSupervisor || isPlumbingCoordinator || isVentilationCoordinator,
   );
   $("#page-overview .overview-grid").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#page-overview .kpi-strip").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#page-overview .privacy-note").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#today-label").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   const housesNavLabel = $('[data-tab="houses"] .nav-label');
   if (housesNavLabel) {
@@ -909,11 +927,18 @@ function showWorkspace(user) {
   document.body.classList.toggle("surveyor-mode", isSurveyor);
   document.body.classList.toggle("supervisor-mode", isSupervisor);
   document.body.classList.toggle("ventilation-mode", isVentilation);
-  document.body.classList.toggle("plumbing-coordinator-mode", isPlumbingCoordinator);
+  document.body.classList.toggle(
+    "plumbing-coordinator-mode",
+    isPlumbingCoordinator || isVentilationCoordinator,
+  );
+  document.body.classList.toggle(
+    "ventilation-coordinator-mode",
+    isVentilationCoordinator,
+  );
   document.body.classList.toggle("plumbing-supervisor-mode", isPlumbingSupervisor);
   $(".main-nav.workspace-nav").classList.toggle(
     "hidden",
-    isVentilation || isAssign || isSurveyor || isPlumbingCoordinator || isPlumbingSupervisor,
+    isVentilation || isAssign || isSurveyor || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#surveyor-dashboard-summary").classList.toggle("hidden", !isSurveyor);
   $("#supervisor-dashboard-summary").classList.toggle("hidden", !isSupervisor);
@@ -928,7 +953,7 @@ function showWorkspace(user) {
     item.classList.toggle(
       "hidden",
       (isSurveyor && item.dataset.tab === "houses") ||
-        ((isPlumbingCoordinator || isPlumbingSupervisor) &&
+        ((isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor) &&
           item.dataset.tab !== "overview") ||
         ((isSurveyor || (isSupervisor && !isPlumbingSupervisor) || isAssign) &&
           item.dataset.tab !== "houses"),
@@ -936,22 +961,25 @@ function showWorkspace(user) {
   );
   $("#new-movement-top").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#start-presentation").classList.toggle("hidden", isSurveyor || !hasAccessProfile(user, "admin"));
   $("#start-navigation-tour").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isPlumbingSupervisor,
+    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#houses-teams-tabs").classList.toggle(
     "hidden",
-    isSurveyor || isAssign,
+    isSurveyor || isAssign || isVentilationCoordinator,
   );
   $("#teams-section").classList.toggle(
     "hidden",
-    isSurveyor || isAssign,
+    isSurveyor || isAssign || isVentilationCoordinator,
   );
-  $("#open-house").classList.toggle("hidden", isSurveyor || isSupervisor);
+  $("#open-house").classList.toggle(
+    "hidden",
+    isSurveyor || isSupervisor || isVentilationCoordinator,
+  );
   if (isPlumbingSupervisor) {
     $("#overview-eyebrow").textContent = "PLUMBING TEAM SUPERVISOR";
     $("#overview-title").textContent = "My plumbing dashboard";
@@ -980,6 +1008,27 @@ function showWorkspace(user) {
       `${greeting}, ${user.display_name}`;
     plumbingHouseFilter = "all";
     $("#plumbing-house-search").value = "";
+  } else if (isVentilationCoordinator) {
+    $("#stat-provided-label").textContent = "Vent houses";
+    $("#stat-houses-label").textContent = "Assigned";
+    $("#stat-ready-label").textContent = "Needs assignment";
+    $("#stat-closed-label").textContent = "Completed";
+    $("#stat-closed").parentElement.classList.remove("hidden");
+    $("#stat-not-started").parentElement.classList.add("hidden");
+    $("#stat-ready").parentElement.classList.remove("hidden");
+    $("#overview-eyebrow").textContent = "VENTILATION WORK ALLOCATION";
+    $("#overview-title").textContent = "My Vent dashboard";
+    $("#overview-subtitle").textContent =
+      "Assign required Vent work to the Ventilation team.";
+    $("#overview-summary-title").textContent = `Welcome, ${user.display_name}`;
+    $("#overview-summary-description").textContent =
+      "Choose the Ventilation Teamlead for each house requiring Vent work.";
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+    $("#ventilation-coordinator-greeting-title").textContent =
+      `${greeting}, ${user.display_name}`;
+    ventilationCoordinatorHouseFilter = "all";
+    $("#ventilation-coordinator-house-search").value = "";
   } else if (isVentilation) {
     $("#stat-provided-label").textContent = "Assigned houses";
     $("#stat-houses-label").textContent = "Vent completed";
@@ -994,6 +1043,8 @@ function showWorkspace(user) {
     $("#overview-summary-title").textContent = `Welcome, ${user.display_name}`;
     $("#overview-summary-description").textContent =
       "Your assigned ventilation houses and team progress.";
+    $("#ventilation-dashboard-greeting-title").textContent =
+      `Welcome back, ${user.display_name}`;
     $("#overview-activity-title").textContent = "Recent activity";
     $("#overview-activity-subtitle").textContent =
       "Latest recorded team and material updates";
@@ -1468,9 +1519,15 @@ function renderOverview() {
   const materials = data.materials;
   const ventilationHouses = data.ventilation_houses || [];
   const plumbingHouses = data.plumbing_houses || [];
+  const ventilationCoordinatorHouses =
+    data.ventilation_coordinator_houses || [];
   const isPlumbingCoordinator = hasAccessProfile(
     state.user,
     "plumbing_coordinator",
+  );
+  const isVentilationCoordinator = hasAccessProfile(
+    state.user,
+    "ventilation_coordinator",
   );
   const hs = data.house_summary || {
     provided: 0, active: data.houses, closed: 0, not_started: 0,
@@ -1482,6 +1539,7 @@ function renderOverview() {
   $("#stat-ready").textContent = hs.ready || 0;
   $("#stat-movements").textContent = data.movements.length;
   if (isVentilationUser(state.user)) {
+    renderVentilationTeamRoster();
     const completed = ventilationHouses.filter((house) => house.done_at).length;
     const outstanding = ventilationHouses.length - completed;
     $("#stat-provided").textContent = ventilationHouses.length;
@@ -1546,12 +1604,13 @@ function renderOverview() {
                 </div>
               </div>
               ${house.notes ? `<p class="ventilation-house-notes">${escapeHtml(house.notes)}</p>` : ""}
+              ${house.assigned_teamlead_name ? `<p class="ventilation-house-notes"><strong>Assigned Vent team:</strong> ${escapeHtml(house.assigned_team_name || house.assigned_teamlead_name)}</p>` : ""}
               ${isComplete ? `<p class="ventilation-house-audit">Completed by ${escapeHtml(house.done_by || "team member")} · ${escapeHtml(formatAuditDateTime(house.done_at))}</p>` : ""}
               ${ventPdfSectionHtml(house.documents || [], house.id)}
               ${house.status === "ready" ? `<div class="ventilation-house-actions"><button class="ventilation-complete-button${isComplete ? " is-undo" : ""}" type="button" data-ventilation-complete data-house-id="${escapeHtml(house.id)}" data-done="${!isComplete}" aria-label="${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}"><span aria-hidden="true">${isComplete ? "↶" : "✓"}</span> ${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}</button></div>` : ""}
             </article>`;
         }).join("")
-      : `<div class="ventilation-house-empty"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No Vent work assigned yet</strong><p>When a house is marked as needing Vent work in its work plan, it will appear here.</p></div>`;
+      : `<div class="ventilation-house-empty"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No Vent work assigned yet</strong><p>When the Vent Coordinator assigns Vent work to your team, it will appear here.</p></div>`;
   }
   if (isPlumbingCoordinator) {
     const supervisors = data.plumbing_supervisors || [];
@@ -1680,6 +1739,131 @@ function renderOverview() {
                   </fieldset>
                   <button class="button button-primary" type="submit" disabled>${supervisors.length ? "Select a supervisor" : "No supervisors available"}</button>
                 </form>`}
+          </article>`;
+      })
+      .join("");
+  }
+  if (isVentilationCoordinator) {
+    const teamleads = data.ventilation_teamleads || [];
+    const isComplete = (house) => Boolean(house.done_at);
+    const isAssigned = (house) => Boolean(house.assigned_teamlead_user_id);
+    const completedCount = ventilationCoordinatorHouses.filter(isComplete).length;
+    const assignedCount = ventilationCoordinatorHouses.filter(
+      (house) => !isComplete(house) && isAssigned(house),
+    ).length;
+    const needsAssignmentCount =
+      ventilationCoordinatorHouses.length - completedCount - assignedCount;
+    const search = $("#ventilation-coordinator-house-search")
+      .value.trim()
+      .toLocaleLowerCase();
+    $("#vent-coordinator-filter-all-count").textContent =
+      ventilationCoordinatorHouses.length;
+    $("#vent-coordinator-filter-needs-assignment-count").textContent =
+      needsAssignmentCount;
+    $("#vent-coordinator-filter-assigned-count").textContent = assignedCount;
+    $("#vent-coordinator-filter-completed-count").textContent = completedCount;
+    $$("#ventilation-coordinator-house-filters [data-vent-coordinator-filter]").forEach(
+      (button) => {
+        const active =
+          button.dataset.ventCoordinatorFilter ===
+          ventilationCoordinatorHouseFilter;
+        button.setAttribute("aria-pressed", String(active));
+        button.classList.toggle("active", active);
+      },
+    );
+    const filteredHouses = ventilationCoordinatorHouses.filter((house) =>
+      (
+        ventilationCoordinatorHouseFilter === "all" ||
+        (ventilationCoordinatorHouseFilter === "needs_assignment" &&
+          !isComplete(house) &&
+          !isAssigned(house)) ||
+        (ventilationCoordinatorHouseFilter === "assigned" &&
+          !isComplete(house) &&
+          isAssigned(house)) ||
+        (ventilationCoordinatorHouseFilter === "completed" && isComplete(house))
+      ) &&
+      [
+          house.id,
+          house.owner_name,
+          house.address,
+          house.postcode,
+          house.notes,
+          house.assigned_teamlead_name,
+          house.assigned_team_name,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLocaleLowerCase().includes(search)),
+    );
+    $("#stat-provided").textContent = ventilationCoordinatorHouses.length;
+    $("#stat-houses").textContent = assignedCount;
+    $("#stat-closed").textContent = completedCount;
+    $("#stat-ready").textContent = needsAssignmentCount;
+    $("#ventilation-coordinator-house-empty").classList.toggle(
+      "hidden",
+      filteredHouses.length > 0,
+    );
+    $("#ventilation-coordinator-house-empty strong").textContent =
+      ventilationCoordinatorHouses.length
+        ? "No matching Vent work"
+        : "No Vent work to assign";
+    $("#ventilation-coordinator-house-empty p").textContent =
+      ventilationCoordinatorHouses.length
+        ? "Try another house ID, owner, address, or team."
+        : "Houses marked as requiring Vent work will appear here.";
+    $("#ventilation-coordinator-house-list").innerHTML = filteredHouses
+      .map((house) => {
+        const address = [house.address, house.postcode]
+          .filter(Boolean)
+          .join(" · ");
+        const options = teamleads.length
+          ? teamleads
+              .map((teamlead) => {
+                const selected =
+                  String(teamlead.id) ===
+                  String(house.assigned_teamlead_user_id || "");
+                const initials = teamlead.name
+                  .split(/\s+/)
+                  .map((part) => part[0] || "")
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase();
+                return `
+                  <label class="plumbing-supervisor-option${selected ? " selected" : ""}">
+                    <input type="radio" name="teamlead_user_id" value="${teamlead.id}"${selected ? " checked" : ""} required>
+                    <span class="supervisor-account-avatar" aria-hidden="true">${escapeHtml(initials || "V")}</span>
+                    <span class="supervisor-account-identity"><strong>${escapeHtml(teamlead.name)}</strong><small>${escapeHtml(teamlead.team_name || "Ventilation team")}</small></span>
+                    <span class="plumbing-supervisor-check" aria-hidden="true">${selected ? "Selected" : "Choose"}</span>
+                  </label>`;
+              })
+              .join("")
+          : `<p class="plumbing-supervisor-empty">No active Ventilation Teamleads are available. Ask an administrator to check the Ventilation team accounts.</p>`;
+        const assigned = Boolean(house.assigned_teamlead_user_id);
+        const complete = Boolean(house.done_at);
+        return `
+          <article class="card plumbing-house-card ventilation-house-card${complete ? " is-complete" : ""}">
+            <div class="ventilation-house-top">
+              <span class="ventilation-house-icon" aria-hidden="true">⌂</span>
+              <div class="ventilation-house-identity">
+                <h3>${escapeHtml(house.id)}</h3>
+                <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
+                ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
+              </div>
+              <span class="plumbing-job-status ${complete ? "is-complete" : assigned ? "is-assigned" : "is-needed"}">${complete ? "Vent complete" : assigned ? "Team assigned" : "Needs assignment"}</span>
+            </div>
+            <div class="plumbing-work-detail">
+              <strong>Required Vent work</strong>
+              <p>${escapeHtml(house.notes || "Vent work is required. No extra survey notes were added.")}</p>
+              ${complete ? `<p>Completed by ${escapeHtml(house.done_by || "Vent team")} · ${escapeHtml(formatAuditDateTime(house.done_at))}</p>` : ""}
+            </div>
+            <form class="plumbing-house-assignment" data-ventilation-assignment data-house-id="${escapeHtml(house.id)}">
+              <fieldset class="plumbing-supervisor-picker">
+                <legend>Choose a Ventilation Team</legend>
+                <div class="plumbing-supervisor-options" role="radiogroup" aria-label="Choose a Ventilation Team">
+                  ${options}
+                </div>
+              </fieldset>
+              <button class="button button-primary" type="submit"${assigned || !teamleads.length ? "" : " disabled"}>${assigned ? "Update Vent team" : teamleads.length ? "Select a team" : "No teams available"}</button>
+            </form>
           </article>`;
       })
       .join("");
@@ -1837,7 +2021,9 @@ function updateWorkPlanSaveStatus(form) {
     workPlanSnapshot(form) === saveState.savedSnapshot,
   );
   status.textContent = saved
-    ? "Work plan saved."
+    ? saveState.publishPending
+      ? "Work plan saved. Assign will see the update after you save the survey."
+      : "Work plan saved."
     : "Pre-start work plan is not saved. Click Save work plan before saving the survey.";
   status.classList.toggle("save-error", !saved);
   return saved;
@@ -2348,6 +2534,41 @@ function renderPlumbingSupervisorCrew() {
     rosters.length > 0,
   );
 }
+function renderVentilationTeamRoster() {
+  const roster = (state.dashboard?.team_rosters || []).find(
+    (item) => item.teamlead_id === state.user?.id,
+  );
+  const rosterSection = $("#ventilation-team-roster");
+  rosterSection.classList.toggle("hidden", !roster);
+  if (!roster) return;
+
+  const memberCount = roster.members.length;
+  $("#ventilation-team-roster-count").textContent =
+    `1 Teamlead · ${memberCount} crew member${memberCount === 1 ? "" : "s"}`;
+  const initials = roster.teamlead_name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toLocaleUpperCase();
+  const members = memberCount
+    ? `<ul class="plumbing-supervisor-crew-members">${roster.members
+        .map(
+          (member) =>
+            `<li><span class="plumbing-supervisor-crew-member-dot" aria-hidden="true"></span><span>${escapeHtml(member.name)}</span><small>Crew member</small></li>`,
+        )
+        .join("")}</ul>`
+    : '<p class="plumbing-supervisor-crew-no-members">No crew members added to this roster yet.</p>';
+  $("#ventilation-team-roster-content").innerHTML = `
+    <article class="plumbing-supervisor-crew-card">
+      <div class="plumbing-supervisor-crew-teamlead">
+        <span class="plumbing-supervisor-crew-avatar" aria-hidden="true">${escapeHtml(initials)}</span>
+        <div><span class="plumbing-supervisor-crew-role">TEAMLEAD</span><strong>${escapeHtml(roster.teamlead_name)}</strong></div>
+        <span class="plumbing-supervisor-crew-team">${escapeHtml(roster.team_name || "Ventilation")}</span>
+      </div>
+      ${members}
+    </article>`;
+}
 function renderSupervisorHouses() {
   const isPlumbingSupervisor = isPlumbingSupervisorUser(state.user);
   const list = isPlumbingSupervisor
@@ -2688,11 +2909,15 @@ function openHouseSurvey(houseId) {
   );
   $("#survey-room-work-plan").classList.toggle("hidden", !isReady);
   for (const trade of WORK_PLAN_TRADES) {
-    const required = house[`plan_${trade}_required`];
+    const required = house.work_plan_draft_saved_at
+      ? house[`draft_plan_${trade}_required`]
+      : house[`plan_${trade}_required`];
     workPlanForm.elements[`${trade}_required`].value =
       required === null || required === undefined ? "" : String(Boolean(required));
     workPlanForm.elements[`${trade}_notes`].value =
-      house[`plan_${trade}_notes`] || "";
+      (house.work_plan_draft_saved_at
+        ? house[`draft_plan_${trade}_notes`]
+        : house[`plan_${trade}_notes`]) || "";
   }
   workPlanSaveStates.set(workPlanForm, {
     revision: 0,
@@ -2700,6 +2925,7 @@ function openHouseSurvey(houseId) {
     savedSnapshot: workPlanHasRequiredChoices(workPlanForm)
       ? workPlanSnapshot(workPlanForm)
       : null,
+    publishPending: Boolean(house.work_plan_draft_saved_at),
   });
   syncWorkPlanCards(workPlanForm);
   updateWorkPlanSaveStatus(workPlanForm);
@@ -2896,8 +3122,9 @@ async function saveHouseWorkPlan(form, manual = false) {
   status.textContent = "Saving work plan…";
   status.classList.remove("save-error");
   try {
-    await save;
+    const result = await save;
     saveState.savedSnapshot = submittedSnapshot;
+    saveState.publishPending = !result.published;
     const matchingHouses = [
       ...surveyHouses,
       ...Object.values(planCache).flat(),
@@ -2905,14 +3132,35 @@ async function saveHouseWorkPlan(form, manual = false) {
     ].filter((house) => house.id === houseId);
     for (const house of matchingHouses) {
       for (const trade of WORK_PLAN_TRADES) {
-        house[`plan_${trade}_required`] = payload[`${trade}_required`];
-        house[`plan_${trade}_notes`] = payload[`${trade}_notes`];
+        const required = payload[`${trade}_required`];
+        const notes = payload[`${trade}_notes`];
+        if (result.published) {
+          house[`plan_${trade}_required`] =
+            required === null ? null : Number(required);
+          house[`plan_${trade}_notes`] = notes;
+          delete house[`draft_plan_${trade}_required`];
+          delete house[`draft_plan_${trade}_notes`];
+        } else {
+          house[`draft_plan_${trade}_required`] = required;
+          house[`draft_plan_${trade}_notes`] = notes;
+        }
+      }
+      if (result.published) {
+        delete house.work_plan_draft_saved_at;
+      } else {
+        house.work_plan_draft_saved_at = result.saved_at;
       }
     }
     planStale.add("ready");
     if (revision === saveState.revision) {
       updateWorkPlanSaveStatus(form);
-      if (manual) showToast(`Pre-start work plan for ${houseId} saved.`);
+      if (manual) {
+        showToast(
+          result.published
+            ? `Pre-start work plan for ${houseId} saved.`
+            : `Pre-start work plan for ${houseId} saved. It will appear on the Assign dashboard after you save the survey.`,
+        );
+      }
     }
   } catch (error) {
     if (revision === saveState.revision) {
@@ -4030,12 +4278,30 @@ async function submitHouseSurvey(event) {
     const result = await request("/api/house-survey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ house_id: form.dataset.houseId, survey }) });
     const updatedAt = result.updated_at;
     $("#survey-meta").textContent = `Last saved by ${state.user.display_name} - ${formatAuditDateTime(updatedAt)}`;
-    const currentHouse = [...surveyHouses, ...Object.values(planCache).flat()].find((house) => house.id === form.dataset.houseId);
-    if (currentHouse) {
-      currentHouse.survey = survey;
-      currentHouse.survey_completed = Boolean(result.survey_completed);
-      currentHouse.survey_updated_by = state.user.display_name;
-      currentHouse.survey_updated_at = updatedAt;
+    const savedWorkPlan = new FormData(workPlanForm);
+    const matchingHouses = [
+      ...surveyHouses,
+      ...Object.values(planCache).flat(),
+      ...(state.houseMapData || []),
+    ].filter((house) => house.id === form.dataset.houseId);
+    for (const house of matchingHouses) {
+      house.survey = survey;
+      house.survey_completed = Boolean(result.survey_completed);
+      house.survey_updated_by = state.user.display_name;
+      house.survey_updated_at = updatedAt;
+      if (result.work_plan_published) {
+        for (const trade of WORK_PLAN_TRADES) {
+          const value = savedWorkPlan.get(`${trade}_required`);
+          house[`plan_${trade}_required`] =
+            value === "" ? null : Number(value === "true");
+          house[`plan_${trade}_notes`] = String(
+            savedWorkPlan.get(`${trade}_notes`) || "",
+          ).trim();
+          delete house[`draft_plan_${trade}_required`];
+          delete house[`draft_plan_${trade}_notes`];
+        }
+        delete house.work_plan_draft_saved_at;
+      }
     }
     updateSurveyStatusDisplay(Boolean(result.survey_completed));
     planStale.add("ready");
@@ -6391,6 +6657,30 @@ async function submitPlumbingAssignment(event) {
   }
 }
 
+async function submitVentilationAssignment(event) {
+  event.preventDefault();
+  const form = event.target.closest("[data-ventilation-assignment]");
+  if (!form) return;
+  const button = $("button[type='submit']", form);
+  button.disabled = true;
+  try {
+    const result = await request("/api/ventilation-coordinator/assignment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: form.dataset.houseId,
+        teamlead_user_id: form.elements.teamlead_user_id.value,
+      }),
+    });
+    state.dashboard = await request("/api/dashboard");
+    renderOverview();
+    showToast(`${result.house_id} assigned to ${result.team_name || result.teamlead_name}.`);
+  } catch (error) {
+    showToast(`Could not assign Vent team: ${error.message}`, true);
+    button.disabled = false;
+  }
+}
+
 async function refresh(preserveMovementLines = false) {
   Object.keys(planCache).forEach((mode) => planStale.add(mode));
   const search = $("#movement-search")?.value.trim() || "";
@@ -6400,9 +6690,13 @@ async function refresh(preserveMovementLines = false) {
     state.user,
     "plumbing_coordinator",
   );
+  const isVentilationCoordinator = hasAccessProfile(
+    state.user,
+    "ventilation_coordinator",
+  );
   const [dashboard, ledger] = await Promise.all([
     request("/api/dashboard"),
-    isAssign || isSupervisor || isPlumbingCoordinator
+    isAssign || isSupervisor || isPlumbingCoordinator || isVentilationCoordinator
       ? Promise.resolve({ movements: [] })
       : request(
           `/api/movements${search ? `?q=${encodeURIComponent(search)}` : ""}`,
@@ -8253,6 +8547,10 @@ function bindEvents() {
   $("#import-form").addEventListener("submit", submitImport);
   $("#material-search").addEventListener("input", renderInventory);
   $("#ventilation-house-search").addEventListener("input", renderOverview);
+  $("#ventilation-coordinator-house-search").addEventListener(
+    "input",
+    renderOverview,
+  );
   $("#plumbing-house-search").addEventListener("input", renderOverview);
   $("#plumbing-supervisor-house-search").addEventListener(
     "input",
@@ -8344,6 +8642,25 @@ function bindEvents() {
       label.textContent = "Refresh";
     }
   });
+  $("#refresh-ventilation-coordinator-houses").addEventListener(
+    "click",
+    async (event) => {
+      const button = event.currentTarget;
+      const label = button.querySelector("span");
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      label.textContent = "Refreshing…";
+      try {
+        await refresh();
+      } catch (error) {
+        showToast(`Could not refresh Vent houses: ${error.message}`, true);
+      } finally {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        label.textContent = "Refresh";
+      }
+    },
+  );
   $("#refresh-plumbing-houses").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const label = button.querySelector("span");
@@ -8380,6 +8697,16 @@ function bindEvents() {
     plumbingHouseFilter = button.dataset.plumbingFilter;
     renderOverview();
   });
+  $("#ventilation-coordinator-house-filters").addEventListener(
+    "click",
+    (event) => {
+      const button = event.target.closest("[data-vent-coordinator-filter]");
+      if (!button) return;
+      ventilationCoordinatorHouseFilter =
+        button.dataset.ventCoordinatorFilter;
+      renderOverview();
+    },
+  );
   $("#plumbing-supervisor-house-filters").addEventListener("click", (event) => {
     const button = event.target.closest("[data-plumbing-supervisor-filter]");
     if (!button) return;
@@ -8396,6 +8723,33 @@ function bindEvents() {
     if (button) updateVentilationHouseCompletion(button);
   });
   $("#plumbing-house-list").addEventListener("submit", submitPlumbingAssignment);
+  $("#ventilation-coordinator-house-list").addEventListener(
+    "submit",
+    submitVentilationAssignment,
+  );
+  $("#ventilation-coordinator-house-list").addEventListener(
+    "change",
+    (event) => {
+      if (!event.target.matches('input[name="teamlead_user_id"]')) return;
+      const form = event.target.closest("[data-ventilation-assignment]");
+      if (!form) return;
+      form.querySelectorAll(".plumbing-supervisor-option").forEach((option) => {
+        const selected = option.querySelector(
+          'input[name="teamlead_user_id"]',
+        ).checked;
+        option.classList.toggle("selected", selected);
+        option.querySelector(".plumbing-supervisor-check").textContent =
+          selected ? "Selected" : "Choose";
+      });
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = !form.querySelector(
+        'input[name="teamlead_user_id"]:checked',
+      );
+      button.textContent = button.disabled
+        ? "Select a team"
+        : "Assign selected Vent team";
+    },
+  );
   $("#plumbing-house-list").addEventListener("change", (event) => {
     if (!event.target.matches('input[name="supervisor_user_id"]')) return;
     const form = event.target.closest("[data-plumbing-assignment]");

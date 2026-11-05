@@ -667,6 +667,7 @@ def _require_pdf_editable(db, house_id):
 
 def _clear_house_survey_records(db, house_id):
     db.execute("DELETE FROM house_surveys WHERE house_id = ?", (house_id,))
+    db.execute("DELETE FROM house_work_plan_drafts WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_snags WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_checklists WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_vent_documents WHERE house_id = ?", (house_id,))
@@ -699,6 +700,7 @@ def _clear_house_survey_records(db, house_id):
         """,
         (house_id,),
     )
+
 
     house_document_ids = [
         row["id"]
@@ -754,6 +756,41 @@ def _clear_house_survey_records(db, house_id):
                 "DELETE FROM selected_seai_documents WHERE house_id = ?",
                 (house_id,),
             )
+
+
+def _record_house_survey_revision(db, house_id, survey, user, changed_at):
+    existing = db.execute(
+        "SELECT data, notes FROM house_surveys WHERE house_id = ?",
+        (house_id,),
+    ).fetchone()
+    if existing is None:
+        return
+    try:
+        previous_survey = json.loads(existing["data"])
+    except (TypeError, ValueError):
+        raise ApiError(500, "Previously saved survey data is invalid.")
+    if not isinstance(previous_survey, dict):
+        raise ApiError(500, "Previously saved survey data is invalid.")
+    previous_survey.setdefault("notes", existing["notes"])
+    if previous_survey == survey:
+        return
+    db.execute(
+        """
+        INSERT INTO house_survey_history
+            (house_id, before_data, after_data, changed_by,
+             changed_by_username, changed_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            house_id,
+            json.dumps(previous_survey, ensure_ascii=False),
+            json.dumps(survey, ensure_ascii=False),
+            user["display_name"],
+            user["username"],
+            changed_at,
+        ),
+    )
+
 
 @contextmanager
 def connect_db():
@@ -929,6 +966,7 @@ def initialize_db():
                 ("teamlead", "Teamlead"),
                 ("plumber", "Plumber"),
                 ("plumbing_coordinator", "Plumbing Coordinator"),
+                ("ventilation_coordinator", "Vent Coordinator"),
                 ("employee", "Employee"),
             ),
         )
@@ -956,6 +994,7 @@ def initialize_db():
             ("access.teamlead", "Team-lead dashboard and own team roster management."),
             ("access.plumber", "Employee-style operational access for plumbing work."),
             ("access.plumbing_coordinator", "Plumbing work queue and assignment to Plumbing supervisors."),
+            ("access.ventilation_coordinator", "Ventilation work queue and assignment to Ventilation teams."),
             ("access.employee", "Standard employee dashboard and material movement access."),
         )
         db.executemany(
@@ -972,6 +1011,7 @@ def initialize_db():
             ("teamlead", "Teamlead"),
             ("plumber", "Plumber"),
             ("plumbing_coordinator", "Plumbing Coordinator"),
+            ("ventilation_coordinator", "Vent Coordinator"),
             ("employee", "Employee"),
         ):
             db.execute(
@@ -1183,6 +1223,33 @@ def initialize_db():
         )
         db.execute(
             """
+            CREATE TABLE IF NOT EXISTS house_survey_history (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                before_data TEXT NOT NULL,
+                after_data TEXT NOT NULL,
+                changed_by TEXT NOT NULL DEFAULT '',
+                changed_by_username TEXT NOT NULL DEFAULT '',
+                changed_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS house_survey_history_house_idx "
+            "ON house_survey_history(house_id, id)"
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_work_plan_drafts (
+                house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
+                data TEXT NOT NULL,
+                saved_by TEXT NOT NULL DEFAULT '',
+                saved_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
             CREATE TABLE IF NOT EXISTS house_documents (
                 id INTEGER PRIMARY KEY,
                 house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
@@ -1204,6 +1271,18 @@ def initialize_db():
                 size_bytes INTEGER NOT NULL,
                 shared_by TEXT NOT NULL DEFAULT '',
                 shared_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_vent_assignments (
+                house_id TEXT PRIMARY KEY
+                    REFERENCES provided_houses(id) ON DELETE CASCADE,
+                teamlead_user_id INTEGER NOT NULL
+                    REFERENCES app_users(id) ON DELETE RESTRICT,
+                assigned_by TEXT NOT NULL DEFAULT '',
+                assigned_at TEXT NOT NULL
             )
             """
         )
@@ -1458,6 +1537,8 @@ def _seed_user_departments():
                 department = "Plumbing"
             elif user["role"] == "plumbing_coordinator":
                 department = "Plumbing"
+            elif user["role"] == "ventilation_coordinator":
+                department = "Ventilation"
             elif user["role"] == "employee":
                 department = "External Wall Insulation"
             else:
@@ -1589,6 +1670,7 @@ def _insert_user(
         "teamlead": team_name or "External Wall Insulation",
         "plumber": "Plumbing",
         "plumbing_coordinator": "Plumbing",
+        "ventilation_coordinator": "Ventilation",
         "employee": "External Wall Insulation",
     }.get(role, "Administration")
     department = db.execute(
@@ -2982,7 +3064,7 @@ def _dashboard(db):
     }
 
 
-def _ventilation_house_list(db):
+def _ventilation_house_list(db, teamlead_user_id):
     houses = [
         {
             "id": row["id"],
@@ -2993,6 +3075,9 @@ def _ventilation_house_list(db):
             "notes": row["notes"],
             "done_by": row["plan_vent_done_by"],
             "done_at": row["plan_vent_done_at"],
+            "assigned_teamlead_user_id": row["assigned_teamlead_user_id"],
+            "assigned_teamlead_name": row["assigned_teamlead_name"],
+            "assigned_team_name": row["assigned_team_name"],
             "documents": [],
         }
         for row in db.execute(
@@ -3001,18 +3086,25 @@ def _ventilation_house_list(db):
                    COALESCE(p.plan_vent_notes, '') AS notes,
                    COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
                    COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
+                   assignment.teamlead_user_id AS assigned_teamlead_user_id,
+                   COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
+                   COALESCE(teamlead.team_name, '') AS assigned_team_name,
                    CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
                         ELSE 'active' END AS status
             FROM provided_houses p
             LEFT JOIN houses h ON h.id = p.id
+            LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
+            LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
             WHERE p.plan_vent_required = 1
+              AND assignment.teamlead_user_id = ?
             ORDER BY
                 (COALESCE(p.plan_vent_done_at, '') = ''),
                 COALESCE(p.plan_vent_done_at, '') DESC,
                 p.id COLLATE NOCASE
-            """
+            """,
+            (teamlead_user_id,),
         )
     ]
     documents_by_house = {}
@@ -3022,9 +3114,13 @@ def _ventilation_house_list(db):
                documents.size_bytes, documents.shared_by, documents.shared_at
         FROM house_vent_documents documents
         JOIN provided_houses houses ON houses.id = documents.house_id
+        JOIN house_vent_assignments assignment
+          ON assignment.house_id = houses.id
         WHERE houses.plan_vent_required = 1
+          AND assignment.teamlead_user_id = ?
         ORDER BY documents.id DESC
-        """
+        """,
+        (teamlead_user_id,),
     ):
         documents_by_house.setdefault(row["house_id"], []).append(
             {key: row[key] for key in ("id", "filename", "size_bytes", "shared_by", "shared_at")}
@@ -3108,6 +3204,65 @@ def _plumbing_coordinator_dashboard(db):
         )
     ]
     return {"plumbing_houses": houses, "plumbing_supervisors": supervisors}
+
+
+def _ventilation_coordinator_dashboard(db):
+    teamleads = [
+        {"id": row["id"], "name": row["display_name"], "team_name": row["team_name"]}
+        for row in db.execute(
+            """
+            SELECT users.id, users.display_name, users.team_name
+            FROM app_users users
+            WHERE users.is_active = 1
+              AND EXISTS (
+                  SELECT 1 FROM app_role_permissions access
+                  WHERE access.role_key = users.role
+                    AND access.permission_key = 'access.teamlead'
+                    AND access.is_allowed = 1
+              )
+              AND EXISTS (
+                  SELECT 1 FROM user_departments memberships
+                  JOIN departments ON departments.id = memberships.department_id
+                  WHERE memberships.user_id = users.id
+                    AND departments.name = 'Ventilation' COLLATE NOCASE
+                    AND departments.is_active = 1
+              )
+            ORDER BY users.display_name COLLATE NOCASE
+            """
+        )
+    ]
+    houses = [
+        dict(row)
+        for row in db.execute(
+            """
+            SELECT p.id, p.postcode, p.address, p.owner_name,
+                   COALESCE(p.plan_vent_notes, '') AS notes,
+                   COALESCE(p.plan_vent_done_by, '') AS done_by,
+                   COALESCE(p.plan_vent_done_at, '') AS done_at,
+                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                        WHEN h.id IS NULL THEN 'not_started'
+                        WHEN h.is_finished = 1 THEN 'closed'
+                        ELSE 'active' END AS status,
+                   assignment.teamlead_user_id AS assigned_teamlead_user_id,
+                   COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
+                   COALESCE(teamlead.team_name, '') AS assigned_team_name
+            FROM provided_houses p
+            LEFT JOIN houses h ON h.id = p.id
+            LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
+            LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
+            WHERE p.plan_vent_required = 1
+              AND (h.id IS NULL OR h.is_finished = 0 OR p.plan_vent_done_at != '')
+            ORDER BY
+                (COALESCE(p.plan_vent_done_at, '') != ''),
+                (assignment.teamlead_user_id IS NOT NULL),
+                p.id COLLATE NOCASE
+            """
+        )
+    ]
+    return {
+        "ventilation_coordinator_houses": houses,
+        "ventilation_teamleads": teamleads,
+    }
 
 
 def _team_rosters(db):
@@ -3651,6 +3806,22 @@ class LegacyRouteHandlers:
                 {"error": "Plumbing Coordinator access is limited to plumbing assignments."},
             )
             return None
+        if _has_access_profile(user, "ventilation_coordinator") and not (
+            (self.command == "GET" and path in {"/api/dashboard", "/api/updates"})
+            or (
+                self.command == "POST"
+                and path in {
+                    "/api/auth/pin",
+                    "/api/auth/logout",
+                    "/api/ventilation-coordinator/assignment",
+                }
+            )
+        ):
+            self._send_json(
+                403,
+                {"error": "Vent Coordinator access is limited to ventilation assignments."},
+            )
+            return None
         if not any(
             _has_access_profile(user, profile)
             for profile in (
@@ -3664,6 +3835,7 @@ class LegacyRouteHandlers:
                 "teamlead",
                 "plumber",
                 "plumbing_coordinator",
+                "ventilation_coordinator",
                 "employee",
             )
         ) and path not in {"/api/auth/pin", "/api/auth/logout"}:
@@ -3895,6 +4067,14 @@ class LegacyRouteHandlers:
             self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
         elif path == "/brusna-curious-cat-logo.png":
             self._send_file(STATIC_DIR / "brusna-curious-cat-logo.png", "image/png")
+        elif path == "/favicon.svg":
+            self._send_file(STATIC_DIR / "favicon.svg", "image/svg+xml")
+        elif path == "/brusna-cat-favicon-v2.svg":
+            self._send_file(STATIC_DIR / "favicon.svg", "image/svg+xml")
+        elif path == "/favicon.ico" or path == "/brusna-cat-v3.ico":
+            self._send_file(STATIC_DIR / "brusna-cat-v3.ico", "image/x-icon")
+        elif path == "/brusna-cat-v3.png":
+            self._send_file(STATIC_DIR / "brusna-cat-v3.png", "image/png")
         elif path == "/calculator":
             user = self._current_user()
             if user is not None and _has_access_profile(user, "assign"):
@@ -4020,6 +4200,29 @@ class LegacyRouteHandlers:
                         500 if status_filter in {"all", "map"} or wanted else 20,
                     ),
                 ).fetchall()
+                surveyor_work_plan_drafts = {}
+                if (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ) and rows:
+                    house_placeholders = ",".join("?" for _ in rows)
+                    for draft in db.execute(
+                        "SELECT house_id, data, saved_by, saved_at "
+                        "FROM house_work_plan_drafts "
+                        f"WHERE house_id IN ({house_placeholders})",
+                        [row["id"] for row in rows],
+                    ):
+                        try:
+                            surveyor_work_plan_drafts[draft["house_id"]] = {
+                                **json.loads(draft["data"]),
+                                "saved_by": draft["saved_by"],
+                                "saved_at": draft["saved_at"],
+                            }
+                        except (TypeError, ValueError):
+                            raise ApiError(
+                                500,
+                                f"Saved work-plan draft for {draft['house_id']} is invalid.",
+                            )
                 seai_details = {}
                 seai_summaries = {}
                 can_see_seai_summary = (
@@ -4073,6 +4276,19 @@ class LegacyRouteHandlers:
             houses = []
             for row in rows:
                 house = dict(row)
+                if (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ):
+                    draft = surveyor_work_plan_drafts.get(row["id"], {})
+                    for trade in WORK_PLAN_TRADES:
+                        house[f"draft_plan_{trade}_required"] = draft.get(
+                            f"{trade}_required"
+                        )
+                        house[f"draft_plan_{trade}_notes"] = draft.get(
+                            f"{trade}_notes", ""
+                        )
+                    house["work_plan_draft_saved_at"] = draft.get("saved_at")
                 if not _has_access_profile(user, "surveyor"):
                     house.pop("surveyor_assigned_by", None)
                 house["work_plan_permissions"] = work_plan_permissions
@@ -4718,7 +4934,30 @@ class LegacyRouteHandlers:
                 return
             with connect_db() as db:
                 db.execute("BEGIN")
-                if _has_access_profile(user, "plumbing_coordinator"):
+                if _has_access_profile(user, "ventilation_coordinator"):
+                    ventilation = _ventilation_coordinator_dashboard(db)
+                    dashboard = {
+                        "materials": [],
+                        "team_rosters": [],
+                        "demo_mode": False,
+                        "houses": 0,
+                        "house_summary": {
+                            "provided": len(
+                                ventilation["ventilation_coordinator_houses"]
+                            ),
+                            "active": 0,
+                            "closed": 0,
+                            "ready": 0,
+                            "not_started": 0,
+                        },
+                        "movements": [],
+                        "teams": [],
+                        "team_house_counts": {},
+                        "house_list": [],
+                        "locations": [],
+                        **ventilation,
+                    }
+                elif _has_access_profile(user, "plumbing_coordinator"):
                     plumbing = _plumbing_coordinator_dashboard(db)
                     dashboard = {
                         "materials": [],
@@ -4745,10 +4984,15 @@ class LegacyRouteHandlers:
                     dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
                 if (
                     not _has_access_profile(user, "plumbing_coordinator")
+                    and not _has_access_profile(user, "ventilation_coordinator")
                     and _in_department(db, user, "Ventilation")
                 ):
-                    dashboard["ventilation_houses"] = _ventilation_house_list(db)
+                    dashboard["ventilation_houses"] = _ventilation_house_list(
+                        db, user["id"]
+                    )
             if (
+                not _has_access_profile(user, "ventilation_coordinator")
+                and
                 not _has_access_profile(user, "plumbing_coordinator")
                 and _has_access_profile(user, "assign")
             ):
@@ -4769,6 +5013,8 @@ class LegacyRouteHandlers:
                         if entry.get("type") not in {"movement", "material_request"}
                     ]
             elif (
+                not _has_access_profile(user, "ventilation_coordinator")
+                and
                 not _has_access_profile(user, "plumbing_coordinator")
                 and _has_access_profile(user, "supervisor")
             ):
@@ -6277,7 +6523,60 @@ class LegacyRouteHandlers:
                         """, (house_id,)).fetchone()
                         if not ready:
                             raise ApiError(409, "Survey measurements can only be saved for houses ready for start.")
-                        if any(
+                        draft = db.execute(
+                            "SELECT data FROM house_work_plan_drafts WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        draft_data = None
+                        if draft:
+                            try:
+                                draft_data = json.loads(draft["data"])
+                            except (TypeError, ValueError):
+                                raise ApiError(
+                                    500,
+                                    "Saved pre-start work-plan draft is invalid.",
+                                )
+                            if not isinstance(draft_data, dict) or any(
+                                not isinstance(draft_data.get(f"{trade}_required"), bool)
+                                for trade in ("scaffolding", "esb", "plumber")
+                            ):
+                                raise ApiError(
+                                    409,
+                                    "Pre-start work plan is not saved. Choose and save Scaffolding, ESB, and Plumber requirements first.",
+                                )
+                            for trade in WORK_PLAN_TRADES:
+                                required = draft_data.get(f"{trade}_required")
+                                notes = draft_data.get(f"{trade}_notes", "")
+                                if required is not None and not isinstance(required, bool):
+                                    raise ApiError(
+                                        500,
+                                        "Saved pre-start work-plan draft is invalid.",
+                                    )
+                                if not isinstance(notes, str):
+                                    raise ApiError(
+                                        500,
+                                        "Saved pre-start work-plan draft is invalid.",
+                                    )
+                                db.execute(
+                                    f"""
+                                    UPDATE provided_houses
+                                    SET plan_{trade}_required = ?,
+                                        plan_{trade}_notes = ?,
+                                        plan_{trade}_done_by =
+                                            CASE WHEN ? = 1 THEN plan_{trade}_done_by ELSE '' END,
+                                        plan_{trade}_done_at =
+                                            CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END
+                                    WHERE id = ?
+                                    """,
+                                    (
+                                        int(required) if required is not None else None,
+                                        notes,
+                                        int(required) if required is not None else 0,
+                                        int(required) if required is not None else 0,
+                                        house_id,
+                                    ),
+                                )
+                        elif any(
                             ready[f"plan_{trade}_required"] is None
                             for trade in ("scaffolding", "esb", "plumber")
                         ):
@@ -6291,6 +6590,9 @@ class LegacyRouteHandlers:
                                 "Enter a surveyed perimeter greater than 0 and no more than 10,000 metres.",
                             )
                         updated_at = datetime.now().isoformat(timespec="seconds")
+                        _record_house_survey_revision(
+                            db, house_id, survey, user, updated_at
+                        )
                         db.execute("""
                             INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
                             VALUES (?, ?, ?, ?, ?)
@@ -6299,6 +6601,11 @@ class LegacyRouteHandlers:
                                 updated_at = excluded.updated_at
                         """, (house_id, json.dumps(survey, ensure_ascii=False), survey["notes"],
                                   user["display_name"], updated_at))
+                        if draft_data is not None:
+                            db.execute(
+                                "DELETE FROM house_work_plan_drafts WHERE house_id = ?",
+                                (house_id,),
+                            )
                 self._send_json(
                     200,
                     {
@@ -6307,6 +6614,7 @@ class LegacyRouteHandlers:
                         "survey": survey,
                         "survey_completed": _survey_has_valid_perimeter(survey),
                         "updated_at": updated_at,
+                        "work_plan_published": draft_data is not None,
                     },
                 )
                 return
@@ -6376,6 +6684,9 @@ class LegacyRouteHandlers:
                             "house_corners": [],
                         }
                         survey["notes"] = note
+                        _record_house_survey_revision(
+                            db, house_id, survey, user, now
+                        )
                         db.execute(
                             """
                             INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
@@ -6653,6 +6964,9 @@ class LegacyRouteHandlers:
                         403,
                         "Administrator or Assign access is required to manage house assignments.",
                     )
+            elif path == "/api/ventilation-coordinator/assignment":
+                if not _has_access_profile(user, "ventilation_coordinator"):
+                    raise ApiError(403, "Vent Coordinator access is required.")
             elif path == "/api/plumbing-coordinator/assignment":
                 if not _has_access_profile(user, "plumbing_coordinator"):
                     raise ApiError(403, "Plumbing Coordinator access is required.")
@@ -6680,7 +6994,97 @@ class LegacyRouteHandlers:
             }:
                 if not self._admin_required(user):
                     return
-            if path == "/api/plumbing-coordinator/assignment":
+            if path == "/api/ventilation-coordinator/assignment":
+                payload = self._json_body()
+                if not isinstance(payload, dict) or set(payload) != {
+                    "house_id",
+                    "teamlead_user_id",
+                }:
+                    raise ApiError(400, "Choose a house and Ventilation Teamlead.")
+                if not isinstance(payload["house_id"], str):
+                    raise ApiError(400, "Enter a valid house ID.")
+                house_id = payload["house_id"].strip()
+                if not house_id or len(house_id) > 120:
+                    raise ApiError(400, "Enter a valid house ID.")
+                teamlead_user_id = payload["teamlead_user_id"]
+                if isinstance(teamlead_user_id, bool):
+                    raise ApiError(400, "Choose an active Ventilation Teamlead.")
+                try:
+                    teamlead_user_id = int(teamlead_user_id)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ApiError(
+                        400, "Choose an active Ventilation Teamlead."
+                    ) from exc
+                now = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        house = db.execute(
+                            """
+                            SELECT p.id, h.is_finished
+                            FROM provided_houses p
+                            LEFT JOIN houses h ON h.id = p.id
+                            WHERE p.id = ? AND p.plan_vent_required = 1
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if house is None or house["is_finished"] == 1:
+                            raise ApiError(
+                                409,
+                                "Choose an open house with required Vent work.",
+                            )
+                        teamlead = db.execute(
+                            """
+                            SELECT users.id, users.display_name, users.team_name
+                            FROM app_users users
+                            WHERE users.id = ? AND users.is_active = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = users.role
+                                    AND access.permission_key = 'access.teamlead'
+                                    AND access.is_allowed = 1
+                              )
+                              AND EXISTS (
+                                  SELECT 1 FROM user_departments memberships
+                                  JOIN departments ON departments.id = memberships.department_id
+                                  WHERE memberships.user_id = users.id
+                                    AND departments.name = 'Ventilation' COLLATE NOCASE
+                                    AND departments.is_active = 1
+                              )
+                            """,
+                            (teamlead_user_id,),
+                        ).fetchone()
+                        if teamlead is None:
+                            raise ApiError(
+                                400, "Choose an active Ventilation Teamlead."
+                            )
+                        db.execute(
+                            """
+                            INSERT INTO house_vent_assignments
+                                (house_id, teamlead_user_id, assigned_by, assigned_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(house_id) DO UPDATE SET
+                                teamlead_user_id = excluded.teamlead_user_id,
+                                assigned_by = excluded.assigned_by,
+                                assigned_at = excluded.assigned_at
+                            """,
+                            (
+                                house_id,
+                                teamlead_user_id,
+                                user["display_name"],
+                                now,
+                            ),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "teamlead_user_id": teamlead["id"],
+                        "teamlead_name": teamlead["display_name"],
+                        "team_name": teamlead["team_name"],
+                        "assigned_at": now,
+                    },
+                )
+            elif path == "/api/plumbing-coordinator/assignment":
                 payload = self._json_body()
                 if not isinstance(payload, dict) or set(payload) != {
                     "house_id",
@@ -7529,48 +7933,109 @@ class LegacyRouteHandlers:
                         None if required is None else int(required)
                     )
                     notes_values[trade] = notes.strip()
+                if any(
+                    required_values[trade] is None
+                    for trade in ("scaffolding", "esb", "plumber")
+                ):
+                    raise ApiError(
+                        400,
+                        "Choose whether Scaffolding, ESB, and Plumber work is required before saving the work plan.",
+                    )
+                draft_data = {}
+                for trade in WORK_PLAN_TRADES:
+                    draft_data[f"{trade}_required"] = (
+                        None
+                        if required_values[trade] is None
+                        else bool(required_values[trade])
+                    )
+                    draft_data[f"{trade}_notes"] = notes_values[trade]
                 assignments = ", ".join(
                     f"plan_{trade}_required = ?, plan_{trade}_notes = ?, "
                     f"plan_{trade}_done_by = CASE WHEN ? = 1 THEN plan_{trade}_done_by ELSE '' END, "
                     f"plan_{trade}_done_at = CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END"
                     for trade in WORK_PLAN_TRADES
                 )
-                values = [
-                    value
-                    for trade in WORK_PLAN_TRADES
-                    for value in (
-                        required_values[trade],
-                        notes_values[trade],
-                        required_values[trade],
-                        required_values[trade],
+                values = []
+                for trade in WORK_PLAN_TRADES:
+                    required = required_values[trade]
+                    values.extend(
+                        (
+                            required,
+                            notes_values[trade],
+                            required or 0,
+                            required or 0,
+                        )
                     )
-                ]
                 with connect_db() as db:
                     with db:
                         saved = db.execute(
-                            f"""
-                            UPDATE provided_houses
-                            SET {assignments}
+                            """
+                            SELECT 1 FROM provided_houses
                             WHERE id = ? AND ready_for_start = 1
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM houses
-                                  WHERE houses.id = provided_houses.id
-                              )
+                              AND NOT EXISTS (SELECT 1 FROM houses WHERE houses.id = ?)
                             """,
-                            (*values, house_id),
+                            (house_id, house_id),
                         )
-                        if saved.rowcount == 0:
+                        if saved.fetchone() is None:
                             exists = db.execute(
                                 "SELECT 1 FROM provided_houses WHERE id = ?",
                                 (house_id,),
                             ).fetchone()
-                            if not exists:
+                            if exists is None:
                                 raise ApiError(404, "House was not found.")
                             raise ApiError(
                                 409,
                                 "Work plans can only be edited for Ready for start houses.",
                             )
-                self._send_json(200, {"house_id": house_id, "saved": True})
+                        saved_at = datetime.now().isoformat(timespec="seconds")
+                        published = _has_access_profile(user, "admin")
+                        if published:
+                            db.execute(
+                                f"UPDATE provided_houses SET {assignments} WHERE id = ?",
+                                (*values, house_id),
+                            )
+                            db.execute(
+                                """
+                                DELETE FROM house_vent_assignments
+                                WHERE house_id = ?
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM provided_houses
+                                      WHERE id = ? AND plan_vent_required = 1
+                                  )
+                                """,
+                                (house_id, house_id),
+                            )
+                            db.execute(
+                                "DELETE FROM house_work_plan_drafts WHERE house_id = ?",
+                                (house_id,),
+                            )
+                        else:
+                            db.execute(
+                                """
+                                INSERT INTO house_work_plan_drafts
+                                    (house_id, data, saved_by, saved_at)
+                                VALUES (?, ?, ?, ?)
+                                ON CONFLICT(house_id) DO UPDATE SET
+                                    data = excluded.data,
+                                    saved_by = excluded.saved_by,
+                                    saved_at = excluded.saved_at
+                                """,
+                                (
+                                    house_id,
+                                    json.dumps(draft_data, ensure_ascii=False),
+                                    user["display_name"],
+                                    saved_at,
+                                ),
+                            )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "saved": True,
+                        "published": published,
+                        "saved_at": saved_at,
+                    },
+                )
             elif path == "/api/house-work-plan/complete":
                 payload = self._json_body()
                 if not isinstance(payload, dict):

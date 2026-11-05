@@ -63,6 +63,7 @@ class TrackerTests(unittest.TestCase):
             "teamlead": "Teamlead",
             "plumber": "Plumber",
             "plumbing_coordinator": "Plumbing Coordinator",
+            "ventilation_coordinator": "Vent Coordinator",
             "employee": "Employee",
         }
         with server.connect_db() as db:
@@ -93,6 +94,7 @@ class TrackerTests(unittest.TestCase):
                     "access.teamlead",
                     "access.plumber",
                     "access.plumbing_coordinator",
+                    "access.ventilation_coordinator",
                     "access.employee",
                 },
             )
@@ -142,6 +144,7 @@ class TrackerTests(unittest.TestCase):
             "teamlead",
             "plumber",
             "plumbing_coordinator",
+            "ventilation_coordinator",
         )
         httpd, thread = self.start_test_server()
         try:
@@ -178,6 +181,133 @@ class TrackerTests(unittest.TestCase):
                     db.execute("SELECT COUNT(*) FROM app_users").fetchone()[0],
                     len(roles) + 1,
                 )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_ventilation_coordinator_assigns_required_work_to_ventilation_teamlead(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, admin, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "vent-role-admin",
+                    "display_name": "Vent Role Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            with server.connect_db() as db:
+                vent_department_id = db.execute(
+                    "SELECT id FROM departments WHERE name = 'Ventilation'"
+                ).fetchone()["id"]
+                db.execute(
+                    """
+                    INSERT INTO provided_houses
+                        (id, owner_name, plan_vent_required, plan_vent_notes)
+                    VALUES ('VENT-COORDINATOR-1', 'Vent House', 1, 'Fit vents')
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO provided_houses (id, owner_name, plan_vent_required)
+                    VALUES ('VENT-COORDINATOR-2', 'Other House', 0)
+                    """
+                )
+            status, coordinator, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "yvonne.oregan",
+                    "display_name": "Yvonne O’Reagan",
+                    "pin": "123456",
+                    "role": "ventilation_coordinator",
+                    "department_ids": [vent_department_id],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            with server.connect_db() as db:
+                self.assertTrue(
+                    server._role_has_access(db, "ventilation_coordinator", "ventilation_coordinator")
+                )
+            status, teamlead, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "vent-teamlead",
+                    "display_name": "Vent Teamlead",
+                    "pin": "234567",
+                    "role": "teamlead",
+                    "team_name": "Ventilation",
+                    "department_ids": [vent_department_id],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, coordinator_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "yvonne.oregan", "pin": "123456"},
+            )
+            self.assertEqual(status, 200)
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=coordinator_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [house["id"] for house in dashboard["ventilation_coordinator_houses"]],
+                ["VENT-COORDINATOR-1"],
+            )
+            self.assertEqual(
+                dashboard["ventilation_teamleads"][0]["id"],
+                teamlead["user"]["id"],
+            )
+            status, assignment, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/ventilation-coordinator/assignment",
+                {
+                    "house_id": "VENT-COORDINATOR-1",
+                    "teamlead_user_id": teamlead["user"]["id"],
+                },
+                coordinator_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(assignment["teamlead_name"], "Vent Teamlead")
+            with server.connect_db() as db:
+                saved_assignment = db.execute(
+                    "SELECT teamlead_user_id, assigned_by FROM house_vent_assignments "
+                    "WHERE house_id = 'VENT-COORDINATOR-1'"
+                ).fetchone()
+                self.assertEqual(
+                    saved_assignment["teamlead_user_id"], teamlead["user"]["id"]
+                )
+                self.assertEqual(saved_assignment["assigned_by"], "Yvonne O’Reagan")
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/ventilation-coordinator/assignment",
+                {
+                    "house_id": "VENT-COORDINATOR-2",
+                    "teamlead_user_id": teamlead["user"]["id"],
+                },
+                coordinator_cookie,
+            )
+            self.assertEqual(status, 409)
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/users",
+                cookie=coordinator_cookie,
+            )
+            self.assertEqual(status, 403)
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -988,6 +1118,30 @@ class TrackerTests(unittest.TestCase):
             self.assertEqual(image[25], 6)
         finally:
             connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_cat_favicon_is_served_for_browser_tab(self):
+        httpd, thread = self.start_test_server()
+        try:
+            for path, content_type, signature in (
+                ("/brusna-cat-v3.ico", "image/x-icon", b"\x00\x00\x01\x00"),
+                ("/brusna-cat-v3.png", "image/png", b"\x89PNG\r\n\x1a\n"),
+            ):
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", httpd.server_address[1], timeout=5
+                )
+                try:
+                    connection.request("GET", path)
+                    response = connection.getresponse()
+                    icon = response.read()
+                    self.assertEqual(response.status, 200, path)
+                    self.assertEqual(response.getheader("Content-Type"), content_type)
+                    self.assertTrue(icon.startswith(signature), path)
+                finally:
+                    connection.close()
+        finally:
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=5)
@@ -1944,11 +2098,88 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             self.assertTrue(result["saved"])
+            self.assertFalse(result["published"])
             status, response, _ = self.http_request(
                 httpd,
                 "GET",
                 "/api/calculator/houses?status=ready",
                 cookie=surveyor_cookie,
+            )
+            self.assertEqual(status, 200)
+            house = next(item for item in response["houses"] if item["id"] == "H-WORKPLAN")
+            self.assertIsNone(house["plan_scaffolding_required"])
+            self.assertTrue(house["draft_plan_scaffolding_required"])
+            self.assertEqual(house["draft_plan_scaffolding_notes"], "Rear access only")
+            invalid_survey_status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-survey",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "survey": {
+                        "windows": [],
+                        "doors": [],
+                        "house_corners": [],
+                        "perimeter_m": None,
+                        "notes": "",
+                    },
+                },
+                surveyor_cookie,
+            )
+            self.assertEqual(invalid_survey_status, 400)
+            with server.connect_db() as db:
+                unchanged_plan = db.execute(
+                    "SELECT plan_scaffolding_required, plan_esb_required, "
+                    "plan_plumber_required FROM provided_houses "
+                    "WHERE id = 'H-WORKPLAN'"
+                ).fetchone()
+                self.assertEqual(tuple(unchanged_plan), (None, None, None))
+                self.assertIsNotNone(
+                    db.execute(
+                        "SELECT 1 FROM house_work_plan_drafts "
+                        "WHERE house_id = 'H-WORKPLAN'"
+                    ).fetchone()
+                )
+            survey_status, survey_result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-survey",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "survey": {
+                        "windows": [],
+                        "doors": [],
+                        "house_corners": [],
+                        "perimeter_m": 42.5,
+                        "notes": "",
+                    },
+                },
+                surveyor_cookie,
+            )
+            self.assertEqual(survey_status, 200, survey_result)
+            self.assertTrue(survey_result["work_plan_published"])
+            admin_plan_status, admin_plan_result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "scaffolding_required": True,
+                    "scaffolding_notes": "Rear access only",
+                    "esb_required": False,
+                    "esb_notes": "",
+                    "plumber_required": True,
+                    "plumber_notes": "Coordinate with owner",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(admin_plan_status, 200, admin_plan_result)
+            self.assertTrue(admin_plan_result["published"])
+            status, response, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/calculator/houses?status=ready",
+                cookie=admin_cookie,
             )
             self.assertEqual(status, 200)
             house = next(item for item in response["houses"] if item["id"] == "H-WORKPLAN")
