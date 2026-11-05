@@ -27,6 +27,51 @@ class TrackerTests(unittest.TestCase):
         server.DB_PATH = self.original_db_path
         self.temp_dir.cleanup()
 
+    def test_vent_team_does_not_see_assignment_from_before_reset(self):
+        with server.connect_db() as db:
+            teamlead_id = server._insert_user(
+                db,
+                "vent-reset-teamlead",
+                "Vent Reset Teamlead",
+                "234567",
+                "teamlead",
+                team_name="Ventilation",
+            )
+            db.executemany(
+                """
+                INSERT INTO provided_houses
+                    (id, owner_name, plan_vent_required, plan_vent_notes)
+                VALUES (?, ?, 1, 'Vent work details')
+                """,
+                [
+                    ("VENT-OLD-CYCLE", "Old cycle",),
+                    ("VENT-NEW-CYCLE", "New cycle",),
+                ],
+            )
+            db.executemany(
+                """
+                INSERT INTO house_status_history
+                    (house_id, status, changed_by, changed_at)
+                VALUES (?, 'not_started', 'Assign', '2026-11-05T10:00:00')
+                """,
+                [("VENT-OLD-CYCLE",), ("VENT-NEW-CYCLE",)],
+            )
+            db.executemany(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES (?, ?, 'Vent Coordinator', ?)
+                """,
+                [
+                    ("VENT-OLD-CYCLE", teamlead_id, "2026-11-05T09:00:00"),
+                    ("VENT-NEW-CYCLE", teamlead_id, "2026-11-05T11:00:00"),
+                ],
+            )
+
+            houses = server._ventilation_house_list(db, teamlead_id)
+
+        self.assertEqual([house["id"] for house in houses], ["VENT-NEW-CYCLE"])
+
     def add_material(self, name="Board", opening=10):
         with server.connect_db() as db:
             cursor = db.execute(
@@ -207,14 +252,24 @@ class TrackerTests(unittest.TestCase):
                 db.execute(
                     """
                     INSERT INTO provided_houses
-                        (id, owner_name, plan_vent_required, plan_vent_notes)
-                    VALUES ('VENT-COORDINATOR-1', 'Vent House', 1, 'Fit vents')
+                        (id, owner_name, ready_for_start,
+                         plan_vent_required, plan_vent_notes)
+                    VALUES ('VENT-COORDINATOR-1', 'Vent House', 1, 1, 'Fit vents')
                     """
                 )
                 db.execute(
                     """
                     INSERT INTO provided_houses (id, owner_name, plan_vent_required)
                     VALUES ('VENT-COORDINATOR-2', 'Other House', 0)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_role_assignments
+                        (house_id, role, user_id, assigned_by, assigned_at)
+                    SELECT 'VENT-COORDINATOR-1', 'surveyor', id, 'Admin',
+                           '2026-11-05T09:00:00'
+                    FROM app_users WHERE username = 'vent-role-admin'
                     """
                 )
             status, coordinator, _ = self.http_request(
@@ -266,6 +321,10 @@ class TrackerTests(unittest.TestCase):
                 ["VENT-COORDINATOR-1"],
             )
             self.assertEqual(
+                dashboard["ventilation_coordinator_houses"][0]["surveyor_name"],
+                "Vent Role Admin",
+            )
+            self.assertEqual(
                 dashboard["ventilation_teamleads"][0]["id"],
                 teamlead["user"]["id"],
             )
@@ -281,6 +340,48 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             self.assertEqual(assignment["teamlead_name"], "Vent Teamlead")
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=coordinator_cookie
+            )
+            self.assertEqual(status, 200)
+            assigned_house = dashboard["ventilation_coordinator_houses"][0]
+            self.assertEqual(
+                assigned_house["assignment_assigned_by"], "Yvonne O’Reagan"
+            )
+            self.assertTrue(assigned_house["assignment_assigned_at"])
+            self.assertEqual(assigned_house["surveyor_name"], "Vent Role Admin")
+            status, _, teamlead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "vent-teamlead", "pin": "234567"},
+            )
+            self.assertEqual(status, 200)
+            status, completion, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-work-plan/complete",
+                {
+                    "house_id": "VENT-COORDINATOR-1",
+                    "trade": "vent",
+                    "done": True,
+                },
+                teamlead_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(completion["done_by"], "Vent Teamlead")
+            self.assertTrue(completion["done_at"])
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=coordinator_cookie
+            )
+            self.assertEqual(status, 200)
+            completed_house = dashboard["ventilation_coordinator_houses"][0]
+            self.assertEqual(completed_house["done_by"], "Vent Teamlead")
+            self.assertEqual(completed_house["done_at"], completion["done_at"])
+            self.assertEqual(
+                completed_house["assignment_assigned_by"], "Yvonne O’Reagan"
+            )
+            self.assertEqual(completed_house["surveyor_name"], "Vent Role Admin")
             with server.connect_db() as db:
                 saved_assignment = db.execute(
                     "SELECT teamlead_user_id, assigned_by FROM house_vent_assignments "

@@ -419,8 +419,16 @@ class NavigationBrowserTests(unittest.TestCase):
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
         )
         card.wait_for()
+        self.assertIn(
+            "Assigned to you by Dashboard Test",
+            card.locator(".supervisor-house-assignment-credit").inner_text(),
+        )
         pending_card = self.page.locator(
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-PENDING"]'
+        )
+        self.assertIn(
+            "Assigned to you by Dashboard Test",
+            pending_card.locator(".supervisor-house-assignment-credit").inner_text(),
         )
         self.assertFalse(
             pending_card.get_by_text("Awaiting activation", exact=True).count()
@@ -726,7 +734,10 @@ class NavigationBrowserTests(unittest.TestCase):
             19,
         )
         self.assertTrue(
-            self.page.locator(".plumbing-coordinator-greeting-icon svg").is_visible()
+            self.page.locator(
+                "#plumbing-coordinator-workload > .plumbing-coordinator-greeting "
+                ".plumbing-coordinator-greeting-icon svg"
+            ).is_visible()
         )
         self.assertTrue(
             self.page.locator(
@@ -758,11 +769,11 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(
             self.page.locator(".plumbing-job-status").inner_text(),
-            "Needs completion",
+            "Needs assignment",
         )
         self.assertEqual(
             self.page.locator("#plumbing-house-filters").get_by_text(
-                "Needs completion", exact=False
+                "Needs assignment", exact=False
             ).count(),
             1,
         )
@@ -857,6 +868,8 @@ class NavigationBrowserTests(unittest.TestCase):
             assigned_card.locator(".plumbing-assigned-supervisor strong").inner_text(),
             "Plumbing Team Supervisor",
         )
+        self.assertNotIn("Assigned by", assigned_card.inner_text())
+        self.assertIn("Assigned on", assigned_card.inner_text())
         self.assertNotIn("Save supervisor", assigned_card.inner_text())
         self.page.locator('[data-plumbing-filter="assigned"]').click()
         self.assertEqual(assigned_card.count(), 1)
@@ -879,6 +892,13 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.page.locator('[data-plumbing-filter="all"]').click()
         with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE house_role_assignments
+                SET assigned_at = '2026-11-04T10:00:00'
+                WHERE house_id = 'PLUMBING-DASHBOARD' AND role = 'supervisor'
+                """
+            )
             db.execute(
                 """
                 INSERT INTO house_checklists (house_id, plumber_status)
@@ -929,8 +949,21 @@ class NavigationBrowserTests(unittest.TestCase):
             "2026-11-04T11:00:00",
         )
         self.assertTrue(
+            self.page.get_by_text("Time to complete", exact=True).is_visible()
+        )
+        self.assertTrue(
+            self.page.get_by_text("1 hour", exact=True).is_visible()
+        )
+        self.assertTrue(
             self.page.get_by_text("Surveyor Example", exact=True).is_visible()
         )
+        completed_card = self.page.locator(
+            "#plumbing-house-list .plumbing-house-card"
+        )
+        completed_card_text = completed_card.inner_text()
+        self.assertNotIn("Assigned to", completed_card_text)
+        self.assertNotIn("Assigned by", completed_card_text)
+        self.assertNotIn("Assigned on", completed_card_text)
         self.page.locator('[data-plumbing-filter="all"]').click()
         self.page.wait_for_function(
             """getComputedStyle(document.querySelector('.plumbing-house-card'))
@@ -1167,13 +1200,18 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertTrue(self.page.locator("#today-label").is_hidden())
         self.assertTrue(self.page.locator("#overview-work-summary").is_hidden())
+        self.assertEqual(self.page.locator("#ventilation-dashboard-stats").count(), 0)
+        self.assertEqual(
+            self.page.locator("#ventilation-workload .surveyor-dashboard-stats").count(),
+            0,
+        )
         self.assertFalse(self.page.locator(".ventilation-summary-progress").count())
         self.assertTrue(self.page.locator("#page-overview .overview-grid").is_hidden())
         self.assertTrue(self.page.locator("#ventilation-house-filters").is_visible())
         self.assertEqual(self.page.locator("#stat-provided").text_content(), "2")
         self.assertEqual(self.page.locator("#stat-houses").text_content(), "1")
         self.assertEqual(self.page.locator("#stat-ready").text_content(), "1")
-        self.assertFalse(self.page.locator("#stat-ready").is_hidden())
+        self.assertTrue(self.page.locator("#stat-ready").is_hidden())
         self.assertEqual(self.page.locator("#stat-ready-label").inner_text(), "To do")
         self.assertFalse(
             self.page.locator(
@@ -1207,6 +1245,8 @@ class NavigationBrowserTests(unittest.TestCase):
         complete_card = self.page.locator(
             ".ventilation-house-card"
         ).filter(has_text="VENT-DASHBOARD-COMPLETE")
+        self.assertIn("Assigned by: Vent Coordinator", pending_card.inner_text())
+        self.assertNotIn("Assigned Vent team:", pending_card.inner_text())
         shared_pdf = pending_card.locator(".ventilation-shared-pdfs")
         self.assertFalse(shared_pdf.evaluate("element => element.open"))
         shared_pdf.locator("summary").click()
@@ -1323,10 +1363,11 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(ventilation_card_shape["minHeight"], "190px")
         self.assertEqual(ventilation_card_shape["borderRadius"], "14px")
         self.assertEqual(ventilation_card_shape["padding"], "18px")
-        self.assertIn(
-            "Ventilation Teammate",
-            self.page.locator(".ventilation-house-card.is-complete").inner_text(),
+        completed_vent_card = self.page.locator(
+            ".ventilation-house-card.is-complete"
         )
+        self.assertIn("Ventilation complete", completed_vent_card.inner_text())
+        self.assertIn("Completed by Ventilation Teammate", completed_vent_card.inner_text())
         self.assertIn(
             "Ventilation outstanding",
             self.page.locator(".ventilation-house-card:not(.is-complete)").inner_text(),
@@ -1972,6 +2013,25 @@ class NavigationBrowserTests(unittest.TestCase):
                     ),
                 ),
             )
+            db.execute(
+                """
+                INSERT INTO seai_measure_variation_history
+                    (house_id, measure_index, measure_name, survey_quantity,
+                     previous_variation, variation, changed_by,
+                     changed_by_username, changed_at)
+                VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "ACTIVE-ASSIGN",
+                    "External Wall Insulation",
+                    "120",
+                    "135",
+                    "142.5",
+                    "Variation Surveyor",
+                    "variation-surveyor",
+                    "2026-11-05T13:30:00",
+                ),
+            )
 
         result = self.page.evaluate(
             """async () => {
@@ -2101,6 +2161,12 @@ class NavigationBrowserTests(unittest.TestCase):
             "External Wall Insulation",
             self.page.locator("#assign-seai-house-record").inner_text(),
         )
+        history = self.page.locator(".assign-seai-variation-history")
+        self.assertTrue(history.is_visible())
+        self.assertIn("120", history.inner_text())
+        self.assertIn("135 → 142.5", history.inner_text())
+        self.assertIn("Variation Surveyor (variation-surveyor)", history.inner_text())
+        self.assertIn("05 Nov 2026", history.inner_text())
         self.assertEqual(
             self.page.locator("#assign-seai-house-record .seai-variation-edit").count(),
             0,
@@ -3570,6 +3636,371 @@ class NavigationBrowserTests(unittest.TestCase):
             "materials",
             self.page.locator("#page-houses").inner_text().lower(),
         )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_cross_account_survey_plumbing_and_ventilation_workflow(self):
+        house_id = "ROLE-FLOW-1"
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES (?, 'T1', 'Role Flow Owner', 1)
+                """,
+                (house_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_status_history(house_id, status, changed_by, changed_at)
+                VALUES (?, 'ready', 'Cathy', '2026-10-29T11:00:00')
+                """,
+                (house_id,),
+            )
+            cathy_id = server._insert_user(
+                db, "flow-cathy", "Cathy Flow", "234567", "assign"
+            )
+            surveyor_id = server._insert_user(
+                db, "flow-surveyor", "Surveyor Flow", "345678", "surveyor"
+            )
+            ewi_supervisor_id = server._insert_user(
+                db,
+                "flow-ewi-supervisor",
+                "EWI Flow Supervisor",
+                "456780",
+                "supervisor",
+                "External Wall Insulation",
+            )
+            plumbing_supervisor_id = server._insert_user(
+                db,
+                "flow-plumbing-supervisor",
+                "Plumbing Flow Supervisor",
+                "456781",
+                "supervisor",
+                "Plumbing",
+            )
+            server._insert_user(
+                db,
+                "flow-plumbing-coordinator",
+                "Plumbing Flow Coordinator",
+                "456782",
+                "plumbing_coordinator",
+            )
+            server._insert_user(
+                db, "flow-plumber", "Plumber Flow", "456783", "plumber"
+            )
+            server._insert_user(
+                db,
+                "flow-vent-coordinator",
+                "Vent Flow Coordinator",
+                "456784",
+                "ventilation_coordinator",
+            )
+            vent_teamlead_id = server._insert_user(
+                db,
+                "flow-vent-teamlead",
+                "Vent Teamlead Flow",
+                "456785",
+                "teamlead",
+                team_name="Ventilation",
+            )
+        def sign_in(username, pin, display_name):
+            if self.page.locator(".app-shell:not(.hidden)").is_visible():
+                self.page.locator("#account-button").click()
+                self.page.locator("#account-sign-out").click()
+                self.page.locator("#auth-screen:not(.hidden)").wait_for()
+            self.page.locator("#auth-username").fill(username)
+            self.page.locator("#auth-pin").fill(pin)
+            self.page.locator("#auth-submit").click()
+            self.page.locator(".app-shell:not(.hidden)").wait_for()
+            self.page.reload(wait_until="domcontentloaded")
+            self.page.locator(".app-shell:not(.hidden)").wait_for()
+            self.page.wait_for_function(
+                "(name) => document.querySelector('#account-name').textContent === name",
+                arg=display_name,
+            )
+
+        sign_in("flow-cathy", "234567", "Cathy Flow")
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        card = self.page.locator(
+            f"#houses-list article[data-house-id='{house_id}']"
+        )
+        card.locator(".assign-house-team").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
+        surveyor_option = self.page.locator(
+            f"#house-assignment-surveyor input[name='surveyor_user_id'][value='{surveyor_id}']"
+        )
+        surveyor_option.check()
+        self.page.locator("#save-house-assignments").click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="hidden")
+        with server.connect_db() as db:
+            assignment = db.execute(
+                "SELECT user_id FROM house_role_assignments "
+                "WHERE house_id = ? AND role = 'surveyor'",
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(assignment["user_id"], surveyor_id)
+
+        sign_in("flow-surveyor", "345678", "Surveyor Flow")
+        surveyor_card = self.page.locator(
+            f"#houses-list article[data-house-id='{house_id}']"
+        )
+        surveyor_card.wait_for()
+        surveyor_card.locator(".surveyor-house-action").click()
+        self.page.locator("#surveyor-room:not(.hidden)").wait_for()
+        work_plan = self.page.locator("#surveyor-work-plan-form")
+        work_plan.locator("[name='scaffolding_required']").select_option("false")
+        work_plan.locator("[name='esb_required']").select_option("false")
+        work_plan.locator("[name='plumber_required']").select_option("true")
+        work_plan.locator("[name='plumber_notes']").fill("Replace the supply line")
+        work_plan.locator("[name='vent_required']").select_option("true")
+        work_plan.locator("[name='vent_notes']").fill("Check extractor routing")
+        with self.page.expect_response(
+            lambda response: response.url.endswith("/api/house-work-plan")
+            and response.status == 200
+        ):
+            work_plan.locator("button[type='submit']").click()
+        work_plan.locator("[name='vent_notes']").fill("Check extractor and airflow")
+        with self.page.expect_response(
+            lambda response: response.url.endswith("/api/house-work-plan")
+            and response.status == 200
+        ):
+            work_plan.locator("button[type='submit']").click()
+        self.page.locator("#survey-perimeter").fill("42.5")
+        self.page.locator("#house-survey-form button[type='submit']").click()
+        self.page.locator("#surveyor-room").wait_for(state="hidden")
+        with server.connect_db() as db:
+            survey = db.execute(
+                "SELECT updated_by, data FROM house_surveys WHERE house_id = ?",
+                (house_id,),
+            ).fetchone()
+            plan = db.execute(
+                """
+                SELECT plan_plumber_required, plan_plumber_notes,
+                       plan_vent_required, plan_vent_notes
+                FROM provided_houses WHERE id = ?
+                """,
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(survey["updated_by"], "Surveyor Flow")
+        self.assertEqual(json.loads(survey["data"])["perimeter_m"], 42.5)
+        self.assertEqual(
+            tuple(plan),
+            (1, "Replace the supply line", 1, "Check extractor and airflow"),
+        )
+
+        sign_in("flow-vent-coordinator", "456784", "Vent Flow Coordinator")
+        self.assertTrue(
+            self.page.locator("#ventilation-coordinator-workload").is_visible(),
+            self.page.locator("#ventilation-coordinator-workload").get_attribute(
+                "class"
+            ),
+        )
+        with self.page.expect_response(
+            lambda response: response.url.endswith("/api/dashboard")
+            and response.status == 200
+        ):
+            self.page.locator("#refresh-ventilation-coordinator-houses").click()
+        vent_coordinator_card = self.page.locator(
+            "#ventilation-coordinator-house-list .ventilation-house-card"
+        ).filter(has_text=house_id)
+        vent_coordinator_card.wait_for()
+        vent_option = vent_coordinator_card.locator(
+            f"input[name='teamlead_user_id'][value='{vent_teamlead_id}']"
+        )
+        vent_option.check()
+        vent_coordinator_card.locator("button[type='submit']").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#toast').textContent.includes('ROLE-FLOW-1 assigned to Ventilation')"
+        )
+        with server.connect_db() as db:
+            assignment = db.execute(
+                "SELECT teamlead_user_id FROM house_vent_assignments WHERE house_id = ?",
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(assignment["teamlead_user_id"], vent_teamlead_id)
+
+        sign_in("flow-plumber", "456783", "Plumber Flow")
+        self.page.locator("#stat-ready").click()
+        plumber_check = self.page.locator(
+            f"#houses-list .work-plan-check[data-house-id='{house_id}'][data-trade='plumber']"
+        )
+        plumber_check.wait_for()
+        plumber_check.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#houses-list .work-plan-check[data-house-id='ROLE-FLOW-1'][data-trade='plumber']"
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        plumber_check = self.page.locator(
+            f"#houses-list .work-plan-check[data-house-id='{house_id}'][data-trade='plumber']"
+        )
+        plumber_check.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#houses-list .work-plan-check[data-house-id='ROLE-FLOW-1'][data-trade='plumber']"
+            )?.getAttribute("aria-pressed") === "false" """
+        )
+        plumber_check.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#houses-list .work-plan-check[data-house-id='ROLE-FLOW-1'][data-trade='plumber']"
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        with server.connect_db() as db:
+            completion = db.execute(
+                "SELECT plan_plumber_done_by FROM provided_houses WHERE id = ?",
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(completion["plan_plumber_done_by"], "Plumber Flow")
+
+        sign_in("flow-vent-teamlead", "456785", "Vent Teamlead Flow")
+        vent_card = self.page.locator(
+            "#ventilation-house-list .ventilation-house-card"
+        ).filter(has_text=house_id)
+        vent_completion = vent_card.get_by_role(
+            "button", name="Mark Vent work done"
+        )
+        vent_completion.wait_for()
+        vent_completion.click()
+        self.page.wait_for_function(
+            """houseId => [...document.querySelectorAll(
+              "#ventilation-house-list .ventilation-house-card"
+            )].some(card => card.textContent.includes(houseId) &&
+              card.classList.contains("is-complete"))""",
+            arg=house_id,
+        )
+        with server.connect_db() as db:
+            completion = db.execute(
+                "SELECT plan_vent_done_by FROM provided_houses WHERE id = ?",
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(completion["plan_vent_done_by"], "Vent Teamlead Flow")
+
+        sign_in("flow-cathy", "234567", "Cathy Flow")
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        activation = self.page.locator(
+            f"#houses-list [data-house-id='{house_id}'] .assign-house-activate"
+        )
+        activation.wait_for()
+        self.assertTrue(activation.is_enabled())
+        activation.click()
+        supervisor_dialog = self.page.locator("#assign-supervisor-dialog")
+        supervisor_dialog.wait_for(state="visible")
+        ewi_option = self.page.locator(
+            f"#activate-house-supervisor-options input[value='{ewi_supervisor_id}']"
+        )
+        ewi_option.check()
+        self.page.locator("#confirm-house-activation").click()
+        self.page.locator(
+            f"#houses-list article[data-house-id='{house_id}']"
+        ).wait_for(state="detached")
+        with server.connect_db() as db:
+            active_house = db.execute(
+                "SELECT id, employee_name FROM houses WHERE id = ?",
+                (house_id,),
+            ).fetchone()
+        self.assertIsNotNone(active_house)
+        self.assertEqual(active_house["employee_name"], "EWI Flow Supervisor")
+
+        sign_in("flow-plumbing-coordinator", "456782", "Plumbing Flow Coordinator")
+        active_plumbing_card = self.page.locator(
+            "#plumbing-house-list .plumbing-house-card"
+        ).filter(has_text=house_id)
+        active_plumbing_card.wait_for()
+        plumbing_option = active_plumbing_card.locator(
+            f"input[name='supervisor_user_id'][value='{plumbing_supervisor_id}']"
+        )
+        plumbing_option.check()
+        active_plumbing_card.locator("button[type='submit']").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#toast').textContent.includes('ROLE-FLOW-1 assigned to Plumbing Flow Supervisor')"
+        )
+        with server.connect_db() as db:
+            assignment = db.execute(
+                "SELECT user_id FROM house_role_assignments "
+                "WHERE house_id = ? AND role = 'supervisor'",
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(assignment["user_id"], plumbing_supervisor_id)
+        self.assertIn("Plumbing Flow Supervisor", active_plumbing_card.inner_text())
+
+        sign_in("flow-plumbing-supervisor", "456781", "Plumbing Flow Supervisor")
+        active_plumbing_work = self.page.locator(
+            f"#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='{house_id}']"
+        )
+        active_plumbing_work.wait_for()
+        active_plumbing_work.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='ROLE-FLOW-1']"
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        active_plumbing_work = self.page.locator(
+            f"#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='{house_id}']"
+        )
+        active_plumbing_work.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='ROLE-FLOW-1']"
+            )?.getAttribute("aria-pressed") === "false" """
+        )
+        active_plumbing_work.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='ROLE-FLOW-1']"
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        with server.connect_db() as db:
+            checklist = db.execute(
+                "SELECT plumber_status FROM house_checklists WHERE house_id = ?",
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(checklist["plumber_status"], "done")
+
+        sign_in("flow-vent-teamlead", "456785", "Vent Teamlead Flow")
+        self.page.locator("#ventilation-house-list").wait_for(state="visible")
+        assigned_vent_house = self.page.locator(
+            "#ventilation-house-list .ventilation-house-card"
+        ).filter(has_text=house_id)
+        assigned_vent_house.wait_for()
+        self.assertIn("Ventilation complete", assigned_vent_house.inner_text())
+        self.assertIn("Completed by Vent Teamlead Flow", assigned_vent_house.inner_text())
+
+        sign_in("navigation-test-admin", "123456", "Navigation Test Admin")
+        self.page.locator('[data-tab="houses"]').click()
+        active_house_card = self.page.locator(
+            "#houses-list .house-card"
+        ).filter(has_text=house_id)
+        active_house_card.wait_for()
+        active_house_card.locator(".house-finish-toggle").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#toast').textContent.includes('marked finished')"
+        )
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="closed"]').click()
+        closed_house_card = self.page.locator(
+            "#houses-list .house-card"
+        ).filter(has_text=house_id)
+        closed_house_card.wait_for()
+        closed_house_card.locator(".house-finish-toggle").click()
+        self.page.wait_for_function(
+            "() => document.querySelector('#toast').textContent.includes('reopened')"
+        )
+        self.page.locator('[data-tab="overview"]').click()
+        self.page.locator('[data-house-view="active"]').click()
+        self.page.locator("#houses-list .house-card").filter(
+            has_text=house_id
+        ).wait_for()
+        with server.connect_db() as db:
+            statuses = [
+                row["status"]
+                for row in db.execute(
+                    "SELECT status FROM house_status_history WHERE house_id = ? "
+                    "ORDER BY id",
+                    (house_id,),
+                )
+            ]
+        self.assertEqual(statuses, ["ready", "active", "closed", "active"])
         self.assertEqual(self.browser_errors, [])
 
     def test_navigation_tour_reaches_every_workspace_view_without_saving(self):
@@ -6089,12 +6520,10 @@ class NavigationBrowserTests(unittest.TestCase):
             "#survey-room-summary-house-notes"
         )
         self.assertEqual(surveyor_house_notes.inner_text(), "No house notes")
-        self.assertTrue(self.page.locator("#survey-room-notes").is_visible())
-        self.assertTrue(
-            self.page.locator("#surveyor-survey-notes-form").is_visible()
-        )
-        self.assertTrue(
-            self.page.locator(".survey-room-nav a[href='#survey-room-notes']").is_visible()
+        self.assertEqual(self.page.locator("#survey-room-notes").count(), 0)
+        self.assertEqual(
+            self.page.locator(".survey-room-nav a[href='#survey-room-notes']").count(),
+            0,
         )
         with server.connect_db() as db:
             saved_notes = db.execute(
@@ -6106,7 +6535,7 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-survey-open[data-house-id="SURVEY-ROOM-TEST"]'
         ).click()
         self.assertTrue(self.page.locator("#survey-windows input").first.is_visible())
-        self.assertTrue(self.page.locator("#surveyor-survey-notes-form").is_visible())
+        self.assertEqual(self.page.locator("#surveyor-survey-notes-form").count(), 0)
         self.page.locator("#back-from-surveyor-room").click()
         self.assertTrue(self.page.locator("#houses-overview").is_visible())
         self.assertEqual(self.browser_errors, [])

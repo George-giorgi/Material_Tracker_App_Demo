@@ -494,6 +494,25 @@ function formatAuditDateTime(value) {
       }).format(parsed);
 }
 
+function formatElapsedTime(startValue, endValue) {
+  const start = Date.parse(startValue || "");
+  const end = Date.parse(endValue || "");
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return "Not available";
+  }
+
+  const totalMinutes = Math.floor((end - start) / 60000);
+  if (totalMinutes === 0) return "Less than 1 minute";
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (days) parts.push(`${days} ${days === 1 ? "day" : "days"}`);
+  if (hours) parts.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+  if (minutes) parts.push(`${minutes} ${minutes === 1 ? "minute" : "minutes"}`);
+  return parts.join(" ");
+}
+
 function formatAuditDate(value) {
   if (!value) return "Date not recorded";
   const parsed = new Date(value);
@@ -876,11 +895,7 @@ function showWorkspace(user) {
   );
   const isVentilation = !isSurveyor && isVentilationUser(user);
   const dashboardStats = $(".surveyor-dashboard-stats");
-  if (isVentilation) {
-    $("#ventilation-dashboard-stats").append(dashboardStats);
-  } else {
-    $("#overview-work-summary").append(dashboardStats);
-  }
+  $("#overview-work-summary").append(dashboardStats);
   $$("[data-house-view]").forEach((tile) => {
     tile.disabled =
       isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor;
@@ -990,7 +1005,7 @@ function showWorkspace(user) {
   } else if (isPlumbingCoordinator) {
     $("#stat-provided-label").textContent = "Plumbing houses";
     $("#stat-houses-label").textContent = "Assigned";
-    $("#stat-ready-label").textContent = "Needs completion";
+    $("#stat-ready-label").textContent = "Needs assignment";
     $("#stat-closed-label").textContent = "Completed";
     $("#stat-closed").parentElement.classList.remove("hidden");
     $("#stat-not-started").parentElement.classList.add("hidden");
@@ -1604,8 +1619,8 @@ function renderOverview() {
                 </div>
               </div>
               ${house.notes ? `<p class="ventilation-house-notes">${escapeHtml(house.notes)}</p>` : ""}
-              ${house.assigned_teamlead_name ? `<p class="ventilation-house-notes"><strong>Assigned Vent team:</strong> ${escapeHtml(house.assigned_team_name || house.assigned_teamlead_name)}</p>` : ""}
-              ${isComplete ? `<p class="ventilation-house-audit">Completed by ${escapeHtml(house.done_by || "team member")} · ${escapeHtml(formatAuditDateTime(house.done_at))}</p>` : ""}
+              ${house.assignment_assigned_by ? `<p class="ventilation-house-notes"><strong>Assigned by:</strong> ${escapeHtml(house.assignment_assigned_by)}</p>` : ""}
+              ${isComplete ? `<p class="ventilation-house-audit">${escapeHtml(workPlanDoneLabel(house.done_by || "Vent team", house.done_at, "vent"))}</p>` : ""}
               ${ventPdfSectionHtml(house.documents || [], house.id)}
               ${house.status === "ready" ? `<div class="ventilation-house-actions"><button class="ventilation-complete-button${isComplete ? " is-undo" : ""}" type="button" data-ventilation-complete data-house-id="${escapeHtml(house.id)}" data-done="${!isComplete}" aria-label="${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}"><span aria-hidden="true">${isComplete ? "↶" : "✓"}</span> ${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}</button></div>` : ""}
             </article>`;
@@ -1650,6 +1665,8 @@ function renderOverview() {
         house.surveyor_name,
         house.supervisor_name,
         house.plumber_done_by,
+        house.assignment_assigned_by,
+        house.assignment_assigned_at,
       ]
         .filter(Boolean)
         .some((value) => String(value).toLocaleLowerCase().includes(search)),
@@ -1719,7 +1736,7 @@ function renderOverview() {
                 ? '<span class="plumbing-job-status is-complete">Completed</span>'
                 : hasSupervisor
                   ? '<span class="plumbing-job-status is-assigned">Assigned</span>'
-                  : '<span class="plumbing-job-status is-needed">Needs completion</span>'}
+                  : '<span class="plumbing-job-status is-needed">Needs assignment</span>'}
             </div>
             <div class="plumbing-work-detail">
               <div class="plumbing-surveyor-detail"><span class="plumbing-surveyor-avatar" aria-hidden="true">${escapeHtml((house.surveyor_name || "?").split(/\s+/).map((part) => part[0] || "").slice(0, 2).join("").toUpperCase())}</span><span class="plumbing-surveyor-label">Requested by surveyor</span><strong>${escapeHtml(house.surveyor_name || "Surveyor not recorded")}</strong></div>
@@ -1727,9 +1744,9 @@ function renderOverview() {
               <p>${escapeHtml(house.notes || "Plumbing work is required. No extra survey notes were added.")}</p>
             </div>
             ${isCompleted
-              ? `<div class="plumbing-completion-detail"><strong>Plumbing work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.plumber_done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.plumber_done_at ? ` datetime="${escapeHtml(house.plumber_done_at)}"` : ""}>${escapeHtml(house.plumber_done_at ? formatAuditDateTime(house.plumber_done_at) : "Not recorded")}</time></span></div></div>`
+              ? `<div class="plumbing-completion-detail"><strong>Plumbing work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.plumber_done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.plumber_done_at ? ` datetime="${escapeHtml(house.plumber_done_at)}"` : ""}>${escapeHtml(house.plumber_done_at ? formatAuditDateTime(house.plumber_done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.plumber_done_at))}</b></span></div></div>`
               : hasSupervisor
-                ? `<div class="plumbing-assigned-supervisor"><span class="plumbing-assigned-supervisor-icon" aria-hidden="true">✓</span><div><span>Assigned Plumbing Supervisor</span><strong>${escapeHtml(house.supervisor_name || "Supervisor assigned")}</strong></div></div>`
+              ? `<div class="plumbing-assigned-supervisor"><span class="plumbing-assigned-supervisor-icon" aria-hidden="true">✓</span><div><span>Assigned Plumbing Supervisor</span><strong>${escapeHtml(house.supervisor_name || "Supervisor assigned")}</strong><span>Assigned on ${escapeHtml(house.assignment_assigned_at ? formatAuditDateTime(house.assignment_assigned_at) : "Not recorded")}</span></div></div>`
                     : `              <form class="plumbing-house-assignment" data-plumbing-assignment data-house-id="${escapeHtml(house.id)}">
                       <fieldset class="plumbing-supervisor-picker">
                         <legend>Choose a Plumbing Supervisor</legend>
@@ -1790,6 +1807,11 @@ function renderOverview() {
           house.notes,
           house.assigned_teamlead_name,
           house.assigned_team_name,
+          house.surveyor_name,
+          house.status,
+          house.done_by,
+          house.assignment_assigned_by,
+          house.assignment_assigned_at,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLocaleLowerCase().includes(search)),
@@ -1848,22 +1870,26 @@ function renderOverview() {
                 <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
                 ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
               </div>
-              <span class="plumbing-job-status ${complete ? "is-complete" : assigned ? "is-assigned" : "is-needed"}">${complete ? "Vent complete" : assigned ? "Team assigned" : "Needs assignment"}</span>
+              <span class="plumbing-job-status ${complete ? "is-complete" : assigned ? "is-assigned" : "is-needed"}">${complete ? "Completed" : assigned ? "Assigned" : "Needs assignment"}</span>
             </div>
             <div class="plumbing-work-detail">
+              <div class="plumbing-surveyor-detail"><span class="plumbing-surveyor-avatar" aria-hidden="true">${escapeHtml((house.surveyor_name || "?").split(/\s+/).map((part) => part[0] || "").slice(0, 2).join("").toUpperCase())}</span><span class="plumbing-surveyor-label">Requested by surveyor</span><strong>${escapeHtml(house.surveyor_name || "Surveyor not recorded")}</strong></div>
               <strong>Required Vent work</strong>
               <p>${escapeHtml(house.notes || "Vent work is required. No extra survey notes were added.")}</p>
-              ${complete ? `<p>Completed by ${escapeHtml(house.done_by || "Vent team")} · ${escapeHtml(formatAuditDateTime(house.done_at))}</p>` : ""}
             </div>
-            <form class="plumbing-house-assignment" data-ventilation-assignment data-house-id="${escapeHtml(house.id)}">
+            ${complete
+              ? `<div class="plumbing-completion-detail"><strong>Vent work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.done_at ? ` datetime="${escapeHtml(house.done_at)}"` : ""}>${escapeHtml(house.done_at ? formatAuditDateTime(house.done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.done_at))}</b></span></div></div>`
+              : assigned
+                ? `<div class="plumbing-assigned-supervisor"><span class="plumbing-assigned-supervisor-icon" aria-hidden="true">✓</span><div><span>Assigned to</span><strong>${escapeHtml(house.assigned_teamlead_name || "Not recorded")}</strong><span>Position: Ventilation Teamlead</span><span>Assigned on ${escapeHtml(house.assignment_assigned_at ? formatAuditDateTime(house.assignment_assigned_at) : "Not recorded")}</span></div></div>`
+                : `<form class="plumbing-house-assignment" data-ventilation-assignment data-house-id="${escapeHtml(house.id)}">
               <fieldset class="plumbing-supervisor-picker">
                 <legend>Choose a Ventilation Team</legend>
                 <div class="plumbing-supervisor-options" role="radiogroup" aria-label="Choose a Ventilation Team">
                   ${options}
                 </div>
               </fieldset>
-              <button class="button button-primary" type="submit"${assigned || !teamleads.length ? "" : " disabled"}>${assigned ? "Update Vent team" : teamleads.length ? "Select a team" : "No teams available"}</button>
-            </form>
+              <button class="button button-primary" type="submit" disabled>${teamleads.length ? "Select a team" : "No teams available"}</button>
+            </form>`}
           </article>`;
       })
       .join("");
@@ -2307,6 +2333,22 @@ function seaiApplicationRecordHtml(details, readOnly = false, openTitles = null)
     : "";
   return `${demoNotice}${sections}`;
 }
+function seaiVariationHistoryHtml(history) {
+  const rows = Array.isArray(history) ? history : [];
+  const value = (item) => String(item ?? "").trim() || "—";
+  const body = rows.length
+    ? `<div class="table-wrap assign-seai-variation-history-table"><table><thead><tr><th scope="col">Measure</th><th scope="col">Survey qty</th><th scope="col">Including variation</th><th scope="col">Changed by</th><th scope="col">Changed at</th></tr></thead><tbody>${rows.map((entry) => {
+      const measure = value(entry.measure_name) === "—"
+        ? `Measure ${Number(entry.measure_index) + 1}`
+        : value(entry.measure_name);
+      const changedBy = value(entry.changed_by_username) === "—"
+        ? value(entry.changed_by)
+        : `${value(entry.changed_by)} (${value(entry.changed_by_username)})`;
+      return `<tr><td>${escapeHtml(measure)}</td><td>${escapeHtml(value(entry.survey_quantity))}</td><td>${escapeHtml(value(entry.previous_variation))} → ${escapeHtml(value(entry.variation))}</td><td>${escapeHtml(changedBy)}</td><td>${escapeHtml(formatAuditDateTime(entry.changed_at))}</td></tr>`;
+    }).join("")}</tbody></table></div>`
+    : '<p class="assign-seai-variation-history-empty">No survey quantity variation changes have been recorded.</p>';
+  return `<section class="card assign-seai-variation-history" aria-labelledby="assign-seai-variation-history-title"><div class="card-heading"><div><h2 id="assign-seai-variation-history-title">Survey quantity variation history</h2><p>Previous and updated “Including variation” quantities, with the original survey quantity for reference.</p></div></div>${body}</section>`;
+}
 async function saveSeaiMeasureVariation(button) {
   const index = Number(button.dataset.seaiMeasureIndex);
   const houseId = state.surveyRoomHouseId;
@@ -2679,6 +2721,18 @@ function renderSupervisorHouses() {
             : isPlumbingOutstanding(house)
               ? "is-needed"
               : "";
+          const supervisorAssignmentCredit =
+            isPlumbingSupervisor && house.supervisor_assigned_by
+              ? `<div class="supervisor-house-assignment-credit">
+                  <span class="surveyor-assignment-credit-icon" aria-hidden="true">✓</span>
+                  <span class="surveyor-assignment-credit-copy">
+                    <span>Assigned to you by <strong>${escapeHtml(house.supervisor_assigned_by)}</strong></span>
+                    ${house.supervisor_assigned_at
+                      ? `<time datetime="${escapeHtml(house.supervisor_assigned_at)}">${escapeHtml(formatAuditDateTime(house.supervisor_assigned_at))}</time>`
+                      : ""}
+                  </span>
+                </div>`
+              : "";
           return `<article class="card house-card surveyor-house-card supervisor-house-card${isPlumbingSupervisor ? " plumbing-house-card ventilation-house-card" : ""}${needsAssignment ? " needs-assignment" : ""}" data-house-id="${houseId}">
             <div class="house-top">
               <span class="house-avatar" aria-hidden="true">&#8962;</span>
@@ -2688,6 +2742,7 @@ function renderSupervisorHouses() {
               </div>
               <div class="house-status-stack">${isPlumbingSupervisor && house.plumbing_assignment_pending_activation ? "" : `<span class="status-pill ${house.is_finished ? "closed" : "active"}">${status}</span>`}${isPlumbingSupervisor ? `<span class="plumbing-job-status ${plumbingStatusClass}">${plumbingStatus}</span>` : ""}</div>
             </div>
+            ${supervisorAssignmentCredit}
             ${isPlumbingSupervisor && Number(house.plan_plumber_required) === 1 ? `<button class="plumbing-completion-toggle${isPlumbingComplete(house) ? " is-complete" : ""}" type="button" data-house-id="${houseId}" data-plumber-status="${isPlumbingComplete(house) ? "not_done" : "done"}" aria-label="${isPlumbingComplete(house) ? "Reopen plumbing work" : "Mark plumbing complete"} for ${houseId}" aria-pressed="${isPlumbingComplete(house)}">${isPlumbingComplete(house) ? '<span aria-hidden="true">↶</span> Reopen plumbing work' : '<span aria-hidden="true">✓</span> Mark plumbing complete'}</button>` : ""}
             ${house.plumbing_assignment_pending_activation ? "" : `<form class="supervisor-house-assignment" data-house-id="${houseId}" aria-label="Delivery assignments for ${houseId}">
               <div class="supervisor-assignment-heading">
@@ -4658,6 +4713,14 @@ async function submitHouseNote(event) {
 }
 
 async function toggleHouseReady(houseId, ready) {
+  if (
+    !ready &&
+    !window.confirm(
+      `Move ${houseId} back to Not started?\n\nThis changes the shared house record for all users. It removes the current Surveyor assignment, survey data, notes, snags, checklist and work-plan progress, annotated/shared PDF copies, Survey quantity variation history, and Plumbing Supervisor and Vent team assignments. The house will leave those teams' work queues until it is marked Ready again and reassigned.\n\nOriginal PDFs and current SEAI variation quantities are kept. Continue?`,
+    )
+  ) {
+    return false;
+  }
   try {
     await request("/api/houses/plan", {
       method: "POST",
@@ -4682,7 +4745,7 @@ async function toggleHouseReady(houseId, ready) {
     showToast(
       ready
         ? `${houseId} is ready for start.`
-        : `${houseId} moved back to Not started; survey records cleared, variation quantities and original PDFs kept.`,
+        : `${houseId} moved back to Not started; survey, work-plan, team assignments and variation history cleared; current variation quantities and original PDFs kept.`,
     );
     await refresh();
     return true;
@@ -5934,8 +5997,9 @@ async function loadAssignSeaiHouseRecord(houseId, requestId) {
         ? "Synthetic sample application information for layout and testing."
         : "Read-only information saved from the SEAI portal.";
     const detailsHtml = seaiApplicationRecordHtml(result.seai_details, true);
-    $("#assign-seai-house-record").innerHTML = detailsHtml;
-    $("#assign-seai-house-empty").classList.toggle("hidden", Boolean(detailsHtml));
+    const recordHtml = detailsHtml + seaiVariationHistoryHtml(result.variation_history);
+    $("#assign-seai-house-record").innerHTML = recordHtml;
+    $("#assign-seai-house-empty").classList.toggle("hidden", Boolean(recordHtml));
     $("#assign-seai-toolbar").classList.toggle("hidden", !detailsHtml);
     loadAssignSeaiPdfSections(houseId, requestId);
   } catch (error) {
@@ -8649,6 +8713,7 @@ function bindEvents() {
       const label = button.querySelector("span");
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
+      button.setAttribute("aria-label", "Refreshing Ventilation houses");
       label.textContent = "Refreshing…";
       try {
         await refresh();
@@ -8657,6 +8722,7 @@ function bindEvents() {
       } finally {
         button.disabled = false;
         button.removeAttribute("aria-busy");
+        button.setAttribute("aria-label", "Refresh Ventilation houses");
         label.textContent = "Refresh";
       }
     },

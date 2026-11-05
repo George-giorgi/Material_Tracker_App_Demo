@@ -674,6 +674,9 @@ def _clear_house_survey_records(db, house_id):
     db.execute("DELETE FROM seai_document_shares WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM seai_shared_pdf_deliveries WHERE house_id = ?", (house_id,))
     db.execute(
+        "DELETE FROM seai_measure_variation_history WHERE house_id = ?", (house_id,)
+    )
+    db.execute(
         """
         UPDATE provided_houses
         SET notes = '',
@@ -1237,6 +1240,26 @@ def initialize_db():
         db.execute(
             "CREATE INDEX IF NOT EXISTS house_survey_history_house_idx "
             "ON house_survey_history(house_id, id)"
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seai_measure_variation_history (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                measure_index INTEGER NOT NULL,
+                measure_name TEXT NOT NULL DEFAULT '',
+                survey_quantity TEXT NOT NULL DEFAULT '',
+                previous_variation TEXT NOT NULL DEFAULT '',
+                variation TEXT NOT NULL DEFAULT '',
+                changed_by TEXT NOT NULL DEFAULT '',
+                changed_by_username TEXT NOT NULL DEFAULT '',
+                changed_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS seai_measure_variation_history_house_idx "
+            "ON seai_measure_variation_history(house_id, id)"
         )
         db.execute(
             """
@@ -3078,6 +3101,7 @@ def _ventilation_house_list(db, teamlead_user_id):
             "assigned_teamlead_user_id": row["assigned_teamlead_user_id"],
             "assigned_teamlead_name": row["assigned_teamlead_name"],
             "assigned_team_name": row["assigned_team_name"],
+            "assignment_assigned_by": row["assignment_assigned_by"],
             "documents": [],
         }
         for row in db.execute(
@@ -3089,6 +3113,7 @@ def _ventilation_house_list(db, teamlead_user_id):
                    assignment.teamlead_user_id AS assigned_teamlead_user_id,
                    COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
                    COALESCE(teamlead.team_name, '') AS assigned_team_name,
+                   COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
                    CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
@@ -3099,6 +3124,21 @@ def _ventilation_house_list(db, teamlead_user_id):
             LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
             WHERE p.plan_vent_required = 1
               AND assignment.teamlead_user_id = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM house_status_history reset
+                  WHERE reset.house_id = p.id
+                    AND reset.status = 'not_started'
+                    AND reset.id = (
+                        SELECT latest.id
+                        FROM house_status_history latest
+                        WHERE latest.house_id = p.id
+                          AND latest.status = 'not_started'
+                        ORDER BY latest.changed_at DESC, latest.id DESC
+                        LIMIT 1
+                    )
+                    AND assignment.assigned_at < reset.changed_at
+              )
             ORDER BY
                 (COALESCE(p.plan_vent_done_at, '') = ''),
                 COALESCE(p.plan_vent_done_at, '') DESC,
@@ -3118,6 +3158,21 @@ def _ventilation_house_list(db, teamlead_user_id):
           ON assignment.house_id = houses.id
         WHERE houses.plan_vent_required = 1
           AND assignment.teamlead_user_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM house_status_history reset
+              WHERE reset.house_id = houses.id
+                AND reset.status = 'not_started'
+                AND reset.id = (
+                    SELECT latest.id
+                    FROM house_status_history latest
+                    WHERE latest.house_id = houses.id
+                      AND latest.status = 'not_started'
+                    ORDER BY latest.changed_at DESC, latest.id DESC
+                    LIMIT 1
+                )
+                AND assignment.assigned_at < reset.changed_at
+          )
         ORDER BY documents.id DESC
         """,
         (teamlead_user_id,),
@@ -3173,8 +3228,14 @@ def _plumbing_coordinator_dashboard(db):
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
                         ELSE 'active' END AS status,
-                   assignment.user_id AS supervisor_user_id,
-                   assigned_user.display_name AS supervisor_name
+                   assigned_user.id AS supervisor_user_id,
+                   assigned_user.display_name AS supervisor_name,
+                   CASE WHEN assigned_user.id IS NOT NULL
+                        THEN COALESCE(assignment.assigned_by, '') ELSE '' END
+                       AS assignment_assigned_by,
+                   CASE WHEN assigned_user.id IS NOT NULL
+                        THEN COALESCE(assignment.assigned_at, '') ELSE '' END
+                       AS assignment_assigned_at
             FROM provided_houses p
             LEFT JOIN houses h ON h.id = p.id
             LEFT JOIN house_checklists hc ON hc.house_id = p.id
@@ -3185,7 +3246,18 @@ def _plumbing_coordinator_dashboard(db):
               ON surveyor.id = survey_assignment.user_id
             LEFT JOIN house_role_assignments assignment
               ON assignment.house_id = p.id AND assignment.role = 'supervisor'
-            LEFT JOIN app_users assigned_user ON assigned_user.id = assignment.user_id
+            LEFT JOIN app_users assigned_user
+              ON assigned_user.id = assignment.user_id
+             AND (
+                 assigned_user.supervisor_specialty = 'Plumbing' COLLATE NOCASE
+                 OR EXISTS (
+                     SELECT 1 FROM user_departments memberships
+                     JOIN departments ON departments.id = memberships.department_id
+                     WHERE memberships.user_id = assigned_user.id
+                       AND departments.name = 'Plumbing' COLLATE NOCASE
+                       AND departments.is_active = 1
+                 )
+             )
             WHERE p.plan_plumber_required = 1
               AND COALESCE(hc.plumber_status, p.plan_plumber, 'not_done')
                     != 'not_necessary'
@@ -3245,11 +3317,19 @@ def _ventilation_coordinator_dashboard(db):
                         ELSE 'active' END AS status,
                    assignment.teamlead_user_id AS assigned_teamlead_user_id,
                    COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
-                   COALESCE(teamlead.team_name, '') AS assigned_team_name
+                   COALESCE(teamlead.team_name, '') AS assigned_team_name,
+                   COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
+                   COALESCE(assignment.assigned_at, '') AS assignment_assigned_at,
+                   COALESCE(surveyor.display_name, '') AS surveyor_name
             FROM provided_houses p
             LEFT JOIN houses h ON h.id = p.id
             LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
             LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
+            LEFT JOIN house_role_assignments survey_assignment
+              ON survey_assignment.house_id = p.id
+             AND survey_assignment.role = 'surveyor'
+            LEFT JOIN app_users surveyor
+              ON surveyor.id = survey_assignment.user_id
             WHERE p.plan_vent_required = 1
               AND (h.id IS NULL OR h.is_finished = 0 OR p.plan_vent_done_at != '')
             ORDER BY
@@ -5019,11 +5099,12 @@ class LegacyRouteHandlers:
                 and _has_access_profile(user, "supervisor")
             ):
                 with connect_db() as db:
-                    assigned_house_ids = {
-                        row["house_id"]
+                    supervisor_assignments = {
+                        row["house_id"]: dict(row)
                         for row in db.execute(
                             """
-                            SELECT assignment.house_id
+                            SELECT assignment.house_id, assignment.assigned_by,
+                                   assignment.assigned_at
                             FROM house_role_assignments assignment
                             JOIN app_users assigned_user
                               ON assigned_user.id = assignment.user_id
@@ -5040,6 +5121,7 @@ class LegacyRouteHandlers:
                             (user["id"],),
                         )
                     }
+                    assigned_house_ids = set(supervisor_assignments)
                     teamlead_names = [
                         row["display_name"]
                         for row in db.execute(
@@ -5133,7 +5215,15 @@ class LegacyRouteHandlers:
                                 }
                             )
                 dashboard["house_list"] = [
-                    house
+                    {
+                        **house,
+                        "supervisor_assigned_by": supervisor_assignments[
+                            house["id"]
+                        ]["assigned_by"],
+                        "supervisor_assigned_at": supervisor_assignments[
+                            house["id"]
+                        ]["assigned_at"],
+                    }
                     for house in dashboard["house_list"]
                     if house["id"] in assigned_house_ids
                 ]
@@ -5147,6 +5237,8 @@ class LegacyRouteHandlers:
                                        hc.plumber_status, p.plan_plumber, 'not_done'
                                    ) AS plumber_status,
                                    COALESCE(surveyor.display_name, '') AS surveyor_name,
+                                   assignment.assigned_by AS supervisor_assigned_by,
+                                   assignment.assigned_at AS supervisor_assigned_at,
                                    CASE WHEN p.ready_for_start = 1 THEN 'ready'
                                         ELSE 'not_started' END AS status
                             FROM house_role_assignments assignment
@@ -5162,6 +5254,21 @@ class LegacyRouteHandlers:
                               AND assignment.user_id = ?
                               AND h.id IS NULL
                               AND p.plan_plumber_required = 1
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM house_status_history reset
+                                  WHERE reset.house_id = p.id
+                                    AND reset.status = 'not_started'
+                                    AND reset.id = (
+                                        SELECT latest.id
+                                        FROM house_status_history latest
+                                        WHERE latest.house_id = p.id
+                                          AND latest.status = 'not_started'
+                                        ORDER BY latest.changed_at DESC, latest.id DESC
+                                        LIMIT 1
+                                    )
+                                    AND assignment.assigned_at < reset.changed_at
+                              )
                               AND COALESCE(
                                     hc.plumber_status, p.plan_plumber, 'not_done'
                                   ) != 'not_necessary'
@@ -5188,6 +5295,8 @@ class LegacyRouteHandlers:
                                 "plan_plumber_required": 1,
                                 "plumbing_notes": row["plumbing_notes"],
                                 "surveyor_name": row["surveyor_name"],
+                                "supervisor_assigned_by": row["supervisor_assigned_by"],
+                                "supervisor_assigned_at": row["supervisor_assigned_at"],
                                 "status": row["status"],
                                 "plumbing_assignment_pending_activation": True,
                             }
@@ -5386,11 +5495,27 @@ class LegacyRouteHandlers:
                         raise ApiError(500, "Stored SEAI application details are invalid.")
                     if not isinstance(details, dict):
                         raise ApiError(500, "Stored SEAI application details are invalid.")
+                variation_history = [
+                    dict(row)
+                    for row in db.execute(
+                        """
+                        SELECT measure_index, measure_name, survey_quantity,
+                               previous_variation, variation, changed_by,
+                               changed_by_username, changed_at
+                        FROM seai_measure_variation_history
+                        WHERE house_id = ?
+                        ORDER BY id DESC
+                        LIMIT 100
+                        """,
+                        (house_id,),
+                    )
+                ]
             self._send_json(
                 200,
                 {
                     "house_id": house_id,
                     "seai_details": details,
+                    "variation_history": variation_history,
                     "ready_for_start": bool(house["ready_for_start"]),
                     "is_active": bool(house["is_active"]),
                 },
@@ -8173,6 +8298,37 @@ class LegacyRouteHandlers:
                             or not isinstance(measures[measure_index], dict)
                         ):
                             raise ApiError(404, "SEAI measure was not found.")
+                        measure = measures[measure_index]
+                        previous_value = measure.get("Survey Qty including Variation")
+                        survey_value = measure.get("Survey Quantity")
+                        previous_variation = (
+                            "" if previous_value is None else str(previous_value).strip()
+                        )
+                        survey_quantity = (
+                            "" if survey_value is None else str(survey_value).strip()
+                        )
+                        changed_at = datetime.now().isoformat(timespec="seconds")
+                        if previous_variation != variation:
+                            db.execute(
+                                """
+                                INSERT INTO seai_measure_variation_history
+                                    (house_id, measure_index, measure_name,
+                                     survey_quantity, previous_variation, variation,
+                                     changed_by, changed_by_username, changed_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    house_id,
+                                    measure_index,
+                                    str(measure.get("Name") or ""),
+                                    survey_quantity,
+                                    previous_variation,
+                                    variation,
+                                    user["display_name"],
+                                    user["username"],
+                                    changed_at,
+                                ),
+                            )
                         measures[measure_index]["Survey Qty including Variation"] = variation
                         db.execute(
                             "UPDATE seai_applications SET detail_data_json = ? "
@@ -8330,13 +8486,18 @@ class LegacyRouteHandlers:
                                         """,
                                         (house_id,),
                                     )
-                            if not payload["ready"]:
+                            if not payload["ready"] and current["ready_for_start"]:
                                 _clear_house_survey_records(db, house_id)
                                 db.execute(
                                     """
                                     DELETE FROM house_role_assignments
-                                    WHERE house_id = ? AND role = 'surveyor'
+                                    WHERE house_id = ?
+                                      AND role IN ('surveyor', 'supervisor')
                                     """,
+                                    (house_id,),
+                                )
+                                db.execute(
+                                    "DELETE FROM house_vent_assignments WHERE house_id = ?",
                                     (house_id,),
                                 )
                             db.execute(

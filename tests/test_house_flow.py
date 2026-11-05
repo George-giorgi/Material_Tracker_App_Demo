@@ -1635,9 +1635,74 @@ class CalculatorApiTests(HttpBase):
                     "WHERE application_id = 'WH2131'"
                 ).fetchone()[0]
             )
+            history = db.execute(
+                """
+                SELECT measure_index, measure_name, survey_quantity,
+                       previous_variation, variation, changed_by,
+                       changed_by_username, changed_at
+                FROM seai_measure_variation_history
+                WHERE house_id = 'WH2131'
+                ORDER BY id
+                """
+            ).fetchall()
         self.assertEqual(
             stored["Measures"][0]["Survey Qty including Variation"], "111.5"
         )
+        self.assertEqual(len(history), 1)
+        self.assertEqual(
+            (
+                history[0]["measure_index"],
+                history[0]["measure_name"],
+                history[0]["survey_quantity"],
+                history[0]["previous_variation"],
+                history[0]["variation"],
+                history[0]["changed_by"],
+                history[0]["changed_by_username"],
+            ),
+            (0, "External Wall Insulation", "94", "104", "111.5", "Admin One", "admin1"),
+        )
+        self.assertTrue(history[0]["changed_at"])
+
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "variation-history-assign",
+                "display_name": "Variation History Assign",
+                "pin": "456789",
+                "role": "assign",
+            },
+        )
+        _, _, assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "variation-history-assign", "pin": "456789"},
+        )
+        status, assign_record, _ = self.call(
+            "GET",
+            "/api/assign/seai-record/WH2131",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200, assign_record)
+        self.assertEqual(len(assign_record["variation_history"]), 1)
+        self.assertEqual(
+            assign_record["variation_history"][0]["previous_variation"], "104"
+        )
+        self.assertEqual(assign_record["variation_history"][0]["variation"], "111.5")
+        status, _, _ = self.call(
+            "POST",
+            "/api/seai-measure-variation",
+            {"house_id": "WH2131", "measure_index": 0, "variation": "111.5"},
+        )
+        self.assertEqual(status, 200)
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM seai_measure_variation_history "
+                    "WHERE house_id = 'WH2131'"
+                ).fetchone()[0],
+                1,
+            )
 
         for invalid in ("-1", "1e3", "1.12345", "not a number"):
             status, _, _ = self.call(
@@ -1684,6 +1749,25 @@ class CalculatorApiTests(HttpBase):
         )
         self.assertEqual(status, 200, result)
         self.assertEqual(result["variation"], "12.5")
+        with server.connect_db() as db:
+            history = db.execute(
+                """
+                SELECT survey_quantity, previous_variation, variation,
+                       changed_by, changed_by_username
+                FROM seai_measure_variation_history
+                WHERE house_id = 'VAR-SURVEYOR-1'
+                """
+            ).fetchone()
+        self.assertEqual(
+            (
+                history["survey_quantity"],
+                history["previous_variation"],
+                history["variation"],
+                history["changed_by"],
+                history["changed_by_username"],
+            ),
+            ("", "10", "12.5", "Variation Surveyor", "variation-surveyor"),
+        )
 
     def test_seai_pdf_documents_are_role_restricted_and_served_inline(self):
         house_id = "PDF-TEST-1"
@@ -3699,6 +3783,23 @@ class ReadyForStartResetTests(HttpBase):
             )
             db.execute(
                 """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES (?, 'surveyor', 1, 'Assign', '2026-10-27T12:00:00'),
+                       (?, 'supervisor', 1, 'Plumbing Coordinator', '2026-10-27T12:30:00')
+                """,
+                (house_id, house_id),
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES (?, 1, 'Vent Coordinator', '2026-10-27T12:45:00')
+                """,
+                (house_id,),
+            )
+            db.execute(
+                """
                 INSERT INTO house_surveys(house_id, data, notes, updated_by, updated_at)
                 VALUES (?, ?, 'Survey note', 'Test Surveyor', '2026-10-27T13:00:00')
                 """,
@@ -3711,6 +3812,16 @@ class ReadyForStartResetTests(HttpBase):
                         "notes": "Survey note",
                     }),
                 ),
+            )
+            db.execute(
+                """
+                INSERT INTO seai_measure_variation_history
+                    (house_id, measure_index, measure_name, survey_quantity,
+                     previous_variation, variation, changed_by, changed_at)
+                VALUES (?, 0, 'External Wall Insulation', '94', '104', '111.5',
+                        'Surveyor', '2026-10-27T13:30:00')
+                """,
+                (house_id,),
             )
             db.execute(
                 """
@@ -3830,11 +3941,33 @@ class ReadyForStartResetTests(HttpBase):
             self.assertEqual(variation, "111.5")
             self.assertEqual(
                 db.execute(
+                    "SELECT COUNT(*) FROM seai_measure_variation_history "
+                    "WHERE house_id = ?",
+                    (house_id,),
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
                     "SELECT status FROM house_status_history WHERE house_id = ? "
                     "ORDER BY id DESC LIMIT 1",
                     (house_id,),
                 ).fetchone()["status"],
                 "not_started",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_role_assignments WHERE house_id = ?",
+                    (house_id,),
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_vent_assignments WHERE house_id = ?",
+                    (house_id,),
+                ).fetchone()[0],
+                0,
             )
 
         status, documents, _ = self.call(
@@ -4064,6 +4197,37 @@ class ReadyForStartAndNotesTests(HttpBase):
             self.call("GET", "/api/movements", cookie=assign_cookie)[0],
             403,
         )
+
+    def test_resetting_already_not_started_house_preserves_new_notes(self):
+        self.provide("RESET-NOT-STARTED")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET notes = 'New planning note' WHERE id = ?",
+                ("RESET-NOT-STARTED",),
+            )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses/plan",
+            {"id": "RESET-NOT-STARTED", "ready": False},
+        )
+
+        self.assertEqual(status, 200, result)
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT notes FROM provided_houses WHERE id = ?",
+                    ("RESET-NOT-STARTED",),
+                ).fetchone()["notes"],
+                "New planning note",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_status_history WHERE house_id = ?",
+                    ("RESET-NOT-STARTED",),
+                ).fetchone()[0],
+                0,
+            )
 
     def user_id(self, username):
         with server.connect_db() as db:
@@ -6020,13 +6184,16 @@ console.log(JSON.stringify([
         self.assertIn(".house-grid.house-grid-ready > .house-plan-ready .house-body,\n.house-grid.house-grid-ready > .house-plan-ready .house-card-actions { max-height: none; overflow: visible; }", css)
         self.assertIn(".house-grid.house-grid-ready { grid-auto-rows: 1fr; align-items: stretch; }", css)
 
-    def test_returning_house_to_not_started_has_no_confirmation_prompt(self):
+    def test_returning_house_to_not_started_warns_before_shared_reset(self):
         toggle_ready = APP_JS[
             APP_JS.index("async function toggleHouseReady"):
             APP_JS.index("const HOUSE_MAP_TILE_SIZE")
         ]
-        self.assertNotIn("confirm(", toggle_ready)
-        self.assertIn("variation quantities and original PDFs kept", toggle_ready)
+        self.assertIn("window.confirm(", toggle_ready)
+        self.assertIn("shared house record for all users", toggle_ready)
+        self.assertIn("Plumbing Supervisor and Vent team assignments", toggle_ready)
+        self.assertIn("Survey quantity variation history", toggle_ready)
+        self.assertIn("current SEAI variation quantities are kept", toggle_ready)
 
     def test_not_started_queue_cards_fit_their_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -6531,6 +6698,53 @@ class PlumbingCoordinatorTests(HttpBase):
         self.assertEqual(status, 201)
         return result["user"]["id"]
 
+    def test_plumbing_supervisor_does_not_see_assignment_from_before_reset(self):
+        self.provide("PLUMBING-OLD-CYCLE")
+        self.provide("PLUMBING-NEW-CYCLE")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_plumber_required = 1, plan_plumber_notes = 'Old plumbing notes'
+                WHERE id IN ('PLUMBING-OLD-CYCLE', 'PLUMBING-NEW-CYCLE')
+                """
+            )
+            db.executemany(
+                """
+                INSERT INTO house_status_history
+                    (house_id, status, changed_by, changed_at)
+                VALUES (?, 'not_started', 'Assign', '2026-11-05T10:00:00')
+                """,
+                [("PLUMBING-OLD-CYCLE",), ("PLUMBING-NEW-CYCLE",)],
+            )
+            db.executemany(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES (?, 'supervisor', ?, 'Plumbing Coordinator', ?)
+                """,
+                [
+                    ("PLUMBING-OLD-CYCLE", self.plumbing_supervisor_id, "2026-11-05T09:00:00"),
+                    ("PLUMBING-NEW-CYCLE", self.plumbing_supervisor_id, "2026-11-05T11:00:00"),
+                ],
+            )
+        _, _, supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "plumbing-supervisor", "pin": "567890"},
+        )
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=supervisor_cookie
+        )
+
+        self.assertEqual(status, 200)
+        plumbing_houses = {
+            house["id"] for house in dashboard["house_list"]
+        }
+        self.assertNotIn("PLUMBING-OLD-CYCLE", plumbing_houses)
+        self.assertIn("PLUMBING-NEW-CYCLE", plumbing_houses)
+
     def test_coordinator_sees_plumbing_queue_and_assigns_only_plumbing_supervisors(self):
         self.provide("PLUMBING-ACTIVE", "D01 A1", "1 Main Street", "Owner")
         with server.connect_db() as db:
@@ -6566,6 +6780,15 @@ class PlumbingCoordinatorTests(HttpBase):
             db.execute(
                 "UPDATE provided_houses SET plan_plumber_required = 1 "
                 "WHERE id = 'PLUMBING-NOT-READY'"
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('PLUMBING-NOT-READY', 'surveyor', ?, 'Admin One',
+                        '2026-11-04T09:00:00')
+                """,
+                (self.surveyor_id,),
             )
 
         status, dashboard, _ = self.call(
@@ -6634,7 +6857,7 @@ class PlumbingCoordinatorTests(HttpBase):
         self.assertEqual(result["supervisor_name"], "Plumbing Supervisor")
         with server.connect_db() as db:
             assignment = db.execute(
-                "SELECT user_id, assigned_by FROM house_role_assignments "
+                "SELECT user_id, assigned_by, assigned_at FROM house_role_assignments "
                 "WHERE house_id = 'PLUMBING-ACTIVE' AND role = 'supervisor'"
             ).fetchone()
             house = db.execute(
@@ -6642,7 +6865,18 @@ class PlumbingCoordinatorTests(HttpBase):
             ).fetchone()
         self.assertEqual(assignment["user_id"], self.plumbing_supervisor_id)
         self.assertEqual(assignment["assigned_by"], "Plumbing Coordinator")
+        self.assertTrue(assignment["assigned_at"])
         self.assertEqual(house["employee_name"], "Plumbing Supervisor")
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.coordinator_cookie
+        )
+        assigned_house = next(
+            house for house in dashboard["plumbing_houses"]
+            if house["id"] == "PLUMBING-ACTIVE"
+        )
+        self.assertEqual(assigned_house["assignment_assigned_by"], "Plumbing Coordinator")
+        self.assertTrue(assigned_house["assignment_assigned_at"])
+        self.assertEqual(assigned_house["surveyor_name"], "Work Surveyor")
         with server.connect_db() as db:
             db.execute(
                 "UPDATE house_checklists SET plumber_status = 'done' "
@@ -6668,6 +6902,9 @@ class PlumbingCoordinatorTests(HttpBase):
         self.assertEqual(
             completed_house["plumber_done_at"], "2026-11-04T10:30:00"
         )
+        self.assertEqual(completed_house["surveyor_name"], "Work Surveyor")
+        self.assertEqual(completed_house["assignment_assigned_by"], "Plumbing Coordinator")
+        self.assertTrue(completed_house["assignment_assigned_at"])
 
     def test_plumbing_supervisor_completion_records_who_and_when(self):
         house_id = "PLUMBING-COMPLETION-AUDIT"
