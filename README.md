@@ -99,6 +99,17 @@ details as demo data in **View SEAI details**. This database is separate from
 The database retains the demo material catalog and stock data, which are not
 real inventory. A pre-change backup is kept beside the database in `instance\`.
 
+### Start with the shared schema and role permissions
+
+`database\ewi-seai-red-template.sqlite3` is a clean starter database for a new
+checkout. It contains the current table structure, built-in roles, permission
+catalog, and role-to-permission assignments, but no users, sessions, houses,
+stock, or SEAI records. To use it on a home computer, copy it to
+`instance\ewi.seai-red.sqlite3` in a fresh checkout, then start the app using
+the PowerShell command below. Create the first administrator locally and add
+fake users as needed. Do not overwrite an existing database; this template
+does not contain the live database's records.
+
 The SEAI property GPS fields are blank. Import approved coordinates using the
 House map CSV control to add exact pins. Coordinate-mapped houses can appear on
 the map while still Not started; the pin does not change their workflow status.
