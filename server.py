@@ -10,6 +10,8 @@ import secrets
 import sqlite3
 import ssl
 import time
+from email import policy
+from email.parser import BytesParser
 from threading import Lock
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest, urlopen
@@ -44,6 +46,8 @@ import reportlab
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+VENTILATION_SVG_SYMBOLS_DIR = ROOT / "BRUSNA_Ventilation_SVG_Symbols"
+VENTILATION_SVG_LINKED_LIBRARY_DIR = ROOT / "BRUSNA_Vent_SVG_Linked_Library"
 DB_PATH = Path(os.environ.get("EWI_DB_PATH", ROOT / "instance" / "ewi.sqlite3"))
 PORT = int(os.environ.get("EWI_PORT", "8001"))
 HOST = os.environ.get("EWI_HOST", "127.0.0.1")
@@ -119,6 +123,8 @@ HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
 SEAI_DOCUMENT_MAX_BYTES = 20_000_000
+SVG_FILE_MAX_BYTES = 500_000
+SVG_FILE_MAX_COUNT = 30
 MAX_REQUEST_BODY_BYTES = SEAI_DOCUMENT_MAX_BYTES + 1_000_000
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
@@ -144,8 +150,11 @@ def _record_change(path):
         "/api/house-documents",
         "/api/seai-documents",
         "/api/seai-documents/save-selected",
+        "/api/dashboard-pdfs",
     } or re.fullmatch(
         r"/api/(?:house|seai)-documents/\d+/(?:annotations|delete-selected)", path
+    ) or re.fullmatch(
+        r"/api/dashboard-pdfs/\d+/svg", path
     ):
         domain = "documents"
     elif path in {"/api/seai-documents/share"} or re.fullmatch(
@@ -641,6 +650,220 @@ def _create_house_document_share_pdf(content, filename, house_id, survey_note):
     output = BytesIO()
     writer.write(output)
     return output.getvalue()
+
+
+def _validate_dashboard_svg(content):
+    if not isinstance(content, bytes) or not content or len(content) > SVG_FILE_MAX_BYTES:
+        raise ApiError(413, "Each SVG must be 500 KB or smaller.")
+    lowered = content.lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        raise ApiError(400, "SVG files cannot contain document type or entity declarations.")
+    try:
+        root = fromstring(content)
+    except ParseError as exc:
+        raise ApiError(400, "An SVG file could not be read.") from exc
+    svg_namespace = "{http://www.w3.org/2000/svg}"
+    if root.tag != f"{svg_namespace}svg":
+        raise ApiError(400, "Choose a valid SVG document.")
+
+    allowed_elements = {
+        "svg",
+        "title",
+        "g",
+        "path",
+        "rect",
+        "circle",
+        "ellipse",
+        "line",
+        "polyline",
+        "polygon",
+    }
+    allowed_attributes = {
+        "xmlns",
+        "width",
+        "height",
+        "viewBox",
+        "preserveAspectRatio",
+        "version",
+        "fill",
+        "fill-rule",
+        "stroke",
+        "stroke-width",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-dasharray",
+        "stroke-dashoffset",
+        "opacity",
+        "fill-opacity",
+        "stroke-opacity",
+        "transform",
+        "cx",
+        "cy",
+        "r",
+        "rx",
+        "ry",
+        "x",
+        "y",
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "points",
+        "d",
+    }
+    for element in root.iter():
+        if not isinstance(element.tag, str) or not element.tag.startswith(svg_namespace):
+            raise ApiError(400, "SVG files may only contain standard vector elements.")
+        if element.tag[len(svg_namespace) :] not in allowed_elements:
+            raise ApiError(400, "SVG files may only contain standard vector elements.")
+        for attribute, value in element.attrib.items():
+            if attribute not in allowed_attributes:
+                raise ApiError(400, "SVG files may not contain scripts or external resources.")
+            if re.search(r"url\s*\(|javascript:|data:", value, re.IGNORECASE):
+                raise ApiError(400, "SVG files may not contain external resources.")
+    if not root.get("viewBox") and not (
+        root.get("width") and root.get("height")
+    ):
+        raise ApiError(400, "The SVG must declare a viewBox or page dimensions.")
+    return content
+
+
+def _load_ventilation_svg_catalog():
+    mapping_path = VENTILATION_SVG_LINKED_LIBRARY_DIR / "svg_to_real_vent_photos.json"
+    try:
+        mappings = json.loads(mapping_path.read_text(encoding="utf-8"))
+        filenames = sorted(
+            symbol.name
+            for symbol in VENTILATION_SVG_SYMBOLS_DIR.iterdir()
+            if symbol.is_file() and symbol.suffix.casefold() == ".svg"
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        LOGGER.exception("Could not read the ventilation SVG photo library.")
+        raise ApiError(503, "The ventilation SVG photo library is unavailable.") from exc
+    if not isinstance(mappings, dict):
+        raise ApiError(503, "The ventilation SVG photo library mapping is invalid.")
+
+    catalog = []
+    for filename in filenames:
+        entry = mappings.get(filename, {})
+        if not isinstance(entry, dict):
+            raise ApiError(503, "The ventilation SVG photo library mapping is invalid.")
+        photos = entry.get("photos", [])
+        models = entry.get("models", [])
+        source = entry.get("source", "")
+        label = entry.get("label", Path(filename).stem.replace("_", " ").title())
+        if (
+            not isinstance(photos, list)
+            or not isinstance(models, list)
+            or not all(isinstance(model, str) for model in models)
+            or not isinstance(source, str)
+            or not isinstance(label, str)
+        ):
+            raise ApiError(503, "The ventilation SVG photo library mapping is invalid.")
+        photo_items = []
+        for photo in photos:
+            if (
+                not isinstance(photo, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]+\.jpg", photo) is None
+                or not (VENTILATION_SVG_LINKED_LIBRARY_DIR / "photos" / photo).is_file()
+            ):
+                LOGGER.error("Invalid or missing product photo mapping for %s.", filename)
+                raise ApiError(503, "A mapped ventilation product photo is unavailable.")
+            photo_items.append(
+                {
+                    "filename": photo,
+                    "file_url": f"/api/ventilation-product-photos/{quote(photo, safe='')}",
+                }
+            )
+        catalog.append(
+            {
+                "filename": filename,
+                "label": label,
+                "file_url": f"/api/ventilation-svg-symbols/{quote(filename, safe='')}",
+                "models": models,
+                "source": source,
+                "photos": photo_items,
+            }
+        )
+    return catalog
+
+
+def _create_dashboard_svg_pdf(svg_files, placements):
+    if not 1 <= len(svg_files) <= SVG_FILE_MAX_COUNT:
+        raise ApiError(
+            400, f"Choose between 1 and {SVG_FILE_MAX_COUNT} SVG files."
+        )
+    if not isinstance(placements, list) or len(placements) != len(svg_files):
+        raise ApiError(400, "Every SVG must have a position on the PDF page.")
+    page_width, page_height = A4
+    output = fitz.open()
+    page = output.new_page(width=page_width, height=page_height)
+    source_files = []
+    seen_indexes = set()
+    try:
+        for placement in placements:
+            if not isinstance(placement, dict):
+                raise ApiError(400, "SVG positions must be valid objects.")
+            try:
+                index = int(placement.get("index"))
+                x = float(placement.get("x"))
+                y = float(placement.get("y"))
+                width = float(placement.get("width"))
+                height = float(placement.get("height"))
+            except (TypeError, ValueError) as exc:
+                raise ApiError(400, "SVG positions must contain valid dimensions.") from exc
+            if (
+                index < 0
+                or index >= len(svg_files)
+                or index in seen_indexes
+                or not all(math.isfinite(value) for value in (x, y, width, height))
+                or width < 8
+                or height < 8
+                or x < 0
+                or y < 0
+                or x + width > page_width
+                or y + height > page_height
+            ):
+                raise ApiError(400, "An SVG position is outside the printable A4 page.")
+            seen_indexes.add(index)
+            filename, content = svg_files[index]
+            safe_content = _validate_dashboard_svg(content)
+            try:
+                source_svg = fitz.open(stream=safe_content, filetype="svg")
+                converted = source_svg.convert_to_pdf()
+                source_svg.close()
+                source_pdf = fitz.open(stream=converted, filetype="pdf")
+            except (ValueError, RuntimeError, fitz.FileDataError) as exc:
+                raise ApiError(400, "An SVG file could not be converted to PDF.") from exc
+            try:
+                source_rect = source_pdf[0].rect
+                if (
+                    not math.isfinite(source_rect.width)
+                    or not math.isfinite(source_rect.height)
+                    or source_rect.width <= 0
+                    or source_rect.height <= 0
+                    or source_rect.width > 10000
+                    or source_rect.height > 10000
+                ):
+                    raise ApiError(400, "The SVG has invalid page dimensions.")
+                page.show_pdf_page(
+                    fitz.Rect(x, y, x + width, y + height),
+                    source_pdf,
+                    0,
+                    keep_proportion=True,
+                )
+            except ApiError:
+                raise
+            except (ValueError, RuntimeError, fitz.FileDataError) as exc:
+                raise ApiError(400, "An SVG file could not be placed on the PDF page.") from exc
+            finally:
+                source_pdf.close()
+            source_files.append((Path(filename).name, safe_content, x, y, width, height))
+        if seen_indexes != set(range(len(svg_files))):
+            raise ApiError(400, "Every SVG must have a position on the PDF page.")
+        return output.tobytes(), source_files
+    finally:
+        output.close()
 
 
 def _create_seai_document_share_pdf(selections, documents, house_id, survey_note):
@@ -1345,6 +1568,37 @@ def initialize_db():
                 size_bytes INTEGER NOT NULL,
                 uploaded_by TEXT NOT NULL DEFAULT '',
                 uploaded_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dashboard_pdfs (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                created_by_user_id INTEGER NOT NULL
+                    REFERENCES app_users(id) ON DELETE CASCADE,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dashboard_pdf_svg_sources (
+                id INTEGER PRIMARY KEY,
+                pdf_id INTEGER NOT NULL
+                    REFERENCES dashboard_pdfs(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                content BLOB NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                width REAL NOT NULL,
+                height REAL NOT NULL,
+                sort_order INTEGER NOT NULL,
+                UNIQUE(pdf_id, sort_order)
             )
             """
         )
@@ -3842,9 +4096,31 @@ class LegacyRouteHandlers:
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_file_bytes(self, body, content_type):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_pdf(self, filename, body, attachment=False):
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header(
+            "Content-Disposition",
+            f"{'attachment' if attachment else 'inline'}; filename*=UTF-8''{quote(filename, safe='')}",
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_svg(self, filename, body, attachment=False):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -3937,14 +4213,28 @@ class LegacyRouteHandlers:
             return None
         path = urlparse(self.path).path
         if _has_access_profile(user, "plumbing_coordinator") and not (
-            (self.command == "GET" and path in {"/api/dashboard", "/api/updates"})
+            (
+                self.command == "GET"
+                and (
+                    path in {"/api/dashboard", "/api/updates", "/api/dashboard-pdfs"}
+                    or path.startswith("/api/dashboard-pdfs/")
+                    or path == "/api/ventilation-svg-symbols"
+                    or path.startswith("/api/ventilation-svg-symbols/")
+                    or path.startswith("/api/ventilation-product-photos/")
+                )
+            )
             or (
                 self.command == "POST"
                 and path in {
                     "/api/auth/pin",
                     "/api/auth/logout",
                     "/api/plumbing-coordinator/assignment",
+                    "/api/dashboard-pdfs",
                 }
+                or (
+                    self.command == "POST"
+                    and re.fullmatch(r"/api/dashboard-pdfs/\d+/svg", path)
+                )
             )
         ):
             self._send_json(
@@ -3953,14 +4243,28 @@ class LegacyRouteHandlers:
             )
             return None
         if _has_access_profile(user, "ventilation_coordinator") and not (
-            (self.command == "GET" and path in {"/api/dashboard", "/api/updates"})
+            (
+                self.command == "GET"
+                and (
+                    path in {"/api/dashboard", "/api/updates", "/api/dashboard-pdfs"}
+                    or path.startswith("/api/dashboard-pdfs/")
+                    or path == "/api/ventilation-svg-symbols"
+                    or path.startswith("/api/ventilation-svg-symbols/")
+                    or path.startswith("/api/ventilation-product-photos/")
+                )
+            )
             or (
                 self.command == "POST"
                 and path in {
                     "/api/auth/pin",
                     "/api/auth/logout",
                     "/api/ventilation-coordinator/assignment",
+                    "/api/dashboard-pdfs",
                 }
+                or (
+                    self.command == "POST"
+                    and re.fullmatch(r"/api/dashboard-pdfs/\d+/svg", path)
+                )
             )
         ):
             self._send_json(
@@ -4018,6 +4322,15 @@ class LegacyRouteHandlers:
                     or urlparse(self.path).path.startswith("/api/house-vent-documents/")
                     or urlparse(self.path).path == "/api/supervisor/shared-seai-documents"
                     or urlparse(self.path).path.startswith("/api/supervisor/shared-seai-documents/")
+                    or urlparse(self.path).path == "/api/dashboard-pdfs"
+                    or urlparse(self.path).path.startswith("/api/dashboard-pdfs/")
+                    or urlparse(self.path).path == "/api/ventilation-svg-symbols"
+                    or urlparse(self.path).path.startswith(
+                        "/api/ventilation-svg-symbols/"
+                    )
+                    or urlparse(self.path).path.startswith(
+                        "/api/ventilation-product-photos/"
+                    )
                 )
             )
             allowed = allowed or (
@@ -4027,6 +4340,16 @@ class LegacyRouteHandlers:
             allowed = allowed or (
                 self.command == "POST"
                 and urlparse(self.path).path == "/api/supervisor/shared-seai-documents"
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and urlparse(self.path).path == "/api/dashboard-pdfs"
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/dashboard-pdfs/\d+/svg", urlparse(self.path).path
+                )
             )
             allowed = allowed or (
                 self.command == "POST"
@@ -4792,6 +5115,403 @@ class LegacyRouteHandlers:
                     ],
                 },
             )
+        elif (
+            path == "/api/ventilation-svg-symbols"
+            or path.startswith("/api/ventilation-svg-symbols/")
+            or path.startswith("/api/ventilation-product-photos/")
+        ):
+            user = self._login_required()
+            if user is None:
+                return
+            if path == "/api/ventilation-svg-symbols":
+                try:
+                    catalog = _load_ventilation_svg_catalog()
+                except ApiError as exc:
+                    self._send_json(
+                        exc.status, {"error": exc.message}
+                    )
+                    return
+                self._send_json(200, {"symbols": catalog})
+                return
+
+            photo_match = re.fullmatch(
+                r"/api/ventilation-product-photos/([A-Za-z0-9_-]+\.jpg)", path
+            )
+            if photo_match is not None:
+                photo_path = (
+                    VENTILATION_SVG_LINKED_LIBRARY_DIR
+                    / "photos"
+                    / photo_match.group(1)
+                )
+                try:
+                    photo_content = photo_path.read_bytes()
+                except FileNotFoundError:
+                    self._send_json(404, {"error": "Product photo was not found."})
+                    return
+                except OSError:
+                    LOGGER.exception("Could not read ventilation product photo %s.", photo_path.name)
+                    self._send_json(503, {"error": "The product photo could not be loaded."})
+                    return
+                self._send_file_bytes(photo_content, "image/jpeg")
+                return
+
+            symbol_match = re.fullmatch(
+                r"/api/ventilation-svg-symbols/([A-Za-z0-9_-]+\.svg)", path
+            )
+            if symbol_match is None:
+                self._send_json(404, {"error": "SVG symbol was not found."})
+                return
+            symbol_path = VENTILATION_SVG_SYMBOLS_DIR / symbol_match.group(1)
+            try:
+                content = symbol_path.read_bytes()
+            except FileNotFoundError:
+                self._send_json(404, {"error": "SVG symbol was not found."})
+                return
+            except OSError:
+                LOGGER.exception("Could not read ventilation SVG symbol %s.", symbol_path.name)
+                self._send_json(503, {"error": "The SVG symbol could not be loaded."})
+                return
+            try:
+                _validate_dashboard_svg(content)
+            except ApiError as exc:
+                self._send_json(exc.status, {"error": exc.message})
+                return
+            self._send_svg(symbol_path.name, content)
+        elif path == "/api/dashboard-pdfs" or path.startswith(
+            "/api/dashboard-pdfs/"
+        ):
+            user = self._login_required()
+            if user is None:
+                return
+            if path == "/api/dashboard-pdfs":
+                documents = []
+                with connect_db() as db:
+                    documents.extend(
+                        {
+                            "id": row["id"],
+                            "filename": row["filename"],
+                            "size_bytes": row["size_bytes"],
+                            "created_by": row["created_by"],
+                            "created_at": row["created_at"],
+                            "can_edit": (
+                                user["username"].casefold() == "tommy"
+                                and row["created_by_user_id"] == user["id"]
+                            ),
+                            "source": "Workspace",
+                            "file_url": f"/api/dashboard-pdfs/{row['id']}/file",
+                            "svg_sources": [
+                                {
+                                    "id": source["id"],
+                                    "filename": source["filename"],
+                                    "x": source["x"],
+                                    "y": source["y"],
+                                    "width": source["width"],
+                                    "height": source["height"],
+                                    "file_url": (
+                                        f"/api/dashboard-pdfs/{row['id']}/svg/"
+                                        f"{source['id']}"
+                                    ),
+                                }
+                                for source in db.execute(
+                                    """
+                                    SELECT id, filename, x, y, width, height
+                                    FROM dashboard_pdf_svg_sources
+                                    WHERE pdf_id = ? ORDER BY sort_order, id
+                                    """,
+                                    (row["id"],),
+                                )
+                            ],
+                        }
+                        for row in db.execute(
+                            """
+                            SELECT id, filename, size_bytes, created_by, created_at,
+                                   created_by_user_id
+                            FROM dashboard_pdfs
+                            ORDER BY created_at DESC, id DESC
+                            """
+                        )
+                    )
+
+                    can_view_house_documents = _has_access_profile(
+                        user, "admin"
+                    ) or _has_access_profile(user, "surveyor")
+                    can_view_seai_documents = (
+                        can_view_house_documents
+                        or _has_access_profile(user, "assign")
+                    )
+                    can_view_all_vent_documents = can_view_seai_documents
+                    is_ventilation_user = _in_department(db, user, "Ventilation")
+
+                    if can_view_house_documents:
+                        house_rows = db.execute(
+                            """
+                            SELECT documents.id, documents.house_id, documents.filename,
+                                   documents.size_bytes, documents.uploaded_by,
+                                   documents.uploaded_at, provided.ready_for_start
+                            FROM house_documents documents
+                            JOIN provided_houses provided
+                                ON provided.id = documents.house_id
+                            LEFT JOIN houses active ON active.id = provided.id
+                            WHERE active.id IS NULL
+                            ORDER BY documents.uploaded_at DESC, documents.id DESC
+                            """
+                        ).fetchall()
+                        for row in house_rows:
+                            if (
+                                not row["ready_for_start"]
+                                and _is_annotated_pdf_filename(row["filename"])
+                            ):
+                                continue
+                            documents.append(
+                                {
+                                    "id": row["id"],
+                                    "filename": row["filename"],
+                                    "size_bytes": row["size_bytes"],
+                                    "created_by": row["uploaded_by"],
+                                    "created_at": row["uploaded_at"],
+                                    "house_id": row["house_id"],
+                                    "source": "House PDF",
+                                    "file_url": f"/api/house-documents/{row['id']}",
+                                }
+                            )
+
+                    if can_view_seai_documents:
+                        has_seai_storage = db.execute(
+                            """
+                            SELECT 1 FROM sqlite_master
+                            WHERE type = 'table' AND name = 'seai_documents'
+                            """
+                        ).fetchone()
+                        if has_seai_storage:
+                            seai_columns = {
+                                row["name"]
+                                for row in db.execute(
+                                    "PRAGMA table_info(seai_documents)"
+                                )
+                            }
+                            if "content" not in seai_columns:
+                                raise ApiError(
+                                    503, "SEAI PDF storage has not been initialized."
+                                )
+                            seai_rows = db.execute(
+                                """
+                                SELECT documents.id, documents.application_id,
+                                       documents.filename,
+                                       length(documents.content) AS size_bytes,
+                                       CASE WHEN selected.document_id IS NULL
+                                            THEN 0 ELSE 1 END AS is_selected_pdf,
+                                       CASE WHEN provided.id IS NOT NULL
+                                                AND provided.ready_for_start = 0
+                                                AND active.id IS NULL
+                                            THEN 1 ELSE 0 END AS is_not_started
+                                FROM seai_documents documents
+                                LEFT JOIN selected_seai_documents selected
+                                    ON selected.document_id = documents.id
+                                LEFT JOIN provided_houses provided
+                                    ON provided.id = documents.application_id
+                                LEFT JOIN houses active
+                                    ON active.id = provided.id
+                                WHERE lower(documents.filename) LIKE '%.pdf'
+                                    AND documents.content IS NOT NULL
+                                ORDER BY documents.filename COLLATE NOCASE
+                                """
+                            ).fetchall()
+                            for row in seai_rows:
+                                if row["is_not_started"] and _is_annotated_pdf_filename(
+                                    row["filename"]
+                                ):
+                                    continue
+                                documents.append(
+                                    {
+                                        "id": row["id"],
+                                        "filename": row["filename"],
+                                        "size_bytes": row["size_bytes"],
+                                        "created_by": "",
+                                        "created_at": "",
+                                        "house_id": row["application_id"],
+                                        "source": (
+                                            "Saved PDF"
+                                            if row["is_selected_pdf"]
+                                            else "SEAI PDF"
+                                        ),
+                                        "file_url": (
+                                            f"/api/seai-documents/{row['id']}/file"
+                                        ),
+                                    }
+                                )
+
+                    if can_view_all_vent_documents or is_ventilation_user:
+                        vent_rows = db.execute(
+                            """
+                            SELECT documents.id, documents.house_id,
+                                   documents.filename, documents.size_bytes,
+                                   documents.shared_by, documents.shared_at
+                            FROM house_vent_documents documents
+                            JOIN provided_houses houses ON houses.id = documents.house_id
+                            WHERE ? OR houses.plan_vent_required = 1
+                            ORDER BY documents.shared_at DESC, documents.id DESC
+                            """,
+                            (int(can_view_all_vent_documents),),
+                        ).fetchall()
+                        documents.extend(
+                            {
+                                "id": row["id"],
+                                "filename": row["filename"],
+                                "size_bytes": row["size_bytes"],
+                                "created_by": row["shared_by"],
+                                "created_at": row["shared_at"],
+                                "house_id": row["house_id"],
+                                "source": "Ventilation PDF",
+                                "file_url": (
+                                    f"/api/house-vent-documents/{row['id']}/file"
+                                ),
+                            }
+                            for row in vent_rows
+                        )
+
+                    if _has_access_profile(user, "supervisor"):
+                        shared_rows = []
+                        has_seai_storage = db.execute(
+                            """
+                            SELECT 1 FROM sqlite_master
+                            WHERE type = 'table' AND name = 'seai_documents'
+                            """
+                        ).fetchone()
+                        if has_seai_storage:
+                            seai_columns = {
+                                row["name"]
+                                for row in db.execute(
+                                    "PRAGMA table_info(seai_documents)"
+                                )
+                            }
+                            if "content" not in seai_columns:
+                                raise ApiError(
+                                    503, "SEAI PDF storage has not been initialized."
+                                )
+                            shared_rows.extend(
+                                db.execute(
+                                    """
+                                    SELECT shares.house_id, shares.shared_by,
+                                           shares.shared_at, documents.filename,
+                                           length(documents.content) AS size_bytes,
+                                           '/api/supervisor/shared-seai-documents/' ||
+                                               shares.id || '/file' AS file_url
+                                    FROM seai_document_shares shares
+                                    JOIN seai_documents documents
+                                        ON documents.id = shares.document_id
+                                    WHERE shares.recipient_user_id = ?
+                                        AND documents.content IS NOT NULL
+                                    """,
+                                    (user["id"],),
+                                ).fetchall()
+                            )
+                        shared_rows.extend(
+                            db.execute(
+                                """
+                                SELECT house_id, shared_by, shared_at, filename, size_bytes,
+                                       '/api/supervisor/shared-seai-documents/delivery-' ||
+                                           id || '/file' AS file_url
+                                FROM seai_shared_pdf_deliveries
+                                WHERE recipient_user_id = ?
+                                """,
+                                (user["id"],),
+                            ).fetchall()
+                        )
+                        documents.extend(
+                            {
+                                "id": row["file_url"],
+                                "filename": row["filename"],
+                                "size_bytes": row["size_bytes"],
+                                "created_by": row["shared_by"],
+                                "created_at": row["shared_at"],
+                                "house_id": row["house_id"],
+                                "source": "Shared PDF",
+                                "file_url": row["file_url"],
+                            }
+                            for row in shared_rows
+                        )
+
+                documents.sort(
+                    key=lambda item: (
+                        item["created_at"],
+                        item["filename"].casefold(),
+                    ),
+                    reverse=True,
+                )
+                self._send_json(200, {"documents": documents})
+                return
+
+            source_match = re.fullmatch(
+                r"/api/dashboard-pdfs/(\d+)/svg/(\d+)", path
+            )
+            if source_match:
+                with connect_db() as db:
+                    source = db.execute(
+                        """
+                        SELECT sources.filename, sources.content
+                        FROM dashboard_pdf_svg_sources sources
+                        JOIN dashboard_pdfs documents ON documents.id = sources.pdf_id
+                        WHERE documents.id = ? AND sources.id = ?
+                        """,
+                        (int(source_match.group(1)), int(source_match.group(2))),
+                    ).fetchone()
+                if source is None:
+                    self._send_json(404, {"error": "SVG source was not found."})
+                    return
+                attachment = (
+                    parse_qs(urlparse(self.path).query).get("download", ["0"])[0]
+                    == "1"
+                )
+                self._send_svg(
+                    source["filename"], source["content"], attachment=attachment
+                )
+                return
+
+            sources_match = re.fullmatch(
+                r"/api/dashboard-pdfs/(\d+)/svg-sources", path
+            )
+            if sources_match:
+                with connect_db() as db:
+                    pdf_exists = db.execute(
+                        "SELECT 1 FROM dashboard_pdfs WHERE id = ?",
+                        (int(sources_match.group(1)),),
+                    ).fetchone()
+                    if pdf_exists is None:
+                        self._send_json(404, {"error": "PDF was not found."})
+                        return
+                    sources = [
+                        dict(row)
+                        for row in db.execute(
+                            """
+                            SELECT id, filename, x, y, width, height
+                            FROM dashboard_pdf_svg_sources
+                            WHERE pdf_id = ? ORDER BY sort_order, id
+                            """,
+                            (int(sources_match.group(1)),),
+                        )
+                    ]
+                self._send_json(200, {"sources": sources})
+                return
+
+            match = re.fullmatch(r"/api/dashboard-pdfs/(\d+)/file", path)
+            if match is None:
+                self._send_json(404, {"error": "PDF was not found."})
+                return
+            with connect_db() as db:
+                row = db.execute(
+                    """
+                    SELECT filename, content FROM dashboard_pdfs WHERE id = ?
+                    """,
+                    (int(match.group(1)),),
+                ).fetchone()
+            if row is None:
+                self._send_json(404, {"error": "PDF was not found."})
+                return
+            attachment = (
+                parse_qs(urlparse(self.path).query).get("download", ["0"])[0]
+                == "1"
+            )
+            self._send_pdf(row["filename"], row["content"], attachment=attachment)
         elif path.startswith("/api/seai-documents/"):
             user = self._login_required()
             if user is None:
@@ -5981,6 +6701,183 @@ class LegacyRouteHandlers:
 
             user = self._login_required()
             if user is None:
+                return
+            if path == "/api/dashboard-pdfs":
+                if user["username"].casefold() != "tommy":
+                    raise ApiError(
+                        403, "Only the Tommy account can create blank PDFs."
+                    )
+                timestamp = datetime.now().isoformat(timespec="seconds")
+                filename_stem = f"Tommy-blank-{datetime.now():%Y%m%d-%H%M%S}"
+                filename = f"{filename_stem}.pdf"
+                suffix = 2
+                with fitz.open() as blank_pdf:
+                    blank_pdf.new_page(width=A4[0], height=A4[1])
+                    content = blank_pdf.tobytes()
+                with connect_db() as db:
+                    with db:
+                        while db.execute(
+                            "SELECT 1 FROM dashboard_pdfs WHERE filename = ?",
+                            (filename,),
+                        ).fetchone():
+                            filename = f"{filename_stem}-{suffix}.pdf"
+                            suffix += 1
+                        cursor = db.execute(
+                            """
+                            INSERT INTO dashboard_pdfs
+                                (filename, content, size_bytes, created_by_user_id,
+                                 created_by, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                filename,
+                                sqlite3.Binary(content),
+                                len(content),
+                                user["id"],
+                                user["display_name"],
+                                timestamp,
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "filename": filename,
+                        "size_bytes": len(content),
+                    },
+                )
+                return
+            svg_pdf_match = re.fullmatch(r"/api/dashboard-pdfs/(\d+)/svg", path)
+            if svg_pdf_match:
+                if user["username"].casefold() != "tommy":
+                    raise ApiError(
+                        403, "Only the Tommy account can add SVGs to workspace PDFs."
+                    )
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.lower().startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload SVG files from the PDF editor.")
+                body = self._body()
+                try:
+                    message = BytesParser(policy=policy.default).parsebytes(
+                        f"Content-Type: {content_type}\r\n"
+                        "MIME-Version: 1.0\r\n\r\n".encode("ascii")
+                        + body
+                    )
+                except (UnicodeEncodeError, ValueError) as exc:
+                    raise ApiError(400, "The SVG upload is not valid multipart data.") from exc
+                if not message.is_multipart():
+                    raise ApiError(400, "The SVG upload is not valid multipart data.")
+                svg_files = []
+                placements_json = None
+                for part in message.iter_parts():
+                    field_name = part.get_param(
+                        "name", header="content-disposition"
+                    )
+                    if field_name == "placements":
+                        if placements_json is not None or part.get_filename():
+                            raise ApiError(400, "The SVG placement data is invalid.")
+                        try:
+                            placements_json = part.get_content()
+                        except (LookupError, UnicodeDecodeError) as exc:
+                            raise ApiError(
+                                400, "The SVG placement data is invalid."
+                            ) from exc
+                    elif field_name == "files":
+                        filename = part.get_filename()
+                        if not filename:
+                            raise ApiError(400, "Choose SVG files to place.")
+                        filename = Path(filename.replace("\\", "/")).name
+                        if not filename.casefold().endswith(".svg"):
+                            raise ApiError(400, "Only SVG vector files are accepted.")
+                        content = part.get_payload(decode=True)
+                        if content is None:
+                            raise ApiError(400, "An SVG file could not be read.")
+                        svg_files.append((filename, content))
+                if placements_json is None:
+                    raise ApiError(400, "SVG positions are required.")
+                try:
+                    placements = json.loads(placements_json)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise ApiError(400, "SVG positions must be valid JSON.") from exc
+                document_id = int(svg_pdf_match.group(1))
+                with connect_db() as db:
+                    existing = db.execute(
+                        """
+                        SELECT filename FROM dashboard_pdfs
+                        WHERE id = ? AND created_by_user_id = ?
+                        """,
+                        (document_id, user["id"]),
+                    ).fetchone()
+                if existing is None:
+                    raise ApiError(404, "Workspace PDF was not found.")
+                pdf_content, saved_svgs = _create_dashboard_svg_pdf(
+                    svg_files, placements
+                )
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        current = db.execute(
+                            """
+                            SELECT filename FROM dashboard_pdfs
+                            WHERE id = ? AND created_by_user_id = ?
+                            """,
+                            (document_id, user["id"]),
+                        ).fetchone()
+                        if current is None:
+                            raise ApiError(404, "Workspace PDF was not found.")
+                        db.execute(
+                            """
+                            UPDATE dashboard_pdfs
+                            SET content = ?, size_bytes = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                sqlite3.Binary(pdf_content),
+                                len(pdf_content),
+                                document_id,
+                            ),
+                        )
+                        db.execute(
+                            "DELETE FROM dashboard_pdf_svg_sources WHERE pdf_id = ?",
+                            (document_id,),
+                        )
+                        db.executemany(
+                            """
+                            INSERT INTO dashboard_pdf_svg_sources
+                                (pdf_id, filename, content, x, y, width, height,
+                                 sort_order)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            [
+                                (
+                                    document_id,
+                                    filename,
+                                    sqlite3.Binary(content),
+                                    x,
+                                    y,
+                                    width,
+                                    height,
+                                    index,
+                                )
+                                for index, (
+                                    filename,
+                                    content,
+                                    x,
+                                    y,
+                                    width,
+                                    height,
+                                ) in enumerate(saved_svgs)
+                            ],
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "id": document_id,
+                        "filename": existing["filename"],
+                        "size_bytes": len(pdf_content),
+                        "svg_count": len(saved_svgs),
+                    },
+                )
                 return
             house_document_delete_match = re.fullmatch(
                 r"/api/house-documents/(\d+)/delete", path

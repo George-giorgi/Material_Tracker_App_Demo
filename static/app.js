@@ -47,6 +47,8 @@ const state = {
   preparedHouseShare: null,
   seaiSharePages: new Map(),
   pdfAnnotator: null,
+  svgPdfEditor: null,
+  ventilationSvgSymbols: [],
   user: null,
   users: [],
   departments: [],
@@ -956,6 +958,7 @@ function showWorkspace(user) {
     isVentilation || isAssign || isSurveyor || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#surveyor-dashboard-summary").classList.toggle("hidden", !isSurveyor);
+  $("#surveyor-pdf-library").classList.toggle("hidden", !isSurveyor);
   $("#supervisor-dashboard-summary").classList.toggle("hidden", !isSupervisor);
   $("#surveyor-house-filters").classList.toggle("hidden", !isSurveyor);
   const houseRefreshButton = $("#refresh-surveyor-houses");
@@ -1098,6 +1101,7 @@ function showWorkspace(user) {
     $("#house-search").placeholder = "Search your houses";
     $("#house-search").setAttribute("aria-label", "Search your assigned houses");
     loadSurveyorHouses();
+    void loadDashboardPdfs();
   } else if (isPlumbingCoordinator) {
     setTab("overview");
   } else if (isAssign) {
@@ -3263,6 +3267,429 @@ async function loadHouseDocuments(houseId, requestId, canModify = true) {
     if (requestId === state.surveyRoomRequest) {
       list.innerHTML = `<p class="house-documents-error">Could not load survey documents: ${escapeHtml(error.message)}</p>`;
     }
+  }
+}
+async function loadDashboardPdfs() {
+  if (!state.user) return;
+  const isSurveyor = hasAccessProfile(state.user, "surveyor");
+  const list = $(
+    isSurveyor ? "#surveyor-dashboard-pdf-list" : "#dashboard-pdf-list",
+  );
+  if (!list || !state.user) return;
+  const createButton = $(
+    isSurveyor ? "#surveyor-create-blank-pdf" : "#create-blank-pdf",
+  );
+  const canCreate = state.user.username?.toLowerCase() === "tommy";
+  createButton.classList.toggle("hidden", !canCreate);
+  $(
+    isSurveyor ? "#surveyor-svg-dropzone" : "#dashboard-svg-dropzone",
+  ).classList.toggle("hidden", !canCreate);
+  list.innerHTML = '<p class="muted">Loading PDFs…</p>';
+  try {
+    const result = await request("/api/dashboard-pdfs");
+    const documents = result.documents || [];
+    list.innerHTML = documents.length
+      ? documents
+          .map((pdf) => {
+            const house = pdf.house_id
+              ? `House ${escapeHtml(pdf.house_id)} · `
+              : "";
+            const creator = pdf.created_by
+              ? ` · ${escapeHtml(pdf.created_by)}`
+              : "";
+            const date = pdf.created_at
+              ? ` · ${escapeHtml(formatAuditDateTime(pdf.created_at))}`
+              : "";
+            const svgSources = (pdf.svg_sources || [])
+              .map(
+                (source) =>
+                  `<a class="dashboard-pdf-source" href="${escapeHtml(source.file_url)}?download=1" download="${escapeHtml(source.filename)}">SVG: ${escapeHtml(source.filename)}</a>`,
+              )
+              .join("");
+            return `<div class="dashboard-pdf-entry">
+              <span class="house-document-icon" aria-hidden="true">PDF</span>
+              <span class="dashboard-pdf-copy"><strong>${escapeHtml(pdf.filename)}</strong><small>${escapeHtml(pdf.source)} · ${house}${seaiPdfSize(pdf.size_bytes)}${creator}${date}</small>${svgSources ? `<span class="dashboard-pdf-sources">${svgSources}</span>` : ""}</span>
+              <span class="dashboard-pdf-actions"><a class="button button-primary" href="${escapeHtml(pdf.file_url)}" target="_blank" rel="noreferrer">View</a><a class="button button-secondary" href="${escapeHtml(pdf.file_url)}?download=1">Download</a>${pdf.can_edit ? `<button class="button button-secondary" type="button" data-edit-svg-pdf="${Number(pdf.id)}" data-pdf-name="${escapeHtml(pdf.filename)}">Place SVGs</button>` : ""}</span>
+            </div>`;
+          })
+          .join("")
+      : '<p class="muted dashboard-pdf-empty">No PDFs are currently available to your account.</p>';
+  } catch (error) {
+    list.innerHTML = `<p class="house-documents-error" role="alert">Could not load PDFs: ${escapeHtml(error.message)}</p>`;
+  }
+}
+const SVG_PDF_PAGE = { width: 595.28, height: 841.89 };
+const SAFE_SVG_ELEMENTS = new Set([
+  "svg", "title", "g", "path", "rect", "circle", "ellipse", "line",
+  "polyline", "polygon",
+]);
+const SAFE_SVG_ATTRIBUTES = new Set([
+  "xmlns", "width", "height", "viewBox", "preserveAspectRatio", "version",
+  "fill", "fill-rule", "stroke", "stroke-width", "stroke-linecap",
+  "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "opacity",
+  "fill-opacity", "stroke-opacity", "transform", "cx", "cy", "r", "rx",
+  "ry", "x", "y", "x1", "y1", "x2", "y2", "points", "d",
+]);
+function validateSvgFile(file, content) {
+  if (!file.name.toLowerCase().endsWith(".svg")) {
+    throw new Error(`${file.name} is not an SVG file.`);
+  }
+  if (file.size > 500_000) {
+    throw new Error(`${file.name} is larger than the 500 KB SVG limit.`);
+  }
+  if (/<!doctype|<!entity/i.test(content)) {
+    throw new Error(`${file.name} contains unsupported XML declarations.`);
+  }
+  const parsed = new DOMParser().parseFromString(content, "image/svg+xml");
+  const root = parsed.documentElement;
+  if (
+    parsed.querySelector("parsererror") ||
+    root.localName !== "svg" ||
+    root.namespaceURI !== "http://www.w3.org/2000/svg"
+  ) {
+    throw new Error(`${file.name} is not a readable SVG document.`);
+  }
+  for (const element of parsed.querySelectorAll("*")) {
+    if (
+      element.namespaceURI !== "http://www.w3.org/2000/svg" ||
+      !SAFE_SVG_ELEMENTS.has(element.localName)
+    ) {
+      throw new Error(`${file.name} contains unsupported SVG elements.`);
+    }
+    for (const attribute of element.attributes) {
+      if (
+        !SAFE_SVG_ATTRIBUTES.has(attribute.name) ||
+        /url\s*\(|javascript:|data:/i.test(attribute.value)
+      ) {
+        throw new Error(`${file.name} contains unsupported SVG resources.`);
+      }
+    }
+  }
+  const viewBox = (root.getAttribute("viewBox") || "")
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const width = Number.parseFloat(root.getAttribute("width") || "");
+  const height = Number.parseFloat(root.getAttribute("height") || "");
+  let aspectRatio =
+    viewBox.length === 4
+      ? viewBox[2] / viewBox[3]
+      : width > 0 && height > 0
+        ? width / height
+        : 1;
+  if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) aspectRatio = 1;
+  return { content, aspectRatio };
+}
+function releaseSvgPdfEditor() {
+  for (const placement of state.svgPdfEditor?.placements || []) {
+    URL.revokeObjectURL(placement.url);
+  }
+  state.svgPdfEditor = null;
+}
+function renderSvgPdfPage() {
+  const page = $("#svg-pdf-page");
+  const editor = state.svgPdfEditor;
+  if (!editor) return;
+  const scale = page.clientWidth / SVG_PDF_PAGE.width;
+  editor.scale = scale;
+  page.innerHTML = editor.placements
+    .map(
+      (placement, index) => `
+        <div class="svg-pdf-placement${placement.selected ? " selected" : ""}"
+          data-svg-placement="${index}" tabindex="0" role="group"
+          aria-label="${escapeHtml(placement.filename)}"
+          style="left:${placement.x * scale}px;top:${placement.y * scale}px;width:${placement.width * scale}px;height:${placement.height * scale}px">
+          <img src="${placement.url}" alt="${escapeHtml(placement.filename)}" draggable="false">
+          ${state.ventilationSvgSymbols.some((symbol) => symbol.filename === placement.filename) ? `<button class="svg-pdf-placement-preview" type="button" data-svg-placement-preview="${index}" aria-label="Review product photos for ${escapeHtml(placement.filename)}">i</button>` : ""}
+          <button class="svg-pdf-placement-remove" type="button" data-svg-remove="${index}" aria-label="Remove ${escapeHtml(placement.filename)}">×</button>
+          <span class="svg-pdf-placement-resize" data-svg-resize="${index}" aria-label="Resize ${escapeHtml(placement.filename)}"></span>
+        </div>`,
+    )
+    .join("");
+  $("#svg-pdf-editor-status").textContent = editor.loading
+    ? "Loading the saved SVG symbols…"
+    : editor.placements.length
+      ? `${editor.placements.length} SVG${editor.placements.length === 1 ? "" : "s"} on the page. Drag to move, resize with the corner handle, or use i to review linked product photos.`
+      : "Drag symbols from the library onto the page, or drop your own SVG files.";
+  $("#svg-pdf-editor-save").disabled =
+    editor.loading || editor.saving || editor.placements.length === 0;
+}
+async function addSvgFilesToEditor(files) {
+  const editor = state.svgPdfEditor;
+  if (!editor) return;
+  const additions = [];
+  try {
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      additions.push(
+        createSvgPlacement(
+          file.name,
+          bytes,
+          undefined,
+          undefined,
+          editor.placements.length + additions.length,
+        ),
+      );
+    }
+    if (editor.placements.length + additions.length > 30) {
+      throw new Error("A printable page can contain up to 30 SVG symbols.");
+    }
+    editor.placements.push(...additions);
+    $("#svg-pdf-editor-error").classList.add("hidden");
+    renderSvgPdfPage();
+  } catch (error) {
+    additions.forEach((placement) => URL.revokeObjectURL(placement.url));
+    $("#svg-pdf-editor-error").textContent = error.message;
+    $("#svg-pdf-editor-error").classList.remove("hidden");
+  }
+}
+function createSvgPlacement(filename, bytes, x, y, placementCount) {
+  const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const { aspectRatio } = validateSvgFile(
+    { name: filename, size: bytes.byteLength },
+    content,
+  );
+  const width = 64;
+  const height = width / aspectRatio;
+  const offset = placementCount * 18;
+  return {
+    filename,
+    content,
+    bytes,
+    url: URL.createObjectURL(new Blob([bytes], { type: "image/svg+xml" })),
+    aspectRatio,
+    x: Math.max(0, Math.min(x ?? 140 + offset, SVG_PDF_PAGE.width - width)),
+    y: Math.max(0, Math.min(y ?? 160 + offset, SVG_PDF_PAGE.height - height)),
+    width,
+    height,
+  };
+}
+async function loadSvgSymbolPalette() {
+  const palette = $("#svg-pdf-symbol-palette");
+  palette.innerHTML = '<p class="muted">Loading ventilation symbols…</p>';
+  try {
+    const result = await request("/api/ventilation-svg-symbols");
+    state.ventilationSvgSymbols = result.symbols;
+    palette.innerHTML = result.symbols.length
+      ? result.symbols
+          .map((symbol) => {
+            const firstPhoto = symbol.photos[0];
+            return `<article class="svg-pdf-symbol" draggable="true"
+                data-svg-symbol="${escapeHtml(symbol.filename)}"
+                data-svg-symbol-url="${escapeHtml(symbol.file_url)}">
+              <img class="svg-pdf-symbol-icon" src="${escapeHtml(symbol.file_url)}" alt="" draggable="false">
+              <div class="svg-pdf-symbol-copy"><strong>${escapeHtml(symbol.label)}</strong><small>${escapeHtml(symbol.models[0] || "Ventilation product")}</small></div>
+              ${firstPhoto ? `<img class="svg-pdf-symbol-photo" src="${escapeHtml(firstPhoto.file_url)}" alt="" draggable="false">` : ""}
+              <div class="svg-pdf-symbol-actions">
+                <button class="button button-secondary" type="button" data-svg-symbol-add="${escapeHtml(symbol.filename)}">Add</button>
+                <button class="button button-secondary" type="button" data-svg-symbol-preview="${escapeHtml(symbol.filename)}">Photos (${symbol.photos.length})</button>
+              </div>
+            </article>`;
+          })
+          .join("")
+      : '<p class="muted">No SVG symbols found in the ventilation symbol folder.</p>';
+  } catch (error) {
+    state.ventilationSvgSymbols = [];
+    palette.innerHTML = `<p class="house-documents-error" role="alert">Could not load ventilation symbols: ${escapeHtml(error.message)}</p>`;
+  }
+}
+function openVentilationPhotoReview(filename) {
+  const symbol = state.ventilationSvgSymbols.find(
+    (item) => item.filename === filename,
+  );
+  if (!symbol) return;
+  $("#svg-product-photo-title").textContent = symbol.label;
+  const models = symbol.models.length
+    ? `<ul>${symbol.models.map((model) => `<li>${escapeHtml(model)}</li>`).join("")}</ul>`
+    : "<p>No model details are listed for this symbol.</p>";
+  const photos = symbol.photos.length
+    ? `<div class="ventilation-photo-gallery">${symbol.photos
+        .map(
+          (photo) => `<figure>
+            <img src="${escapeHtml(photo.file_url)}" alt="${escapeHtml(symbol.label)} product reference: ${escapeHtml(photo.filename)}">
+            <figcaption>${escapeHtml(photo.filename)}</figcaption>
+          </figure>`,
+        )
+        .join("")}</div>`
+    : '<p class="muted">No product photos are linked to this symbol yet.</p>';
+  $("#svg-product-photo-content").innerHTML = `
+    <section class="ventilation-photo-models"><h3>Linked models</h3>${models}</section>
+    ${photos}
+    <p class="ventilation-photo-source"><strong>Reference:</strong> ${escapeHtml(symbol.source || "Not specified")}</p>
+    <p class="ventilation-photo-notice">Product photos are reference crops, not proof of exact product suitability. Some symbols use a representative category photo; check the model and source before ordering.</p>`;
+  $("#svg-product-photo-dialog").showModal();
+}
+async function addCatalogSvgToEditor(filename, fileUrl, x, y) {
+  const editor = state.svgPdfEditor;
+  if (!editor || editor.placements.length >= 30) {
+    if (editor) {
+      $("#svg-pdf-editor-error").textContent =
+        "A printable page can contain up to 30 SVG symbols.";
+      $("#svg-pdf-editor-error").classList.remove("hidden");
+    }
+    return;
+  }
+  try {
+    const response = await fetch(fileUrl, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error(`Could not load ${filename} (${response.status}).`);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    editor.placements.push(
+      createSvgPlacement(filename, bytes, x, y, editor.placements.length),
+    );
+    $("#svg-pdf-editor-error").classList.add("hidden");
+    renderSvgPdfPage();
+  } catch (error) {
+    $("#svg-pdf-editor-error").textContent = error.message;
+    $("#svg-pdf-editor-error").classList.remove("hidden");
+  }
+}
+async function openSvgPdfEditor(pdfId, filename, initialFiles = []) {
+  const editor = {
+    pdfId,
+    filename,
+    placements: [],
+    loading: true,
+    saving: false,
+    scale: 1,
+    drag: null,
+  };
+  state.svgPdfEditor = editor;
+  $("#svg-pdf-editor-title").textContent = `Place SVGs · ${filename}`;
+  $("#svg-pdf-editor-error").classList.add("hidden");
+  $("#svg-pdf-editor-dialog").showModal();
+  renderSvgPdfPage();
+  try {
+    const result = await request(`/api/dashboard-pdfs/${pdfId}/svg-sources`);
+    await loadSvgSymbolPalette();
+    for (const source of result.sources) {
+      const response = await fetch(
+        `/api/dashboard-pdfs/${pdfId}/svg/${source.id}`,
+        { credentials: "same-origin" },
+      );
+      if (!response.ok) {
+        throw new Error(`Could not load ${source.filename} (${response.status}).`);
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const { aspectRatio } = validateSvgFile(
+        { name: source.filename, size: bytes.byteLength },
+        content,
+      );
+      editor.placements.push({
+        filename: source.filename,
+        content,
+        bytes,
+        url: URL.createObjectURL(
+          new Blob([bytes], { type: "image/svg+xml" }),
+        ),
+        aspectRatio,
+        x: source.x,
+        y: source.y,
+        width: source.width,
+        height: source.height,
+      });
+    }
+    editor.loading = false;
+    if (initialFiles.length) await addSvgFilesToEditor(initialFiles);
+    renderSvgPdfPage();
+  } catch (error) {
+    editor.loading = false;
+    renderSvgPdfPage();
+    $("#svg-pdf-editor-error").textContent = error.message;
+    $("#svg-pdf-editor-error").classList.remove("hidden");
+  }
+}
+function moveSvgPlacement(event) {
+  const drag = state.svgPdfEditor?.drag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const editor = state.svgPdfEditor;
+  const placement = editor.placements[drag.index];
+  if (!placement) return;
+  const dx = (event.clientX - drag.startX) / editor.scale;
+  const dy = (event.clientY - drag.startY) / editor.scale;
+  if (drag.mode === "resize") {
+    const width = Math.max(
+      24,
+      Math.min(
+        SVG_PDF_PAGE.width - placement.x,
+        drag.width + dx,
+        (SVG_PDF_PAGE.height - placement.y) * placement.aspectRatio,
+      ),
+    );
+    placement.width = width;
+    placement.height = width / placement.aspectRatio;
+  } else {
+    placement.x = Math.max(
+      0,
+      Math.min(SVG_PDF_PAGE.width - placement.width, drag.x + dx),
+    );
+    placement.y = Math.max(
+      0,
+      Math.min(SVG_PDF_PAGE.height - placement.height, drag.y + dy),
+    );
+  }
+  const item = $(`[data-svg-placement="${drag.index}"]`, $("#svg-pdf-page"));
+  item.style.left = `${placement.x * editor.scale}px`;
+  item.style.top = `${placement.y * editor.scale}px`;
+  item.style.width = `${placement.width * editor.scale}px`;
+  item.style.height = `${placement.height * editor.scale}px`;
+}
+async function saveSvgPdfEditor() {
+  const editor = state.svgPdfEditor;
+  if (!editor || editor.saving) return;
+  editor.saving = true;
+  renderSvgPdfPage();
+  $("#svg-pdf-editor-error").classList.add("hidden");
+  const formData = new FormData();
+  const placements = editor.placements.map((placement, index) => {
+    formData.append(
+      "files",
+      new Blob([placement.bytes], { type: "image/svg+xml" }),
+      placement.filename,
+    );
+    return {
+      index,
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+      height: placement.height,
+    };
+  });
+  formData.append("placements", JSON.stringify(placements));
+  try {
+    const result = await request(
+      `/api/dashboard-pdfs/${editor.pdfId}/svg`,
+      { method: "POST", body: formData },
+    );
+    $("#svg-pdf-editor-dialog").close();
+    releaseSvgPdfEditor();
+    await loadDashboardPdfs();
+    showToast(`${result.filename} saved as a printable PDF.`);
+  } catch (error) {
+    editor.saving = false;
+    renderSvgPdfPage();
+    $("#svg-pdf-editor-error").textContent = error.message;
+    $("#svg-pdf-editor-error").classList.remove("hidden");
+  }
+}
+async function createBlankDashboardPdf(initialFiles = []) {
+  const button = $(
+    hasAccessProfile(state.user, "surveyor")
+      ? "#surveyor-create-blank-pdf"
+      : "#create-blank-pdf",
+  );
+  button.disabled = true;
+  try {
+    const result = await request("/api/dashboard-pdfs", { method: "POST" });
+    await loadDashboardPdfs();
+    await openSvgPdfEditor(result.id, result.filename, initialFiles);
+    showToast(`${result.filename} created.`);
+  } catch (error) {
+    showToast(`Could not create a blank PDF: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
   }
 }
 async function deleteHouseDocument(button) {
@@ -6659,17 +7086,19 @@ async function refreshPendingChanges() {
       }
     }
 
-    if (
-      pendingDocumentRefresh &&
-      state.surveyRoomHouseId &&
-      !$("#surveyor-room").classList.contains("hidden")
-    ) {
-      await loadSeaiDocuments(
-        state.surveyRoomHouseId,
-        state.surveyRoomRequest,
-        state.surveyRoomIsReady,
-      );
+    if (pendingDocumentRefresh) {
+      if (
+        state.surveyRoomHouseId &&
+        !$("#surveyor-room").classList.contains("hidden")
+      ) {
+        await loadSeaiDocuments(
+          state.surveyRoomHouseId,
+          state.surveyRoomRequest,
+          state.surveyRoomIsReady,
+        );
+      }
       pendingDocumentRefresh = false;
+      await loadDashboardPdfs();
     }
   } finally {
     pendingRefreshInProgress = false;
@@ -6779,6 +7208,7 @@ async function refresh(preserveMovementLines = false) {
   state.dashboard = dashboard;
   state.movements = ledger.movements;
   renderAll(preserveMovementLines);
+  void loadDashboardPdfs();
   if (
     hasAccessProfile(state.user, "assign") &&
     !state.weather &&
@@ -8054,6 +8484,171 @@ function bindEvents() {
   $$("[data-goto]").forEach((button) =>
     button.addEventListener("click", () => setTab(button.dataset.goto)),
   );
+  ["#create-blank-pdf", "#surveyor-create-blank-pdf"].forEach((selector) => {
+    $(selector).addEventListener("click", () => createBlankDashboardPdf());
+  });
+  ["#dashboard-svg-dropzone", "#surveyor-svg-dropzone"].forEach((selector) => {
+    const dropzone = $(selector);
+    dropzone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.currentTarget.classList.add("is-dragging");
+    });
+    dropzone.addEventListener("dragleave", (event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) {
+        event.currentTarget.classList.remove("is-dragging");
+      }
+    });
+    dropzone.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      event.currentTarget.classList.remove("is-dragging");
+      const files = [...event.dataTransfer.files];
+      if (files.length) await createBlankDashboardPdf(files);
+    });
+    $("input[type='file']", dropzone).addEventListener(
+      "change",
+      async (event) => {
+        const files = [...event.currentTarget.files];
+        event.currentTarget.value = "";
+        if (files.length) await createBlankDashboardPdf(files);
+      },
+    );
+  });
+  $$(".dashboard-pdf-list").forEach((list) => {
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-edit-svg-pdf]");
+      if (button) {
+        void openSvgPdfEditor(
+          Number(button.dataset.editSvgPdf),
+          button.dataset.pdfName,
+        );
+      }
+    });
+  });
+  $("#svg-pdf-editor-close").addEventListener("click", () =>
+    $("#svg-pdf-editor-dialog").close(),
+  );
+  $("#svg-pdf-editor-cancel").addEventListener("click", () =>
+    $("#svg-pdf-editor-dialog").close(),
+  );
+  $("#svg-pdf-editor-dialog").addEventListener("close", releaseSvgPdfEditor);
+  $("#svg-pdf-editor-files").addEventListener("change", async (event) => {
+    const files = [...event.currentTarget.files];
+    event.currentTarget.value = "";
+    if (files.length) await addSvgFilesToEditor(files);
+  });
+  $("#svg-pdf-symbol-palette").addEventListener("click", (event) => {
+    const addButton = event.target.closest("[data-svg-symbol-add]");
+    if (addButton) {
+      const symbol = state.ventilationSvgSymbols.find(
+        (item) => item.filename === addButton.dataset.svgSymbolAdd,
+      );
+      if (symbol) void addCatalogSvgToEditor(symbol.filename, symbol.file_url);
+      return;
+    }
+    const previewButton = event.target.closest("[data-svg-symbol-preview]");
+    if (previewButton) {
+      openVentilationPhotoReview(previewButton.dataset.svgSymbolPreview);
+    }
+  });
+  $("#svg-pdf-symbol-palette").addEventListener("dragstart", (event) => {
+    const symbol = event.target.closest("[data-svg-symbol]");
+    if (!symbol) return;
+    event.dataTransfer.setData(
+      "application/x-brusna-svg-symbol",
+      symbol.dataset.svgSymbol,
+    );
+    event.dataTransfer.setData(
+      "application/x-brusna-svg-symbol-url",
+      symbol.dataset.svgSymbolUrl,
+    );
+    event.dataTransfer.effectAllowed = "copy";
+  });
+  $("#svg-pdf-page").addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.currentTarget.classList.add("is-dragging");
+  });
+  $("#svg-pdf-page").addEventListener("dragleave", (event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      event.currentTarget.classList.remove("is-dragging");
+    }
+  });
+  $("#svg-pdf-page").addEventListener("drop", async (event) => {
+    event.preventDefault();
+    event.currentTarget.classList.remove("is-dragging");
+    const symbolName = event.dataTransfer.getData(
+      "application/x-brusna-svg-symbol",
+    );
+    if (symbolName) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const editor = state.svgPdfEditor;
+      const x = (event.clientX - bounds.left) / editor.scale - 32;
+      const y = (event.clientY - bounds.top) / editor.scale - 32;
+      await addCatalogSvgToEditor(
+        symbolName,
+        event.dataTransfer.getData("application/x-brusna-svg-symbol-url"),
+        x,
+        y,
+      );
+      return;
+    }
+    if (event.dataTransfer.files.length) {
+      await addSvgFilesToEditor([...event.dataTransfer.files]);
+    }
+  });
+  $("#svg-pdf-page").addEventListener("pointerdown", (event) => {
+    const placementNode = event.target.closest("[data-svg-placement]");
+    if (
+      !placementNode ||
+      event.target.closest(
+        ".svg-pdf-placement-remove, .svg-pdf-placement-preview",
+      )
+    ) {
+      return;
+    }
+    const index = Number(placementNode.dataset.svgPlacement);
+    const placement = state.svgPdfEditor?.placements[index];
+    if (!placement) return;
+    event.preventDefault();
+    state.svgPdfEditor.drag = {
+      index,
+      mode: event.target.closest("[data-svg-resize]") ? "resize" : "move",
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+    };
+    placementNode.setPointerCapture(event.pointerId);
+  });
+  $("#svg-pdf-page").addEventListener("click", (event) => {
+    const previewButton = event.target.closest("[data-svg-placement-preview]");
+    if (previewButton && state.svgPdfEditor) {
+      const placement = state.svgPdfEditor.placements[
+        Number(previewButton.dataset.svgPlacementPreview)
+      ];
+      if (placement) openVentilationPhotoReview(placement.filename);
+      return;
+    }
+    const button = event.target.closest("[data-svg-remove]");
+    if (!button || !state.svgPdfEditor) return;
+    const index = Number(button.dataset.svgRemove);
+    const [removed] = state.svgPdfEditor.placements.splice(index, 1);
+    if (removed) URL.revokeObjectURL(removed.url);
+    renderSvgPdfPage();
+  });
+  $("#svg-pdf-page").addEventListener("pointermove", moveSvgPlacement);
+  $("#svg-pdf-page").addEventListener("pointerup", (event) => {
+    if (state.svgPdfEditor?.drag?.pointerId === event.pointerId) {
+      state.svgPdfEditor.drag = null;
+    }
+  });
+  $("#svg-pdf-editor-save").addEventListener("click", saveSvgPdfEditor);
+  new ResizeObserver(() => {
+    if (state.svgPdfEditor && $("#svg-pdf-editor-dialog").open) {
+      renderSvgPdfPage();
+    }
+  }).observe($("#svg-pdf-page"));
   ["#new-movement-top", "#new-movement", "#empty-record-movement"].forEach(
     (selector) => {
       $(selector)?.addEventListener("click", openMovementDialog);

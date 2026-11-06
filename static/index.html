@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261105-plumbing-completion-time">
+    <link rel="stylesheet" href="/app.css?v=20261106-svg-product-photos">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -315,6 +315,17 @@
               <div class="activity-list" id="overview-activity"></div>
             </article>
           </div>
+          <article class="card dashboard-pdfs-card" aria-labelledby="dashboard-pdfs-title">
+            <div class="card-heading">
+              <div><h2 id="dashboard-pdfs-title">PDF library</h2><p>PDFs available to your account across houses and teams.</p></div>
+              <button class="button button-primary hidden" id="create-blank-pdf" type="button">Create blank A4 PDF</button>
+            </div>
+            <section id="dashboard-svg-dropzone" class="dashboard-svg-dropzone hidden" aria-label="Add ventilation SVG symbols">
+              <div><strong>Add SVG symbols to a printable PDF</strong><p>Drag library icons or your own SVG files onto an A4 page, then move and resize them. Original SVG files stay available to download.</p></div>
+              <label class="file-picker"><input id="dashboard-svg-file-picker" type="file" accept=".svg,image/svg+xml" multiple><span>Choose SVGs</span></label>
+            </section>
+            <div id="dashboard-pdf-list" class="dashboard-pdf-list" aria-live="polite"><p class="muted">Loading PDFs…</p></div>
+          </article>
           <div class="privacy-note"><span>i</span><div><strong>Self-hosted shared workspace</strong><p>Authorized users share the database on the tracker host. Configure HTTPS before allowing access from employee devices.</p></div></div>
         </section>
 
@@ -349,6 +360,17 @@
                 <div><strong id="surveyor-stat-complete">0</strong><span>Surveyed</span></div>
               </div>
             </section>
+            <article id="surveyor-pdf-library" class="card dashboard-pdfs-card hidden" aria-labelledby="surveyor-pdf-library-title">
+              <div class="card-heading">
+                <div><h2 id="surveyor-pdf-library-title">PDF library</h2><p>PDFs available to your account across houses and teams.</p></div>
+                <button class="button button-primary hidden" id="surveyor-create-blank-pdf" type="button">Create blank A4 PDF</button>
+              </div>
+              <section id="surveyor-svg-dropzone" class="dashboard-svg-dropzone hidden" aria-label="Add ventilation SVG symbols">
+                <div><strong>Add SVG symbols to a printable PDF</strong><p>Drag library icons or your own SVG files onto an A4 page, then move and resize them. Original SVG files stay available to download.</p></div>
+                <label class="file-picker"><input id="surveyor-svg-file-picker" type="file" accept=".svg,image/svg+xml" multiple><span>Choose SVGs</span></label>
+              </section>
+              <div id="surveyor-dashboard-pdf-list" class="dashboard-pdf-list" aria-live="polite"><p class="muted">Loading PDFs…</p></div>
+            </article>
             <section id="supervisor-dashboard-summary" class="surveyor-dashboard-summary hidden" aria-label="Your supervision workload">
               <div class="surveyor-dashboard-message">
                 <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
@@ -812,6 +834,41 @@
       </div>
     </dialog>
 
+    <dialog id="svg-pdf-editor-dialog" class="svg-pdf-editor-dialog">
+      <div class="svg-pdf-editor-shell">
+        <header class="pdf-annotator-header">
+          <div class="pdf-annotator-title"><span class="eyebrow">PRINTABLE A4 PDF</span><h2 id="svg-pdf-editor-title">Place SVG symbols</h2></div>
+          <button class="icon-button" id="svg-pdf-editor-close" type="button" aria-label="Close SVG editor">×</button>
+        </header>
+        <div class="svg-pdf-editor-toolbar">
+          <label class="file-picker"><input id="svg-pdf-editor-files" type="file" accept=".svg,image/svg+xml" multiple><span>Add SVGs</span></label>
+          <span id="svg-pdf-editor-status" role="status">Drag symbols from the library onto the page, or add your own SVG files.</span>
+          <button class="button button-secondary" id="svg-pdf-editor-cancel" type="button">Cancel</button>
+          <button class="button button-primary" id="svg-pdf-editor-save" type="button">Save printable PDF</button>
+        </div>
+        <section class="svg-pdf-symbol-library" aria-label="Ventilation SVG symbols">
+          <h3>Ventilation symbols <span>Drag an icon onto the page, or review its linked product photos</span></h3>
+          <div id="svg-pdf-symbol-palette" class="svg-pdf-symbol-palette" aria-live="polite">
+            <p class="muted">Loading ventilation symbols…</p>
+          </div>
+        </section>
+        <p id="svg-pdf-editor-error" class="svg-pdf-editor-error hidden" role="alert"></p>
+        <main class="svg-pdf-page-scroll" id="svg-pdf-page-scroll">
+          <div id="svg-pdf-page" class="svg-pdf-page" role="region" aria-label="A4 PDF page; drop SVG symbols here"></div>
+        </main>
+      </div>
+    </dialog>
+
+    <dialog id="svg-product-photo-dialog" class="dialog ventilation-photo-dialog">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">PRODUCT PHOTO REFERENCE</div><h2 id="svg-product-photo-title">Ventilation product</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close product photos">×</button>
+        </div>
+        <div id="svg-product-photo-content" class="ventilation-photo-content"></div>
+      </div>
+    </dialog>
+
     <dialog id="house-snag-dialog" class="dialog snag-dialog">
       <div class="dialog-content">
         <div class="dialog-heading">
@@ -1066,6 +1123,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261105-plumbing-completion-time" defer></script>
+    <script src="/app.js?v=20261106-svg-product-photos" defer></script>
   </body>
 </html>

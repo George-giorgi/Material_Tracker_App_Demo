@@ -2016,6 +2016,248 @@ class CalculatorApiTests(HttpBase):
         self.assertEqual(original["content"], original_pdf)
         self.assertEqual(annotated_count, 2)
 
+    def test_tommy_can_create_blank_a4_pdfs_and_see_authorized_dashboard_pdfs(self):
+        house_id = "DASHBOARD-PDF-TEST"
+        self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
+        self.mark_ready(house_id)
+        pdf_buffer = BytesIO()
+        pdf_canvas = canvas.Canvas(pdf_buffer)
+        pdf_canvas.drawString(72, 720, "House document")
+        pdf_canvas.save()
+        pdf_content = pdf_buffer.getvalue()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (?, 'house.pdf', ?, ?, 'Surveyor', '2026-11-06T10:00:00')
+                """,
+                (house_id, pdf_content, len(pdf_content)),
+            )
+            db.execute(
+                """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, content)
+                VALUES (?, 'Application', 'application.pdf', '.pdf', ?)
+                """,
+                (house_id, pdf_content),
+            )
+        status, user_result, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "Tommy",
+                "display_name": "Tommy",
+                "pin": "654321",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(status, 201, user_result)
+        _, _, tommy_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "Tommy", "pin": "654321"},
+        )
+
+        status, result, _ = self.call(
+            "POST", "/api/dashboard-pdfs", cookie=tommy_cookie
+        )
+        self.assertEqual(status, 201, result)
+        self.assertTrue(result["filename"].startswith("Tommy-blank-"))
+        status, library, _ = self.call(
+            "GET", "/api/dashboard-pdfs", cookie=tommy_cookie
+        )
+        self.assertEqual(status, 200, library)
+        self.assertEqual(
+            {(document["filename"], document["source"]) for document in library["documents"]},
+            {
+                (result["filename"], "Workspace"),
+                ("house.pdf", "House PDF"),
+                ("application.pdf", "SEAI PDF"),
+            },
+        )
+
+        status, content_type, disposition, content = self.call_raw(
+            "GET",
+            f"/api/dashboard-pdfs/{result['id']}/file",
+            cookie=tommy_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("inline;", disposition)
+        blank_reader = PdfReader(BytesIO(content))
+        self.assertEqual(len(blank_reader.pages), 1)
+        self.assertAlmostEqual(
+            float(blank_reader.pages[0].mediabox.width), 595.28, delta=1
+        )
+        self.assertAlmostEqual(
+            float(blank_reader.pages[0].mediabox.height), 841.89, delta=1
+        )
+
+        status, error, _ = self.call("POST", "/api/dashboard-pdfs")
+        self.assertEqual(status, 403, error)
+
+    def test_tommy_can_place_svg_on_a4_pdf_and_download_the_original(self):
+        status, error, _ = self.call(
+            "GET", "/api/ventilation-svg-symbols", cookie=""
+        )
+        self.assertEqual(status, 401, error)
+        _, user_result, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "Tommy",
+                "display_name": "Tommy",
+                "pin": "654321",
+                "role": "surveyor",
+            },
+        )
+        self.assertIn("id", user_result["user"])
+        _, _, tommy_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "Tommy", "pin": "654321"},
+        )
+        status, catalog, _ = self.call(
+            "GET", "/api/ventilation-svg-symbols", cookie=tommy_cookie
+        )
+        self.assertEqual(status, 200, catalog)
+        self.assertEqual(len(catalog["symbols"]), 12)
+        self.assertEqual(
+            {symbol["filename"] for symbol in catalog["symbols"]},
+            {
+                path.name
+                for path in (ROOT / "BRUSNA_Ventilation_SVG_Symbols").glob("*.svg")
+            },
+        )
+        self.assertTrue(
+            all(
+                symbol["label"] and symbol["models"] and symbol["source"]
+                for symbol in catalog["symbols"]
+            )
+        )
+        photo_count = 0
+        for symbol in catalog["symbols"]:
+            status, content_type, _, symbol_content = self.call_raw(
+                "GET", symbol["file_url"], cookie=tommy_cookie
+            )
+            self.assertEqual(status, 200, symbol["filename"])
+            self.assertTrue(content_type.startswith("image/svg+xml"))
+            self.assertIn(b"<svg", symbol_content)
+            self.assertTrue(symbol["photos"], symbol["filename"])
+            for photo in symbol["photos"]:
+                photo_count += 1
+                status, content_type, _, photo_content = self.call_raw(
+                    "GET", photo["file_url"], cookie=tommy_cookie
+                )
+                self.assertEqual(status, 200, photo["filename"])
+                self.assertEqual(content_type, "image/jpeg")
+                self.assertTrue(photo_content.startswith(b"\xff\xd8"))
+        self.assertGreater(photo_count, 12)
+        status, error, _ = self.call(
+            "GET",
+            "/api/ventilation-svg-symbols/../../server.py",
+            cookie=tommy_cookie,
+        )
+        self.assertEqual(status, 404, error)
+        status, error, _ = self.call(
+            "GET",
+            "/api/ventilation-product-photos/../../server.py",
+            cookie=tommy_cookie,
+        )
+        self.assertEqual(status, 404, error)
+        status, blank_pdf, _ = self.call(
+            "POST", "/api/dashboard-pdfs", cookie=tommy_cookie
+        )
+        self.assertEqual(status, 201, blank_pdf)
+        svg = (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" '
+            b'viewBox="0 0 64 64"><path d="M8 32h48" stroke="#16324F" '
+            b'stroke-width="3"/></svg>'
+        )
+        boundary = "----SvgPdfTestBoundary"
+
+        def upload(content, cookie=tommy_cookie):
+            body = (
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="files"; filename="vent.svg"\r\n'
+                "Content-Type: image/svg+xml\r\n\r\n"
+            ).encode("ascii") + content + (
+                f"\r\n--{boundary}\r\n"
+                'Content-Disposition: form-data; name="placements"\r\n'
+                "Content-Type: application/json\r\n\r\n"
+                '[{"index":0,"x":100,"y":120,"width":64,"height":64}]'
+                f"\r\n--{boundary}--\r\n"
+            ).encode("ascii")
+            return self.call_raw(
+                "POST",
+                f"/api/dashboard-pdfs/{blank_pdf['id']}/svg",
+                cookie=cookie,
+                body=body,
+                content_type=f"multipart/form-data; boundary={boundary}",
+            )
+
+        status, _, _, forbidden_body = upload(svg, cookie=self.cookie)
+        self.assertEqual(status, 403, forbidden_body)
+        status, content_type, _, saved_result = upload(svg)
+        self.assertEqual(status, 200, saved_result)
+        self.assertEqual(content_type, "application/json; charset=utf-8")
+        saved = json.loads(saved_result)
+        self.assertEqual(saved["svg_count"], 1)
+
+        status, _, _, pdf_content = self.call_raw(
+            "GET",
+            f"/api/dashboard-pdfs/{blank_pdf['id']}/file",
+            cookie=tommy_cookie,
+        )
+        self.assertEqual(status, 200)
+        printable = fitz.open(stream=pdf_content, filetype="pdf")
+        self.assertEqual(printable.page_count, 1)
+        self.assertGreater(len(printable[0].get_drawings()), 0)
+        printable.close()
+
+        status, library, _ = self.call(
+            "GET", "/api/dashboard-pdfs", cookie=tommy_cookie
+        )
+        self.assertEqual(status, 200, library)
+        workspace_pdf = next(
+            document
+            for document in library["documents"]
+            if document["id"] == blank_pdf["id"]
+        )
+        self.assertEqual(len(workspace_pdf["svg_sources"]), 1)
+        source_id = workspace_pdf["svg_sources"][0]["id"]
+        status, source_type, disposition, source_content = self.call_raw(
+            "GET",
+            f"/api/dashboard-pdfs/{blank_pdf['id']}/svg/{source_id}?download=1",
+            cookie=tommy_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(source_type.startswith("image/svg+xml"))
+        self.assertIn("attachment;", disposition)
+        self.assertEqual(source_content, svg)
+
+        status, error_type, _, error_body = upload(
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">'
+            b"<script>alert(1)</script></svg>"
+        )
+        self.assertEqual(status, 400, error_body)
+        self.assertEqual(error_type, "application/json; charset=utf-8")
+        self.assertIn(b"standard vector elements", error_body)
+
     def test_seai_pdf_listing_identifies_repeated_annotated_suffixes(self):
         house_id = "PDF-LABEL-TEST"
         self.provide(house_id, "T58 V4X9", "3 Hillcrest, Cork", "SEAI Owner")
@@ -5673,6 +5915,21 @@ class SnagTests(HttpBase):
 
 
 class UiWiringTests(unittest.TestCase):
+    def test_surveyors_have_access_to_the_shared_pdf_and_svg_editor(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="surveyor-pdf-library"', html)
+        self.assertIn('id="surveyor-dashboard-pdf-list"', html)
+        self.assertIn('id="svg-pdf-editor-dialog"', html)
+        self.assertIn('id="svg-pdf-page"', html)
+        self.assertIn('id="svg-pdf-symbol-palette"', html)
+        self.assertIn('id="svg-product-photo-dialog"', html)
+        self.assertIn('id="surveyor-create-blank-pdf"', html)
+        self.assertIn("addSvgFilesToEditor([...event.dataTransfer.files])", APP_JS)
+        self.assertIn("application/x-brusna-svg-symbol", APP_JS)
+        self.assertIn("openVentilationPhotoReview", APP_JS)
+        self.assertIn("data-svg-placement-preview", APP_JS)
+        self.assertIn("representative category photo", APP_JS)
+
     def test_teams_tab_cards_are_compact_and_size_to_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")

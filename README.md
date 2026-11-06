@@ -226,6 +226,19 @@ House and SEAI PDF uploads are stored as SQLite BLOBs, so backing up the
 database also preserves those files. No separate upload directory needs to be
 copied. Individual SEAI PDFs may be up to 20 MB; the server accepts POST bodies
 up to 21 MB to allow for upload framing.
+The PDF library lists documents available to the signed-in account from
+Overview; Surveyors also have it on their houses dashboard. The account whose
+username is `Tommy` can create blank A4 PDFs and drag SVG symbols onto the page
+to position and resize them before saving. The editor includes a draggable
+palette of every SVG in `BRUSNA_Ventilation_SVG_Symbols`; click an icon to add
+it as an alternative to dragging. Each symbol also links to the product photos,
+model names, and brochure references in `BRUSNA_Vent_SVG_Linked_Library`;
+choose Photos to review the available references. Some photos represent a
+product category rather than an exact model. After placing a catalog symbol,
+use its information button on the page to reopen its linked photos. Workspace
+PDFs and their original SVG files are stored in the same SQLite database.
+SVGs must be at most 500 KB each and use standard vector shapes without scripts
+or external resources.
 SQLite serializes database writes, so run one app instance against the database
 on the host's local disk only; do not use a network share or synced folder.
 Connections wait up to 30 seconds for a competing write before failing. This

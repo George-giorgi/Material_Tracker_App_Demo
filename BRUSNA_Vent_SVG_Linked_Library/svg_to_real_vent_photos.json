@@ -1,0 +1,138 @@
+{
+  "roof_vent.svg": {
+    "label": "Slate roof vent",
+    "photos": [
+      "danelaw_srv10u_roof_vent.jpg",
+      "danelaw_srv5u_roof_vent.jpg",
+      "danelaw_srv10_20_roof_vent.jpg",
+      "danelaw_srv680_roof_vent.jpg"
+    ],
+    "models": [
+      "Danelaw SRV5U",
+      "Danelaw SRV10U",
+      "Danelaw SRV10/20",
+      "Danelaw SRV680"
+    ],
+    "source": "Danelaw Slate Products brochure, page 4"
+  },
+  "flush_roof_vent.svg": {
+    "label": "Flush-fitting slate roof vent",
+    "photos": [
+      "danelaw_ilsrv10_20_flush_roof_vent.jpg",
+      "danelaw_ilsrv10_24_flush_roof_vent.jpg",
+      "danelaw_ilsrv10u_flush_roof_vent.jpg"
+    ],
+    "models": [
+      "Danelaw ILSRV10/20",
+      "Danelaw ILSRV10/24",
+      "Danelaw ILSRV10/U"
+    ],
+    "source": "Danelaw Slate Products brochure, page 4"
+  },
+  "wall_air_inlet.svg": {
+    "label": "Wall air inlet / grille",
+    "photos": [
+      "anjos_gap_external_grille.jpg",
+      "rytons_9x3_single_brick_kit.jpg"
+    ],
+    "models": [
+      "Anjos GAP 100 / GAP 125",
+      "Rytons 9x3 ventilation set"
+    ],
+    "source": "Anjos EM-HY brochure, page 2; Rytons brochure, page 4"
+  },
+  "humidity_controlled_vent.svg": {
+    "label": "Humidity-controlled air inlet",
+    "photos": [
+      "anjos_em_hy_humidity_inlet.jpg"
+    ],
+    "models": [
+      "Anjos EM HY 100 / EM HY 125"
+    ],
+    "source": "Anjos EM-HY brochure, page 2"
+  },
+  "acoustic_wall_vent.svg": {
+    "label": "Acoustic wall ventilator",
+    "photos": [
+      "rytons_lookryt_acoustic_aircore.jpg",
+      "rytons_aircore_terracotta_louvre.jpg",
+      "rytons_highrise_aircore.jpg"
+    ],
+    "models": [
+      "Rytons LookRyt AirCore acoustic options"
+    ],
+    "source": "Rytons Background Room Ventilators brochure, page 3"
+  },
+  "core_drill_vent.svg": {
+    "label": "Core-drill wall ventilator",
+    "photos": [
+      "manthorpe_g900_core_drill_vent.jpg",
+      "rytons_lookryt_acoustic_aircore.jpg"
+    ],
+    "models": [
+      "Manthorpe G900",
+      "Rytons 5-inch AirCore range"
+    ],
+    "source": "Manthorpe G900 product sheet; Rytons brochure, page 3"
+  },
+  "single_brick_vent.svg": {
+    "label": "Single-brick through-wall vent",
+    "photos": [
+      "rytons_9x3_single_brick_kit.jpg"
+    ],
+    "models": [
+      "Rytons 9x3 set: TAL4H&M, TAL4HMCWL, TC8H&M, TC8HMCWL"
+    ],
+    "source": "Rytons Background Room Ventilators brochure, page 4"
+  },
+  "double_brick_vent.svg": {
+    "label": "Double-brick through-wall vent",
+    "photos": [
+      "rytons_9x3_single_brick_kit.jpg"
+    ],
+    "models": [
+      "Rytons 9x6 ventilation sets"
+    ],
+    "source": "Rytons Background Room Ventilators brochure; representative photo from 9x3 set because no separate product photo was shown in the extracted pages"
+  },
+  "triple_brick_vent.svg": {
+    "label": "Triple-brick through-wall vent",
+    "photos": [
+      "rytons_9x3_single_brick_kit.jpg"
+    ],
+    "models": [
+      "Rytons 9x9 ventilation sets"
+    ],
+    "source": "Rytons Background Room Ventilators brochure; representative photo from 9x3 set because no separate product photo was shown in the extracted pages"
+  },
+  "window_trickle_vent.svg": {
+    "label": "Window trickle vent",
+    "photos": [
+      "rytons_window_trickle_vent.jpg"
+    ],
+    "models": [
+      "Rytons R5000 / R2700 / R1700"
+    ],
+    "source": "Rytons Background Room Ventilators brochure, page 6"
+  },
+  "fire_vent_grille.svg": {
+    "label": "Intumescent fire grille",
+    "photos": [
+      "rytons_intumescent_fire_grilles.jpg"
+    ],
+    "models": [
+      "Rytons ACFIRE125 / TL8FIRE / TL18FIRE"
+    ],
+    "source": "Rytons Background Room Ventilators brochure, page 6"
+  },
+  "generic_vent.svg": {
+    "label": "General ventilation product",
+    "photos": [
+      "rytons_ventilator_range.jpg"
+    ],
+    "models": [
+      "Generic reference image only"
+    ],
+    "source": "Rytons Background Room Ventilators brochure, cover"
+  }
+}
