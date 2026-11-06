@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261105-plumbing-completion-time">
+    <link rel="stylesheet" href="/app.css?v=20261106-vent-combined-pdfs">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -728,6 +728,21 @@
       </div>
     </dialog>
 
+    <dialog id="vent-survey-pdfs-dialog" class="dialog vent-survey-pdfs-dialog" aria-labelledby="vent-survey-pdfs-title">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">SURVEYOR SELECTION</div><h2 id="vent-survey-pdfs-title">Combined PDFs by Surveyor</h2><p id="vent-survey-pdfs-description" class="page-subtitle"></p></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close attached PDFs">&times;</button>
+        </div>
+        <div id="vent-survey-pdfs-list" class="vent-survey-pdfs-list"></div>
+        <section id="vent-survey-pdfs-viewer" class="vent-survey-pdfs-viewer" aria-label="PDF preview" hidden>
+          <div class="vent-survey-pdfs-viewer-heading"><strong id="vent-survey-pdfs-viewer-title">PDF preview</strong><button id="vent-survey-pdfs-viewer-close" class="button button-secondary" type="button">Close preview</button></div>
+          <iframe id="vent-survey-pdfs-frame" title="Attached survey PDF preview"></iframe>
+        </section>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Close</button></div>
+      </div>
+    </dialog>
+
     <dialog id="pdf-annotator-dialog" class="pdf-annotator-dialog">
       <div class="pdf-annotator-shell">
         <header class="pdf-annotator-header">
@@ -1055,6 +1070,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261105-plumbing-completion-time" defer></script>
+    <script src="/app.js?v=20261106-vent-combined-pdfs" defer></script>
   </body>
 </html>

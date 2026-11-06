@@ -503,6 +503,51 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertIn("inline", disposition)
         self.assertEqual(body, pdf_data)
 
+        self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "assign-doc-viewer",
+                "display_name": "Assign Document Viewer",
+                "pin": "345678",
+                "role": "assign",
+            },
+        )
+        status, _, assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "assign-doc-viewer", "pin": "345678"},
+        )
+        self.assertEqual(status, 200)
+        status, result, _ = self.call(
+            "GET",
+            "/api/house-documents?house_id=DOC-TEST",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["documents"][0]["id"], document_id)
+        status, content_type, disposition, body = self.call_raw(
+            "GET",
+            f"/api/house-documents/{document_id}",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn("inline", disposition)
+        self.assertEqual(body, pdf_data)
+        status, result, _ = self.call(
+            "POST",
+            f"/api/house-documents/{document_id}/delete",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 403)
+        status, _, _, _ = self.call_raw(
+            "GET",
+            f"/api/house-documents/{document_id}/share?include_survey_note=0",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 403)
+
         status, _, _ = self.call(
             "POST",
             "/api/users",
@@ -559,7 +604,7 @@ class HouseDocumentHttpTests(HttpBase):
             cookie=employee_cookie,
         )
         self.assertEqual(status, 403)
-        self.assertIn("Surveyor access", result["error"])
+        self.assertIn("Assign access", result["error"])
         status, result, _ = self.call(
             "POST",
             f"/api/house-documents/{document_id}/delete",
@@ -698,6 +743,17 @@ class HouseDocumentHttpTests(HttpBase):
             other_document_id = db.execute(
                 "SELECT id FROM house_vent_documents WHERE house_id = 'DOC-NOT-VENT'"
             ).fetchone()["id"]
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES ('DOC-TEST', 'saved-survey.pdf', ?, ?, 'Surveyor', '2026-11-04T10:00:00')
+                """,
+                (b"%PDF-1.4\nsurvey\n", len(b"%PDF-1.4\nsurvey\n")),
+            )
+            house_document_id = db.execute(
+                "SELECT id FROM house_documents WHERE house_id = 'DOC-TEST'"
+            ).fetchone()["id"]
             vent_reader_id = server._insert_user(
                 db, "vent-doc-reader", "Vent Document Reader", "234567",
                 "teamlead", team_name="Ventilation",
@@ -729,6 +785,35 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertEqual(
             [document["filename"] for document in ventilation_house["documents"]],
             ["vent-pages.pdf"],
+        )
+        self.assertEqual(
+            [document["filename"] for document in ventilation_house["survey_documents"]],
+            [],
+        )
+        status, listing, _ = self.call(
+            "GET", "/api/house-documents?house_id=DOC-TEST",
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(listing["error"], "Administrator, Surveyor, or Assign access is required to view house documents.")
+        status, _, _, _ = self.call_raw(
+            "GET", f"/api/house-documents/{house_document_id}",
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(
+            self.call_raw(
+                "GET", f"/api/house-documents/{house_document_id}/share",
+                cookie=vent_cookie,
+            )[0],
+            403,
+        )
+        self.assertEqual(
+            self.call(
+                "GET", "/api/house-documents?house_id=DOC-NOT-VENT",
+                cookie=vent_cookie,
+            )[0],
+            403,
         )
         status, listing, _ = self.call(
             "GET", "/api/house-vent-documents?house_id=DOC-TEST",
@@ -796,6 +881,62 @@ class HouseDocumentHttpTests(HttpBase):
                 """,
                 (selected_document_id,),
             )
+            annotated_seai_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, content)
+                VALUES ('DOC-TEST', 'Survey', 'survey-annotated.pdf', ?)
+                """,
+                (b"%PDF-1.4\nannotated seai\n",),
+            ).lastrowid
+            unselected_seai_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, content)
+                VALUES ('DOC-TEST', 'Survey', 'private-source.pdf', ?)
+                """,
+                (b"%PDF-1.4\nprivate seai\n",),
+            ).lastrowid
+        status, seai_listing, _ = self.call(
+            "GET", "/api/seai-documents?house_id=DOC-TEST",
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            {document["filename"] for document in seai_listing["documents"]},
+            {"DOC-TEST-selected-seai-pages.pdf"},
+        )
+        status, _, _, body = self.call_raw(
+            "GET", f"/api/seai-documents/{selected_document_id}/file",
+            cookie=vent_cookie,
+        )
+        self.assertEqual((status, body), (200, b"%PDF-1.4\nselected\n"))
+        status, _, _, body = self.call_raw(
+            "GET", f"/api/seai-documents/{selected_document_id}/file",
+            cookie=vent_cookie,
+        )
+        self.assertEqual((status, body), (200, b"%PDF-1.4\nselected\n"))
+        self.assertEqual(
+            self.call_raw(
+                "GET", f"/api/seai-documents/{unselected_seai_id}/file",
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        self.assertEqual(
+            self.call_raw(
+                "GET", f"/api/seai-documents/{annotated_seai_id}/file",
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        self.assertEqual(
+            self.call(
+                "GET", "/api/seai-documents?house_id=DOC-NOT-VENT",
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
         with server.connect_db() as db:
             server._clear_house_survey_records(db, "DOC-TEST")
             self.assertEqual(

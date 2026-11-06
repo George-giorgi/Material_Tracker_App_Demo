@@ -1107,6 +1107,71 @@ class NavigationBrowserTests(unittest.TestCase):
                 """,
                 (annotatable_pdf, len(annotatable_pdf)),
             )
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'saved-house-survey.pdf',
+                    ?, ?, 'Surveyor Teammate', '2026-11-03T09:00:00'
+                )
+                """,
+                (b"%PDF-1.4\nsaved house survey\n", len(b"%PDF-1.4\nsaved house survey\n")),
+            )
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'saved-house-survey-annotated.pdf',
+                    ?, ?, 'Annotated by Surveyor Teammate', '2026-11-03T10:00:00'
+                )
+                """,
+                (b"%PDF-1.4\nannotated saved house survey\n", len(b"%PDF-1.4\nannotated saved house survey\n")),
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+            selected_seai_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, content)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'Survey',
+                    'VENT-DASHBOARD-selected-seai-pages.pdf', ?
+                )
+                """,
+                (b"%PDF-1.4\nselected SEAI pages\n",),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO selected_seai_documents
+                    (document_id, house_id, created_by, created_at)
+                VALUES (?, 'VENT-DASHBOARD-PENDING', 'Surveyor Teammate', '2026-11-03T10:30:00')
+                """,
+                (selected_seai_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, content)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'Survey',
+                    'VENT-DASHBOARD-survey-annotated.pdf', ?
+                )
+                """,
+                (b"%PDF-1.4\nannotated SEAI source\n",),
+            )
         created = self.page.request.post(
             f"{self.base_url}/api/users",
             data={
@@ -1258,6 +1323,58 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertIn("annotated-survey.pdf", pending_card.inner_text())
         self.assertIn("Shared by Surveyor Teammate", pending_card.inner_text())
+        attached_pdfs_button = pending_card.locator("[data-vent-survey-pdfs]")
+        self.assertIn("Combined PDFs by Surveyor", attached_pdfs_button.inner_text())
+        self.assertEqual(attached_pdfs_button.locator(".vent-survey-pdfs-count").inner_text(), "1")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (
+                    'VENT-DASHBOARD-PENDING', 'saved-after-dashboard.pdf',
+                    ?, ?, 'Surveyor Teammate', '2026-11-03T11:00:00'
+                )
+                """,
+                (b"%PDF-1.4\nsaved after dashboard\n", len(b"%PDF-1.4\nsaved after dashboard\n")),
+            )
+        attached_pdfs_button.click()
+        attached_pdfs_dialog = self.page.locator("#vent-survey-pdfs-dialog")
+        self.assertTrue(attached_pdfs_dialog.evaluate("element => element.open"))
+        self.assertIn("VENT-DASHBOARD-PENDING", attached_pdfs_dialog.locator("h2").inner_text())
+        self.assertIn("Combined PDFs by Surveyor", attached_pdfs_dialog.locator("h2").inner_text())
+        self.assertEqual(attached_pdfs_button.locator(".vent-survey-pdfs-count").inner_text(), "1")
+        attached_pdf = attached_pdfs_dialog.locator(
+            '.vent-survey-pdf-entry button[aria-label="View VENT-DASHBOARD-selected-seai-pages.pdf"]'
+        )
+        self.assertTrue(attached_pdf.is_visible())
+        self.assertIn("Combined PDF by Surveyor Teammate", attached_pdfs_dialog.inner_text())
+        attached_pdf.click()
+        self.assertIn(
+            "/api/seai-documents/",
+            attached_pdfs_dialog.locator("#vent-survey-pdfs-frame").get_attribute("src"),
+        )
+        self.assertFalse(attached_pdfs_dialog.locator("#vent-survey-pdfs-viewer").is_hidden())
+        self.assertEqual(
+            attached_pdfs_dialog.locator("#vent-survey-pdfs-viewer-title").inner_text(),
+            "VENT-DASHBOARD-selected-seai-pages.pdf",
+        )
+        attached_pdf_response = self.page.evaluate(
+            """async url => {
+              const response = await fetch(url);
+              return { status: response.status, content: await response.text() };
+            }""",
+            attached_pdf.get_attribute("data-pdf-url"),
+        )
+        self.assertEqual(attached_pdf_response["status"], 200)
+        self.assertIn("selected SEAI pages", attached_pdf_response["content"])
+        annotated_seai_pdf = attached_pdfs_dialog.locator(
+            '.vent-survey-pdf-entry button[aria-label="View VENT-DASHBOARD-survey-annotated.pdf"]'
+        )
+        self.assertFalse(annotated_seai_pdf.count())
+        self.assertFalse(attached_pdfs_dialog.locator(".vent-survey-pdf-entry").filter(has_text="saved-house-survey").count())
+        attached_pdfs_dialog.get_by_role("button", name="Close attached PDFs").click()
+        self.assertFalse(attached_pdfs_dialog.evaluate("element => element.open"))
         self.assertNotIn("annotated-survey.pdf", complete_card.inner_text())
         pdf_url = pending_card.locator(
             'a[aria-label="View annotated-survey.pdf"]'
@@ -1989,6 +2106,19 @@ class NavigationBrowserTests(unittest.TestCase):
             )
             db.execute(
                 """
+                CREATE TABLE seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+            db.execute(
+                """
                 INSERT INTO seai_applications(application_id, detail_data_json)
                 VALUES (?, ?)
                 """,
@@ -2011,6 +2141,45 @@ class NavigationBrowserTests(unittest.TestCase):
                             ],
                         }
                     ),
+                ),
+            )
+            selected_document_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, downloaded, content)
+                VALUES (?, 'Survey', ?, '.pdf', 1, ?)
+                """,
+                (
+                    "ACTIVE-ASSIGN",
+                    "selected-survey-pages.pdf",
+                    b"%PDF-1.4\nSelected survey pages\n%%EOF",
+                ),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO selected_seai_documents(document_id, house_id, created_by, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    selected_document_id,
+                    "ACTIVE-ASSIGN",
+                    "Surveyor Browser",
+                    "2026-11-05T13:30:00",
+                ),
+            )
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "ACTIVE-ASSIGN",
+                    "survey-plan-annotated.pdf",
+                    b"%PDF-1.4\nAnnotated survey plan\n%%EOF",
+                    len(b"%PDF-1.4\nAnnotated survey plan\n%%EOF"),
+                    "Surveyor Browser",
+                    "2026-11-05T13:30:00",
                 ),
             )
             db.execute(
@@ -2161,6 +2330,15 @@ class NavigationBrowserTests(unittest.TestCase):
             "External Wall Insulation",
             self.page.locator("#assign-seai-house-record").inner_text(),
         )
+        house_pdfs = self.page.locator("#assign-seai-house-record .survey-room-saved-pdfs")
+        self.assertTrue(house_pdfs.is_visible())
+        self.assertIn("Saved PDFs", house_pdfs.locator("h3").inner_text())
+        self.assertIn("survey-plan-annotated.pdf", house_pdfs.inner_text())
+        self.assertIn("selected-survey-pages.pdf", house_pdfs.inner_text())
+        self.assertIn("Saved by Surveyor Browser", house_pdfs.inner_text())
+        self.assertEqual(house_pdfs.locator(".saved-pdf-entry").count(), 2)
+        self.assertTrue(house_pdfs.locator(".saved-pdf-view").is_visible())
+        self.assertEqual(house_pdfs.locator("a[download]").count(), 2)
         history = self.page.locator(".assign-seai-variation-history")
         self.assertTrue(history.is_visible())
         self.assertIn("120", history.inner_text())

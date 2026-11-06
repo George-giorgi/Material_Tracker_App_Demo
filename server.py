@@ -3103,6 +3103,7 @@ def _ventilation_house_list(db, teamlead_user_id):
             "assigned_team_name": row["assigned_team_name"],
             "assignment_assigned_by": row["assignment_assigned_by"],
             "documents": [],
+            "survey_documents": [],
         }
         for row in db.execute(
             """
@@ -3182,7 +3183,56 @@ def _ventilation_house_list(db, teamlead_user_id):
         )
     for house in houses:
         house["documents"] = documents_by_house.get(house["id"], [])
+    survey_documents_by_house = {}
+    if houses:
+        house_ids = [house["id"] for house in houses]
+        placeholders = ",".join("?" for _ in house_ids)
+        has_seai_pdf_storage = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'seai_documents'"
+        ).fetchone()
+        if has_seai_pdf_storage:
+            seai_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
+            }
+            if "content" in seai_columns:
+                for row in db.execute(
+                    f"""
+                    SELECT documents.application_id AS house_id, documents.id,
+                           documents.filename, length(documents.content) AS size_bytes,
+                           selected.created_by AS saved_by,
+                           selected.created_at AS saved_at
+                    FROM seai_documents documents
+                    JOIN selected_seai_documents selected
+                      ON selected.document_id = documents.id
+                     AND selected.house_id = documents.application_id
+                    WHERE documents.application_id IN ({placeholders})
+                      AND lower(documents.filename) LIKE '%.pdf'
+                      AND documents.content IS NOT NULL
+                      AND selected.created_by != ''
+                    ORDER BY documents.id DESC
+                    """,
+                    house_ids,
+                ):
+                    survey_documents_by_house.setdefault(row["house_id"], []).append(
+                        {
+                            "id": row["id"],
+                            "filename": row["filename"],
+                            "size_bytes": row["size_bytes"],
+                            "uploaded_by": row["saved_by"] or "Surveyor",
+                            "uploaded_at": row["saved_at"] or "",
+                            "document_type": "Combined PDF by Surveyor",
+                        }
+                    )
+    for house in houses:
+        house["survey_documents"] = survey_documents_by_house.get(house["id"], [])
     return houses
+
+
+def _ventilation_house_is_visible(db, house_id, teamlead_user_id):
+    return any(
+        house["id"] == house_id
+        for house in _ventilation_house_list(db, teamlead_user_id)
+    )
 
 
 def _plumbing_coordinator_dashboard(db):
@@ -4506,8 +4556,14 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
-                self._send_json(403, {"error": "Surveyor access is required to view house documents."})
+            is_assign = _has_access_profile(user, "assign")
+            has_house_document_access = (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "surveyor")
+                or is_assign
+            )
+            if not has_house_document_access:
+                self._send_json(403, {"error": "Administrator, Surveyor, or Assign access is required to view house documents."})
                 return
             house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
             if not house_id:
@@ -4517,9 +4573,9 @@ class LegacyRouteHandlers:
                 available = db.execute(
                     """
                     SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                    WHERE p.id = ? AND h.id IS NULL
+                    WHERE p.id = ? AND (? = 1 OR h.id IS NULL)
                     """,
-                    (house_id,),
+                    (house_id, int(is_assign)),
                 ).fetchone()
                 if not available:
                     self._send_json(404, {"error": "House was not found."})
@@ -4658,10 +4714,22 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor") or _has_access_profile(user, "assign")):
+            has_seai_document_access = (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "surveyor")
+                or _has_access_profile(user, "assign")
+            )
+            with connect_db() as db:
+                is_vent_dashboard_user = (
+                    not has_seai_document_access
+                    and not _has_access_profile(user, "ventilation_coordinator")
+                    and not _has_access_profile(user, "plumbing_coordinator")
+                    and _in_department(db, user, "Ventilation")
+                )
+            if not (has_seai_document_access or is_vent_dashboard_user):
                 self._send_json(
                     403,
-                    {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
+                    {"error": "SEAI PDFs are available to Administrators, Surveyors, Assign, and assigned Vent team leads."},
                 )
                 return
             house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
@@ -4669,6 +4737,11 @@ class LegacyRouteHandlers:
                 self._send_json(400, {"error": "A house ID is required."})
                 return
             with connect_db() as db:
+                if is_vent_dashboard_user and not _ventilation_house_is_visible(
+                    db, house_id, user["id"]
+                ):
+                    self._send_json(404, {"error": "House was not found."})
+                    return
                 document_table = db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' "
                     "AND name = 'seai_documents'"
@@ -4691,10 +4764,13 @@ class LegacyRouteHandlers:
                     SELECT documents.id, documents.category, documents.filename,
                            length(documents.content) AS size_bytes,
                            CASE WHEN selected.document_id IS NULL THEN 0 ELSE 1 END
-                               AS is_selected_pdf
+                               AS is_selected_pdf,
+                           selected.created_by AS saved_by,
+                           selected.created_at AS saved_at
                     FROM seai_documents documents
                     LEFT JOIN selected_seai_documents selected
                         ON selected.document_id = documents.id
+                        AND selected.house_id = documents.application_id
                     WHERE documents.application_id = ?
                         AND lower(documents.filename) LIKE '%.pdf'
                         AND documents.content IS NOT NULL
@@ -4711,6 +4787,11 @@ class LegacyRouteHandlers:
                     rows = [
                         row for row in rows
                         if not _is_annotated_pdf_filename(row["filename"])
+                    ]
+                if is_vent_dashboard_user:
+                    rows = [
+                        row for row in rows
+                        if row["is_selected_pdf"]
                     ]
             self._send_json(
                 200,
@@ -4730,10 +4811,22 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor") or _has_access_profile(user, "assign")):
+            has_seai_document_access = (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "surveyor")
+                or _has_access_profile(user, "assign")
+            )
+            with connect_db() as db:
+                is_vent_dashboard_user = (
+                    not has_seai_document_access
+                    and not _has_access_profile(user, "ventilation_coordinator")
+                    and not _has_access_profile(user, "plumbing_coordinator")
+                    and _in_department(db, user, "Ventilation")
+                )
+            if not (has_seai_document_access or is_vent_dashboard_user):
                 self._send_json(
                     403,
-                    {"error": "Administrator or surveyor access is required to view SEAI PDFs."},
+                    {"error": "SEAI PDFs are available to Administrators, Surveyors, Assign, and assigned Vent team leads."},
                 )
                 return
             document_path = path[len("/api/seai-documents/"):].split("/")
@@ -4773,6 +4866,22 @@ class LegacyRouteHandlers:
             if row is None:
                 self._send_json(404, {"error": "SEAI PDF was not found."})
                 return
+            if is_vent_dashboard_user:
+                with connect_db() as db:
+                    is_visible = _ventilation_house_is_visible(
+                        db, row["application_id"], user["id"]
+                    )
+                    is_selected_combined_pdf = db.execute(
+                        """
+                        SELECT 1 FROM selected_seai_documents
+                        WHERE document_id = ? AND house_id = ?
+                          AND created_by != ''
+                        """,
+                        (int(document_path[0]), row["application_id"]),
+                    ).fetchone() is not None
+                if not is_visible or not is_selected_combined_pdf:
+                    self._send_json(404, {"error": "SEAI PDF was not found."})
+                    return
             if is_preview:
                 page_values = parse_qs(urlparse(self.path).query).get("page", ["1"])
                 try:
@@ -4865,12 +4974,21 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
-                self._send_json(403, {"error": "Surveyor access is required to view house documents."})
+            is_assign = _has_access_profile(user, "assign")
+            has_house_document_access = (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "surveyor")
+                or is_assign
+            )
+            if not has_house_document_access:
+                self._send_json(403, {"error": "Administrator, Surveyor, or Assign access is required to view house documents."})
                 return
             document_path = path[len("/api/house-documents/"):].split("/")
             is_share_pdf = len(document_path) == 2 and document_path[1] == "share"
             is_preview_page = len(document_path) == 2 and document_path[1] == "preview"
+            if is_assign and is_share_pdf:
+                self._send_json(403, {"error": "Assign accounts can view but cannot share house PDFs."})
+                return
             if len(document_path) not in {1, 2} or (
                 len(document_path) == 2 and not (is_share_pdf or is_preview_page)
             ):
@@ -4888,9 +5006,9 @@ class LegacyRouteHandlers:
                     JOIN provided_houses p ON p.id = d.house_id
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
-                    WHERE d.id = ? AND h.id IS NULL
+                    WHERE d.id = ? AND (? = 1 OR h.id IS NULL)
                     """,
-                    (int(raw_document_id),),
+                    (int(raw_document_id), int(is_assign)),
                 ).fetchone()
                 not_started = (
                     row is not None and _is_not_started_house(db, row["house_id"])

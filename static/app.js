@@ -1622,6 +1622,12 @@ function renderOverview() {
               ${house.assignment_assigned_by ? `<p class="ventilation-house-notes"><strong>Assigned by:</strong> ${escapeHtml(house.assignment_assigned_by)}</p>` : ""}
               ${isComplete ? `<p class="ventilation-house-audit">${escapeHtml(workPlanDoneLabel(house.done_by || "Vent team", house.done_at, "vent"))}</p>` : ""}
               ${ventPdfSectionHtml(house.documents || [], house.id)}
+              <button class="vent-survey-pdfs-button" type="button" data-vent-survey-pdfs data-house-id="${escapeHtml(house.id)}" aria-label="View combined PDFs by Surveyor for ${escapeHtml(house.id)}">
+                <span class="vent-survey-pdfs-icon" aria-hidden="true">PDF</span>
+                <span class="vent-survey-pdfs-button-copy"><strong>Combined PDFs by Surveyor</strong><small>Selected survey pages for this house</small></span>
+                <span class="vent-survey-pdfs-count">${(house.survey_documents || []).length}</span>
+                <span class="vent-survey-pdfs-arrow" aria-hidden="true">›</span>
+              </button>
               ${house.status === "ready" ? `<div class="ventilation-house-actions"><button class="ventilation-complete-button${isComplete ? " is-undo" : ""}" type="button" data-ventilation-complete data-house-id="${escapeHtml(house.id)}" data-done="${!isComplete}" aria-label="${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}"><span aria-hidden="true">${isComplete ? "↶" : "✓"}</span> ${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}</button></div>` : ""}
             </article>`;
         }).join("")
@@ -5898,6 +5904,47 @@ function seaiPdfSectionsHtml(documents) {
     }).join("")}</ul></details>`;
   }).join("");
 }
+function assignHousePdfSectionHtml(houseDocuments, selectedDocuments = [], description = "Selected and annotated survey PDFs saved for this house.") {
+  const documents = [
+    ...houseDocuments.map((document) => ({
+      ...document,
+      fileUrl: `/api/house-documents/${Number(document.id)}`,
+      savedBy: document.uploaded_by,
+      savedAt: document.uploaded_at,
+    })),
+    ...selectedDocuments.map((document) => ({
+      ...document,
+      fileUrl: `/api/seai-documents/${Number(document.id)}/file`,
+      savedBy: document.saved_by,
+      savedAt: document.saved_at,
+    })),
+  ];
+  const entries = documents.length
+    ? `<div class="saved-pdfs-overview"><span class="saved-pdfs-count">${documents.length} ${documents.length === 1 ? "PDF" : "PDFs"}</span><span>Saved for this house</span></div>
+      <div class="saved-pdfs-entries">${documents.map((document) => {
+    const url = document.fileUrl;
+    const name = escapeHtml(document.filename);
+    const uploadedBy = escapeHtml(document.savedBy || "Surveyor");
+    const uploadedAt = escapeHtml(formatAuditDateTime(document.savedAt));
+    return `<div class="saved-pdf-entry">
+      <span class="saved-pdf-icon" aria-hidden="true">PDF</span>
+      <div class="saved-pdf-copy">
+        <span class="saved-pdf-label">House survey PDF</span>
+        <strong class="saved-pdf-filename">${name}</strong>
+        <span class="saved-pdf-meta">Saved by ${uploadedBy} · ${uploadedAt} · ${seaiPdfSize(document.size_bytes)}</span>
+      </div>
+      <div class="saved-pdf-actions">
+        <a class="button button-primary saved-pdf-view" href="${url}" target="_blank" rel="noreferrer">View PDF</a>
+        <a class="button button-secondary" href="${url}" download="${name}">Download</a>
+      </div>
+    </div>`;
+  }).join("")}</div>`
+    : '<div class="saved-pdfs-empty"><span class="saved-pdfs-empty-icon" aria-hidden="true">PDF</span><div><strong>No saved PDFs yet</strong><p>Saved or annotated survey PDFs for this house will appear here.</p></div></div>';
+  return `<section class="survey-room-saved-pdfs assign-house-pdfs" aria-label="Saved PDFs">
+    <div class="survey-room-saved-pdfs-heading"><div><h3>Saved PDFs</h3><p>${escapeHtml(description)}</p></div></div>
+    <div class="survey-room-saved-pdfs-list">${entries}</div>
+  </section>`;
+}
 async function sendPreparedPdfToEwiTeam() {
   const prepared = state.preparedHouseShare;
   const button = $("#house-document-share-ewi");
@@ -5949,11 +5996,77 @@ function ventPdfSectionHtml(documents, houseId = "") {
     return `<li><span class="ventilation-pdf-icon" aria-hidden="true">PDF</span><span class="seai-document-name ventilation-pdf-name" title="${name}"><strong>${name}</strong><small><span>${seaiPdfSize(document.size_bytes)}</span><span>Shared by ${sharedBy}${sharedAt ? ` · ${sharedAt}` : ""}</span></small></span><span class="seai-pdf-actions ventilation-pdf-actions"><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer" aria-label="View ${name}">View PDF</a><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}">Download</a>${canAnnotate ? `<button class="button button-primary vent-pdf-annotate-button" type="button" data-vent-pdf-annotate data-document-id="${Number(document.id)}" data-document-name="${name}" data-house-id="${escapeHtml(houseId)}" aria-label="Annotate ${name}">Annotate PDF</button>` : ""}</span></li>`;
   }).join("")}</ul></details>`;
 }
+let ventSurveyPdfsRequestId = 0;
+function renderVentSurveyPdfs(documents) {
+  const list = $("#vent-survey-pdfs-list");
+  if (!documents.length) {
+    list.innerHTML = '<div class="vent-survey-pdf-empty"><span aria-hidden="true">PDF</span><strong>No combined PDFs saved yet</strong><p>When a Surveyor saves selected pages as a combined PDF for this house, it will appear here.</p></div>';
+    return;
+  }
+  list.innerHTML = documents.map((document) => {
+    const url = document.file_url;
+    const name = escapeHtml(document.filename);
+    const savedBy = escapeHtml(document.uploaded_by || "Surveyor");
+    const savedAt = escapeHtml(formatAuditDateTime(document.uploaded_at));
+    return `<article class="vent-survey-pdf-entry">
+      <span class="vent-survey-pdf-entry-icon" aria-hidden="true">PDF</span>
+      <div class="vent-survey-pdf-entry-copy"><strong title="${name}">${name}</strong><span>Combined PDF by ${savedBy}${savedAt ? ` · ${savedAt}` : ""} · ${seaiPdfSize(document.size_bytes)}</span></div>
+      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-vent-survey-pdf-view data-pdf-url="${url}" data-pdf-name="${name}" aria-label="View ${name}" aria-pressed="false">View PDF</button><a class="button button-secondary" href="${url}" download="${name}">Download</a></div>
+    </article>`;
+  }).join("");
+}
+async function openVentSurveyPdfs(houseId) {
+  const house = (state.dashboard?.ventilation_houses || []).find(
+    (item) => item.id === houseId,
+  );
+  if (!house) {
+    showToast("Could not find this house on your Vent dashboard. Refresh and try again.", true);
+    return;
+  }
+  const requestId = ++ventSurveyPdfsRequestId;
+  $("#vent-survey-pdfs-title").textContent = `Combined PDFs by Surveyor · ${house.id}`;
+  $("#vent-survey-pdfs-description").textContent = "Loading combined PDFs saved by the Surveyor…";
+  $("#vent-survey-pdfs-list").innerHTML = '<p class="vent-survey-pdfs-loading" role="status">Loading combined PDFs…</p>';
+  $("#vent-survey-pdfs-viewer").hidden = true;
+  $("#vent-survey-pdfs-frame").removeAttribute("src");
+  $("#vent-survey-pdfs-dialog").showModal();
+  try {
+    const seaiResult = await request(
+      `/api/seai-documents?house_id=${encodeURIComponent(houseId)}`,
+      { cache: "no-store" },
+    );
+    if (
+      requestId !== ventSurveyPdfsRequestId ||
+      !$("#vent-survey-pdfs-dialog").open
+    ) return;
+    const documents = (seaiResult.documents || [])
+      .filter((document) => document.is_selected_pdf)
+      .map((document) => ({
+        ...document,
+        file_url: `/api/seai-documents/${Number(document.id)}/file`,
+        uploaded_by: document.saved_by || "Surveyor",
+        uploaded_at: document.saved_at || "",
+      }));
+    house.survey_documents = documents;
+    const button = [...document.querySelectorAll("[data-vent-survey-pdfs]")]
+      .find((item) => item.dataset.houseId === houseId);
+    if (button) button.querySelector(".vent-survey-pdfs-count").textContent = String(documents.length);
+    $("#vent-survey-pdfs-description").textContent = documents.length
+      ? `${documents.length} combined ${documents.length === 1 ? "PDF" : "PDFs"} saved by the Surveyor for this house.`
+      : "Combined PDFs saved by the Surveyor will appear here.";
+    renderVentSurveyPdfs(documents);
+  } catch (error) {
+    if (requestId !== ventSurveyPdfsRequestId) return;
+    $("#vent-survey-pdfs-description").textContent = "Could not load PDFs for this house.";
+    $("#vent-survey-pdfs-list").innerHTML = `<p class="vent-survey-pdfs-error" role="alert">${escapeHtml(error.message)}</p>`;
+  }
+}
 async function loadAssignSeaiPdfSections(houseId, requestId) {
   try {
-    const [result, ventResult] = await Promise.all([
+    const [result, ventResult, houseResult] = await Promise.all([
       request(`/api/seai-documents?house_id=${encodeURIComponent(houseId)}`),
       request(`/api/house-vent-documents?house_id=${encodeURIComponent(houseId)}`).catch(() => ({ documents: [] })),
+      request(`/api/house-documents?house_id=${encodeURIComponent(houseId)}`).catch(() => ({ documents: [] })),
     ]);
     if (
       requestId !== state.assignSeaiHouseRequest ||
@@ -5961,7 +6074,11 @@ async function loadAssignSeaiPdfSections(houseId, requestId) {
     ) {
       return;
     }
-    const html = ventPdfSectionHtml(ventResult.documents || []) +
+    const html = assignHousePdfSectionHtml(
+      houseResult.documents || [],
+      (result.documents || []).filter((document) => document.is_selected_pdf),
+    ) +
+      ventPdfSectionHtml(ventResult.documents || []) +
       seaiPdfSectionsHtml(result.documents || []);
     if (!html) return;
     $("#assign-seai-house-record").insertAdjacentHTML("beforeend", html);
@@ -8100,6 +8217,36 @@ function bindEvents() {
   $$(".close-dialog").forEach((button) =>
     button.addEventListener("click", () => button.closest("dialog").close()),
   );
+  $("#vent-survey-pdfs-dialog").addEventListener("click", (event) => {
+    const previewButton = event.target.closest("[data-vent-survey-pdf-view]");
+    if (!previewButton) return;
+    const viewer = $("#vent-survey-pdfs-viewer");
+    const frame = $("#vent-survey-pdfs-frame");
+    const url = previewButton.dataset.pdfUrl;
+    const name = previewButton.dataset.pdfName;
+    if (!url || !name) return;
+    frame.src = url;
+    $("#vent-survey-pdfs-viewer-title").textContent = name;
+    viewer.hidden = false;
+    $$("#vent-survey-pdfs-list [data-vent-survey-pdf-view]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button === previewButton));
+      button.textContent = button === previewButton ? "Viewing PDF" : "View PDF";
+    });
+    viewer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+  $("#vent-survey-pdfs-viewer-close").addEventListener("click", () => {
+    $("#vent-survey-pdfs-frame").removeAttribute("src");
+    $("#vent-survey-pdfs-viewer").hidden = true;
+    $$("#vent-survey-pdfs-list [data-vent-survey-pdf-view]").forEach((button) => {
+      button.setAttribute("aria-pressed", "false");
+      button.textContent = "View PDF";
+    });
+  });
+  $("#vent-survey-pdfs-dialog").addEventListener("close", () => {
+    ventSurveyPdfsRequestId += 1;
+    $("#vent-survey-pdfs-frame").removeAttribute("src");
+    $("#vent-survey-pdfs-viewer").hidden = true;
+  });
   $("#selected-pdf-preview-dialog").addEventListener(
     "close",
     clearSelectedPdfPreview,
@@ -8780,6 +8927,11 @@ function bindEvents() {
     renderSupervisorHouses();
   });
   $("#ventilation-house-list").addEventListener("click", (event) => {
+    const surveyPdfsButton = event.target.closest("[data-vent-survey-pdfs]");
+    if (surveyPdfsButton) {
+      openVentSurveyPdfs(surveyPdfsButton.dataset.houseId);
+      return;
+    }
     const annotateButton = event.target.closest("[data-vent-pdf-annotate]");
     if (annotateButton) {
       openPdfAnnotator(annotateButton, "vent");
