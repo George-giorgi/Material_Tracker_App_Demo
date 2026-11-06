@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1000" viewBox="0 0 1400 1000">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#70837A"/></marker></defs>
+<rect width="1400" height="1000" fill="#FFFFFF"/>
+<rect x="40.0" y="24.0" width="900.0" height="42.0" rx="0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="56.0" y="59.040000000000006" text-anchor="start" font-family="Arial,sans-serif" font-size="26.0" font-weight="400" fill="#173F32">HOUSE WORKFLOW &amp; ACCESS</text>
+<rect x="42.0" y="66.0" width="1200.0" height="28.0" rx="0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="58.0" y="87.56" text-anchor="start" font-family="Arial,sans-serif" font-size="14.0" font-weight="400" fill="#52665A">House status controls and role permissions are distinct from department reporting lines.</text>
+<rect x="40.0" y="112.0" width="1320.0" height="92.0" rx="12" fill="#FFF8E8" stroke="#D9C58F" stroke-width="1.5"/>
+<text x="56.0" y="148.28" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#554A30">REPORTING LINE RULES</text>
+<text x="56.0" y="164.48" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">Admin → Assign; Supervisor → Teamlead; Teamlead → Employee / Plumber. Manager and report must share a department; cycles are not allowed. Departments can exist without a Supervisor. Reporting</text>
+<text x="56.0" y="180.68" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">lines do not grant application permissions.</text>
+<rect x="40.0" y="275.0" width="300.0" height="140.0" rx="12" fill="#F7F8F5" stroke="#CDD4C9" stroke-width="1.5"/>
+<text x="56.0" y="325.695" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="700" fill="#294338">NOT STARTED</text>
+<text x="56.0" y="343.245" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">Admin / Assign marks eligible houses</text>
+<text x="56.0" y="360.79499999999996" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">Ready for start and may assign an</text>
+<text x="56.0" y="378.34499999999997" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">active Surveyor.</text>
+<rect x="380.0" y="275.0" width="300.0" height="140.0" rx="12" fill="#EDF4FA" stroke="#9AB3CC" stroke-width="1.5"/>
+<text x="396.0" y="316.92" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="700" fill="#294338">READY FOR START</text>
+<text x="396.0" y="334.47" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">Admin / Assign can change the</text>
+<text x="396.0" y="352.02" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">Surveyor. Surveyor sees only</text>
+<text x="396.0" y="369.57" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">assigned ready houses and records</text>
+<text x="396.0" y="387.12" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">the survey, work plan and documents.</text>
+<rect x="720.0" y="275.0" width="300.0" height="140.0" rx="12" fill="#EEF5EA" stroke="#A6BE9D" stroke-width="1.5"/>
+<text x="736.0" y="316.92" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="700" fill="#294338">ACTIVE</text>
+<text x="736.0" y="334.47" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">Requires a completed valid survey</text>
+<text x="736.0" y="352.02" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">and perimeter. Admin / Assign</text>
+<text x="736.0" y="369.57" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">activates and selects an active</text>
+<text x="736.0" y="387.12" text-anchor="start" font-family="Arial,sans-serif" font-size="13.0" font-weight="400" fill="#294338">Supervisor.</text>
+<rect x="1060.0" y="275.0" width="300.0" height="140.0" rx="12" fill="#F3F3F3" stroke="#C8C8C8" stroke-width="1.5"/>
+<text x="1210.0" y="343.11" text-anchor="middle" font-family="Arial,sans-serif" font-size="14.0" font-weight="700" fill="#404040">CLOSED</text>
+<text x="1210.0" y="362.01000000000005" text-anchor="middle" font-family="Arial,sans-serif" font-size="14.0" font-weight="400" fill="#404040">Completed house</text>
+<rect x="40.0" y="455.0" width="1320.0" height="92.0" rx="12" fill="#F8FBF6" stroke="#CEDBC7" stroke-width="1.5"/>
+<text x="56.0" y="491.28" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#3E513A">ACTIVE-HOUSE RESPONSIBILITIES</text>
+<text x="56.0" y="507.48" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#3E513A">Supervisor sets delivery person and team. Admin / Assign can mark Scaffolding and ESB work complete. Plumber completes required plumbing work. Plumbing and Vent Coordinators use dedicated</text>
+<text x="56.0" y="523.68" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#3E513A">work queues and limited assignments; no general house-assignment or materials access.</text>
+<rect x="40.0" y="585.0" width="700.0" height="34.0" rx="0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="56.0" y="612.8" text-anchor="start" font-family="Arial,sans-serif" font-size="20.0" font-weight="400" fill="#173F32">ROLE ACCESS PROFILES</text>
+<rect x="40.0" y="635.0" width="420.0" height="140.0" rx="12" fill="#EAF2EC" stroke="#8EAA98" stroke-width="1.5"/>
+<text x="56.0" y="665.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#294338">ADMIN &amp; ASSIGN</text>
+<text x="56.0" y="681.78" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Admin: manages accounts, departments, roles and reporting</text>
+<text x="56.0" y="697.98" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">lines; unrestricted access (*).</text>
+<text x="56.0" y="714.1800000000001" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Assign: manages house assignment and workflow without</text>
+<text x="56.0" y="730.38" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">materials or calculator access.</text>
+<rect x="490.0" y="635.0" width="420.0" height="140.0" rx="12" fill="#EFF4F8" stroke="#C6D5E2" stroke-width="1.5"/>
+<text x="506.0" y="665.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#294338">SURVEY &amp; FIELD</text>
+<text x="506.0" y="681.78" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Surveyor: assigned Ready houses, survey and survey</text>
+<text x="506.0" y="697.98" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">documents.</text>
+<text x="506.0" y="714.1800000000001" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Supervisor: assigned houses, delivery/team settings,</text>
+<text x="506.0" y="730.38" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">reporting Teamlead oversight.</text>
+<text x="506.0" y="746.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Teamlead: own dashboard and roster.</text>
+<rect x="940.0" y="635.0" width="420.0" height="140.0" rx="12" fill="#F7F8F5" stroke="#CDD4C9" stroke-width="1.5"/>
+<text x="956.0" y="665.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#294338">OPERATIONS</text>
+<text x="956.0" y="681.78" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Employee: standard employee and material-movement access;</text>
+<text x="956.0" y="697.98" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">cannot change house status or edit surveys.</text>
+<text x="956.0" y="714.1800000000001" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Plumber: employee-style access, including active-house</text>
+<text x="956.0" y="730.38" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">checklist work; no account administration or house-status</text>
+<text x="956.0" y="746.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">control.</text>
+<text x="956.0" y="762.78" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#294338">Warehouse, Delivery and Boss have separate profiles.</text>
+<rect x="40.0" y="800.0" width="420.0" height="140.0" rx="12" fill="#FFF8E8" stroke="#D9C58F" stroke-width="1.5"/>
+<text x="56.0" y="830.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#554A30">COORDINATORS</text>
+<text x="56.0" y="846.78" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">Plumbing: outstanding plumber-work queue; assigns</text>
+<text x="56.0" y="862.98" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">eligible Plumbing Supervisors.</text>
+<text x="56.0" y="879.1800000000001" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">Vent: Vent-work queue; assigns active Ventilation</text>
+<text x="56.0" y="895.38" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">Teamleads.</text>
+<text x="56.0" y="911.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#554A30">Limited queue access only; no general house assignment.</text>
+<rect x="490.0" y="800.0" width="420.0" height="140.0" rx="12" fill="#F5F0F7" stroke="#CEC0D6" stroke-width="1.5"/>
+<text x="506.0" y="830.58" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#44374B">CUSTOM ROLES</text>
+<text x="506.0" y="846.78" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#44374B">Administrators can create roles and combine access</text>
+<text x="506.0" y="862.98" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#44374B">profiles. Permissions are enforced by the server; a</text>
+<text x="506.0" y="879.1800000000001" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#44374B">reporting relationship alone does not grant access.</text>
+<rect x="940.0" y="800.0" width="420.0" height="140.0" rx="12" fill="#F3F5F3" stroke="#D5DDD6" stroke-width="1.5"/>
+<text x="956.0" y="844.08" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="700" fill="#52665A">HOW TO READ THE DIAGRAM</text>
+<text x="956.0" y="860.28" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#52665A">Page 1 names the people and teams in the department</text>
+<text x="956.0" y="876.48" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#52665A">chart. Page 2 describes application access and the house</text>
+<text x="956.0" y="892.6800000000001" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#52665A">workflow. Team names do not by themselves confirm login</text>
+<text x="956.0" y="908.88" text-anchor="start" font-family="Arial,sans-serif" font-size="12.0" font-weight="400" fill="#52665A">accounts or permissions.</text>
+<path d="M 340.0 345.0 H 380.0" fill="none" stroke="#70837A" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 680.0 345.0 H 720.0" fill="none" stroke="#70837A" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 1020.0 345.0 H 1060.0" fill="none" stroke="#70837A" stroke-width="2" marker-end="url(#arrow)"/>
+</svg>
