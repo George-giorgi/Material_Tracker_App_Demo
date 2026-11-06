@@ -11,6 +11,49 @@ fictional warehouse quantities, and fictional houses, employees, and movements.
 It contains no imported house or movement records from the live tracker. The
 app displays a **DEMO DATA — NOT REAL STOCK** warning.
 
+## Local development on macOS
+
+Use Python 3.10 or newer. From the project root, these commands install the
+application dependencies and run a separate copy of the checked-in demo
+database, leaving `instance/ewi.sqlite3` unchanged. If that source database is
+absent in a fresh checkout, the test database is initialized as a new empty
+database instead.
+
+```bash
+cd /path/to/Material_Tracker_App_Demo
+python3 --version
+if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+mkdir -p instance
+if [ -f instance/ewi.sqlite3 ] && [ ! -e instance/ewi.mac-test.sqlite3 ]; then
+  cp instance/ewi.sqlite3 instance/ewi.mac-test.sqlite3
+fi
+export EWI_DB_PATH="$PWD/instance/ewi.mac-test.sqlite3"
+export EWI_HOST=127.0.0.1
+export EWI_PORT=8001
+python server.py
+```
+
+Open [http://127.0.0.1:8001](http://127.0.0.1:8001) and stop the server with
+**Ctrl+C**. This demo database keeps the accounts and data it had when copied.
+Do not use it as the production database unless that is an intentional,
+authorized data migration.
+
+Run the non-browser application tests with:
+
+```bash
+python -m unittest tests.test_server tests.test_house_flow tests.test_navigation_flow tests.test_seai_measure_demo
+```
+
+For browser tests, install the test dependencies and Chromium once:
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m playwright install chromium
+python -m unittest tests.test_navigation_browser
+```
+
 ## Run the demo
 
 Use Python 3.10 or newer. On Windows PowerShell:
@@ -171,8 +214,117 @@ database is the shared database. First create the administrator account by
 running `py server.py` with the default local settings and opening the local
 URL above. Stop it with **Ctrl+C**.
 
-For device access, configure a TLS certificate whose names match the host name
-employees will use. Then start the tracker from PowerShell, replacing the
+### Windows 11 host setup
+
+Install Python 3.12 (64-bit) on the dedicated host. Copy the application files
+to a stable local directory such as `C:\Brusna\MaterialTracker`; do not copy
+`.venv`, `.git`, or files containing demo credentials. Place the intentionally
+chosen SQLite database at `C:\BrusnaData\ewi.sqlite3` on a local disk. The
+database is not included in Git. Never overwrite an existing database while
+setting up the host; stop the app before copying or backing one up.
+House and SEAI PDF uploads are stored as SQLite BLOBs, so backing up the
+database also preserves those files. No separate upload directory needs to be
+copied. Individual SEAI PDFs may be up to 20 MB; the server accepts POST bodies
+up to 21 MB to allow for upload framing.
+SQLite serializes database writes, so run one app instance against the database
+on the host's local disk only; do not use a network share or synced folder.
+Connections wait up to 30 seconds for a competing write before failing. This
+helps with brief contention but does not make SQLite suitable for multiple app
+processes or sustained concurrent writes.
+
+In PowerShell, from the application directory, create a new Python environment
+and install the dependencies:
+
+```powershell
+Set-Location C:\Brusna\MaterialTracker
+if (-not (Test-Path .\.venv\Scripts\python.exe)) {
+  py -3.12 -m venv .venv
+}
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+New-Item -ItemType Directory -Force C:\BrusnaData
+$env:EWI_DB_PATH = 'C:\BrusnaData\ewi.sqlite3'
+$env:EWI_HOST = '127.0.0.1'
+$env:EWI_PORT = '8001'
+.\.venv\Scripts\python.exe -m py_compile server.py
+.\.venv\Scripts\python.exe -m unittest tests.test_server tests.test_seai_measure_demo
+.\.venv\Scripts\python.exe server.py
+```
+
+The test command checks backend behavior without modifying the selected host
+database. For the JavaScript/navigation tests, install Node.js LTS separately
+and check with `node --version`; Node.js is for development tests only and is
+not required to run the application.
+
+If migrating an existing database, first stop the source app and transfer only
+the authorized SQLite database over a secure channel. With the destination
+app stopped, this example refuses to overwrite an existing destination:
+
+```powershell
+$SourceDatabase = 'D:\SecureTransfer\ewi.sqlite3'
+$DestinationDatabase = 'C:\BrusnaData\ewi.sqlite3'
+if (Test-Path -LiteralPath $DestinationDatabase) {
+  throw "Destination already exists; refusing to overwrite it."
+}
+if (-not (Test-Path -LiteralPath $SourceDatabase -PathType Leaf)) {
+  throw "Source database was not found."
+}
+Copy-Item -LiteralPath $SourceDatabase -Destination $DestinationDatabase
+```
+
+Use the actual secure-transfer source path. Do not copy a live SQLite database;
+stop the source app first. If the destination file does not exist, the app
+creates an empty database on startup. Create its initial administrator from
+the host itself. A transferred database retains its existing accounts. Verify
+the app locally at `http://127.0.0.1:8001`, then stop it with **Ctrl+C**.
+
+To start the app automatically after a Windows restart, open **Task Scheduler**
+and create a task with an **At startup** trigger. Run it under a dedicated,
+least-privilege Windows account, whether or not a user is logged on. Set the
+action to the full path
+`C:\Brusna\MaterialTracker\.venv\Scripts\python.exe`, the argument to
+`C:\Brusna\MaterialTracker\server.py`, and **Start in** to
+`C:\Brusna\MaterialTracker`. Configure restart-on-failure and verify operation
+after reboot. Set machine environment variables for the database and tunnel
+configuration before enabling the task, then restart the task so it inherits
+them. Keep database and backup permissions restricted to the service account
+and administrators.
+
+### Cloudflare Tunnel
+
+For remote HTTPS access, keep the app bound to loopback (`127.0.0.1`) and
+configure a Cloudflare Tunnel hostname to forward to `http://127.0.0.1:8001`.
+Install `cloudflared` as a Windows service using Cloudflare's documented
+procedure. Protect the hostname with Cloudflare Access, require employee
+identity and MFA, and allow only the intended employees. Do not expose the
+origin port on the router or Windows Firewall. The tunnel provides HTTPS to
+employees while its local origin connection uses HTTP; **do not** set
+`EWI_HOST` to `0.0.0.0` for this arrangement.
+
+Set these machine environment variables to the real public HTTPS origin before
+starting the app or its scheduled task. Replace the example hostname; do not
+include a path or trailing slash. If more than one public origin is
+intentionally used, separate the exact origins with commas.
+
+```powershell
+[Environment]::SetEnvironmentVariable('EWI_DB_PATH', 'C:\BrusnaData\ewi.sqlite3', 'Machine')
+[Environment]::SetEnvironmentVariable('EWI_HOST', '127.0.0.1', 'Machine')
+[Environment]::SetEnvironmentVariable('EWI_PORT', '8001', 'Machine')
+[Environment]::SetEnvironmentVariable('EWI_COOKIE_SECURE', 'true', 'Machine')
+[Environment]::SetEnvironmentVariable('EWI_TRUSTED_ORIGINS', 'https://tracker.example.com', 'Machine')
+```
+
+Run PowerShell as an administrator to set machine-level values. Restart the
+app after changing them. `EWI_COOKIE_SECURE` makes session cookies secure when
+TLS terminates at the tunnel; `EWI_TRUSTED_ORIGINS` requires every POST request
+to carry the configured same-site browser origin. These settings do not enable
+plain-HTTP network binding: non-loopback app binds still require the app's own
+TLS certificate and key. Do not put tunnel tokens, private keys, or credentials
+in the repository, task arguments, or shared scripts.
+
+### Direct HTTPS on a private LAN (alternative)
+
+If not using a tunnel, configure a TLS certificate whose names match the host
+name employees will use. Then start the tracker from PowerShell, replacing the
 certificate paths with the paths on the host:
 
 ```powershell
@@ -182,16 +334,15 @@ $env:EWI_TLS_KEY = 'C:\path\to\tracker-private-key.pem'
 py server.py
 ```
 
-Employees then open `https://<host-name>:8001` (replace `<host-name>` with the
-host computer's DNS name). Install a certificate trusted by employee devices;
-do not ask employees to ignore certificate warnings. Allow TCP port 8001 only
-on the intended private network in the host firewall. The server refuses to
-listen on a network interface without HTTPS, and the initial administrator
-must be created locally before network access is enabled. Do not expose this
-development server directly to the public internet.
+Employees then open `https://<host-name>:8001`. Install a certificate trusted
+by employee devices; do not ask employees to ignore certificate warnings.
+Allow TCP port 8001 only on the intended private network in the host firewall.
+Do not expose this development server directly to the public internet.
 
-Back up the host's `instance\ewi.sqlite3` regularly. Do not run separate
-tracker copies on employee devices; they would have separate databases.
+Back up `C:\BrusnaData\ewi.sqlite3` regularly. Stop the app before a file-copy
+backup, and periodically test restoring a backup to a separate path. Do not
+run separate tracker copies on employee devices; they would have separate
+databases.
 
 The demo database is already seeded. If you create a fresh demo database,
 run `py seed_demo.py` once before starting the server. The seed script

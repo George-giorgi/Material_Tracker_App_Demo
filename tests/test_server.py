@@ -1204,6 +1204,90 @@ class TrackerTests(unittest.TestCase):
         thread = httpd.start()
         return httpd, thread
 
+    def test_trusted_origins_gate_posts_and_secure_cookie_override(self):
+        trusted_origin = "https://tracker.example.com"
+        self.assertNotEqual(
+            server._normalize_origin(trusted_origin),
+            server._normalize_origin("https://tracker.example.com:0"),
+        )
+        with (
+            patch.object(
+                server,
+                "TRUSTED_ORIGINS",
+                frozenset({server._normalize_origin(trusted_origin)}),
+            ),
+            patch.object(server, "COOKIE_SECURE", True),
+        ):
+            httpd, thread = self.start_test_server()
+            try:
+                for origin, expected_status in (
+                    (None, 403),
+                    ("https://attacker.example", 403),
+                    (trusted_origin, 201),
+                ):
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1", httpd.server_address[1], timeout=5
+                    )
+                    headers = {"Content-Type": "application/json"}
+                    if origin:
+                        headers["Origin"] = origin
+                    connection.request(
+                        "POST",
+                        "/api/auth/setup",
+                        body=json.dumps(
+                            {
+                                "username": "trusted-origin-admin",
+                                "display_name": "Trusted Origin Admin",
+                                "pin": "123456",
+                            }
+                        ),
+                        headers=headers,
+                    )
+                    response = connection.getresponse()
+                    result = json.loads(response.read())
+                    set_cookie = response.getheader("Set-Cookie", "")
+                    self.assertEqual(response.status, expected_status, result)
+                    if expected_status == 201:
+                        self.assertIn("Secure", set_cookie)
+                        self.assertIn("HttpOnly", set_cookie)
+                        self.assertIn("SameSite=Lax", set_cookie)
+                    connection.close()
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=5)
+
+    def test_oversized_request_body_is_rejected_with_payload_too_large(self):
+        request = server.FastAPIRequestContext(
+            "POST",
+            "/api/test",
+            {"Content-Length": "5"},
+            b"12345",
+            None,
+        )
+        with patch.object(server, "MAX_REQUEST_BODY_BYTES", 4):
+            with self.assertRaises(server.ApiError) as raised:
+                request._body()
+        self.assertEqual(raised.exception.status, 413)
+
+    def test_sqlite_connection_uses_configured_busy_timeout(self):
+        with server.connect_db() as db:
+            timeout_ms = db.execute("PRAGMA busy_timeout").fetchone()[0]
+        self.assertEqual(
+            timeout_ms,
+            server.SQLITE_BUSY_TIMEOUT_SECONDS * 1000,
+        )
+
+    def test_secure_cookie_override_does_not_allow_plain_http_network_bind(self):
+        with (
+            patch.object(server, "HOST", "0.0.0.0"),
+            patch.object(server, "TLS_CERT", ""),
+            patch.object(server, "TLS_KEY", ""),
+            patch.object(server, "COOKIE_SECURE", True),
+            self.assertRaisesRegex(RuntimeError, "requires HTTPS"),
+        ):
+            server.run()
+
     def test_brusna_curious_cat_logo_is_served_for_app_branding(self):
         httpd, thread = self.start_test_server()
         connection = http.client.HTTPConnection(

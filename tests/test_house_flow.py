@@ -5499,6 +5499,38 @@ class HouseDashboardVentStatusTests(HttpBase):
 
 
 class FrontEndLogicTests(unittest.TestCase):
+    def test_surveyor_room_loads_and_displays_house_pdfs(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="survey-room-house-documents"', html)
+        self.assertIn('id="house-documents-list"', html)
+        self.assertIn('href="#survey-room-house-documents">House PDFs</a>', html)
+
+        start = APP_JS.index("async function loadHouseDocuments")
+        end = APP_JS.index("\nasync function deleteHouseDocument", start)
+        loader = APP_JS[start:end]
+        self.assertIn("loadHouseDocuments(houseId, state.surveyRoomRequest, false);", APP_JS)
+        script = (
+            "const state={surveyRoomRequest:3};"
+            "const list={innerHTML:''};"
+            'const $=()=>list;'
+            'const request=async()=>({documents:[{id:7,filename:"survey-report.pdf",'
+            'uploaded_by:"gio",uploaded_at:"2026-11-03T20:20:29",size_bytes:2159}]});'
+            'const escapeHtml=(value)=>String(value);'
+            'const formatAuditDateTime=()=> "3 Nov 2026";'
+            'const seaiPdfSize=()=> "2 KB";'
+            + loader
+            + '\nloadHouseDocuments("DEMO-000001",3,false).then(()=>console.log(list.innerHTML));'
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('href="/api/house-documents/7"', result.stdout)
+        self.assertIn("survey-report.pdf", result.stdout)
+
     def test_audit_date_time_uses_readable_day_month_year_and_24_hour_time(self):
         start = APP_JS.index("function formatAuditDateTime")
         end = APP_JS.index("\nfunction houseAuditHtml", start)

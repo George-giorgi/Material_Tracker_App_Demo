@@ -2,6 +2,7 @@ import csv
 import json
 import hashlib
 import hmac
+import logging
 import math
 import os
 import re
@@ -48,7 +49,68 @@ PORT = int(os.environ.get("EWI_PORT", "8001"))
 HOST = os.environ.get("EWI_HOST", "127.0.0.1")
 TLS_CERT = os.environ.get("EWI_TLS_CERT", "")
 TLS_KEY = os.environ.get("EWI_TLS_KEY", "")
-COOKIE_SECURE = bool(TLS_CERT and TLS_KEY)
+LOGGER = logging.getLogger(__name__)
+
+
+def _environment_flag(name):
+    value = os.environ.get(name, "").strip().casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"", "0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be set to true or false.")
+
+
+def _normalize_origin(value):
+    parsed = urlparse(value)
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Origin must contain only an HTTP or HTTPS scheme and host.")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Origin has an invalid port.") from exc
+    scheme = parsed.scheme.casefold()
+    return (
+        scheme,
+        parsed.hostname.rstrip(".").casefold(),
+        port if port is not None else (443 if scheme == "https" else 80),
+    )
+
+
+def _configured_trusted_origins():
+    origins = set()
+    for value in os.environ.get("EWI_TRUSTED_ORIGINS", "").split(","):
+        value = value.strip()
+        if not value:
+            continue
+        try:
+            origins.add(_normalize_origin(value))
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid EWI_TRUSTED_ORIGINS entry: {value}") from exc
+    return frozenset(origins)
+
+
+def _origin_is_trusted(origin):
+    if not TRUSTED_ORIGINS or not origin:
+        return False
+    try:
+        return _normalize_origin(origin) in TRUSTED_ORIGINS
+    except ValueError:
+        return False
+
+
+COOKIE_SECURE = bool(TLS_CERT and TLS_KEY) or _environment_flag(
+    "EWI_COOKIE_SECURE"
+)
+TRUSTED_ORIGINS = _configured_trusted_origins()
 SESSION_MAX_AGE = 12 * 60 * 60
 CREDENTIAL_ITERATIONS = 310_000
 HOUSE_DOCUMENT_MAX_BYTES = 8_000_000
@@ -57,6 +119,8 @@ HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
 SEAI_DOCUMENT_MAX_BYTES = 20_000_000
+MAX_REQUEST_BODY_BYTES = SEAI_DOCUMENT_MAX_BYTES + 1_000_000
+SQLITE_BUSY_TIMEOUT_SECONDS = 30
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
 MET_EIREANN_COUNTY_FORECAST_URL = (
@@ -798,7 +862,7 @@ def _record_house_survey_revision(db, house_id, survey, user, changed_at):
 @contextmanager
 def connect_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, timeout=SQLITE_BUSY_TIMEOUT_SECONDS)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     try:
@@ -3807,8 +3871,10 @@ class LegacyRouteHandlers:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             raise ApiError(400, "Invalid request body.")
-        if length <= 0 or length > 10_000_000:
-            raise ApiError(400, "Request body is empty or too large.")
+        if length <= 0:
+            raise ApiError(400, "Request body is empty.")
+        if length > MAX_REQUEST_BODY_BYTES:
+            raise ApiError(413, "Request body is too large.")
         try:
             return self.rfile.read(length)
         except OSError:
@@ -5792,6 +5858,10 @@ class LegacyRouteHandlers:
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if TRUSTED_ORIGINS and not _origin_is_trusted(
+                self.headers.get("Origin")
+            ):
+                raise ApiError(403, "Request origin is not allowed.")
             if path == "/api/auth/setup":
                 payload = self._json_body()
                 if not isinstance(payload, dict):
@@ -8957,8 +9027,11 @@ class LegacyRouteHandlers:
             else:
                 message = "This record conflicts with existing tracker data."
             self._send_json(409, {"error": message})
-        except (OSError, sqlite3.Error) as exc:
-            self._send_json(500, {"error": f"Could not save the record: {exc}"})
+        except (OSError, sqlite3.Error):
+            LOGGER.exception("Could not save tracker request")
+            self._send_json(
+                500, {"error": "Could not save the record. Check server logs."}
+            )
 
 
 class FastAPIRequestContext(LegacyRouteHandlers):
@@ -9036,7 +9109,7 @@ async def _dispatch_fastapi_request(request):
     if request.method == "POST":
         async for chunk in request.stream():
             body.extend(chunk)
-            if len(body) > 10_000_000:
+            if len(body) > MAX_REQUEST_BODY_BYTES:
                 context = FastAPIRequestContext(
                     request.method,
                     request.url.path,
@@ -9044,7 +9117,7 @@ async def _dispatch_fastapi_request(request):
                     b"",
                     request.client,
                 )
-                context._send_json(400, {"error": "Request body is empty or too large."})
+                context._send_json(413, {"error": "Request body is too large."})
                 return context.response()
 
     raw_path = request.scope.get("raw_path", request.url.path.encode("ascii"))
@@ -9078,7 +9151,9 @@ def run():
     app.state.initialized_db_path = DB_PATH
     if bool(TLS_CERT) != bool(TLS_KEY):
         raise RuntimeError("Set both EWI_TLS_CERT and EWI_TLS_KEY to enable HTTPS.")
-    if HOST not in {"127.0.0.1", "localhost", "::1"} and not COOKIE_SECURE:
+    if HOST not in {"127.0.0.1", "localhost", "::1"} and not (
+        TLS_CERT and TLS_KEY
+    ):
         raise RuntimeError(
             "Binding to a network interface requires HTTPS; configure EWI_TLS_CERT and EWI_TLS_KEY."
         )
@@ -9087,8 +9162,8 @@ def run():
             raise RuntimeError(
                 "Create the first administrator on localhost before enabling network access."
             )
-    scheme = "https" if COOKIE_SECURE else "http"
-    print(f"EWI Tracker running at {scheme}://{HOST}:{PORT}")
+    scheme = "https" if TLS_CERT and TLS_KEY else "http"
+    print(f"EWI Tracker listening at {scheme}://{HOST}:{PORT}")
     try:
         uvicorn.run(
             app,

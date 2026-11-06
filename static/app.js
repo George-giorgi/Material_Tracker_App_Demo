@@ -2958,6 +2958,14 @@ function openHouseSurvey(houseId) {
   const hasSeaiDetails = Boolean(
     house.seai_details && Object.keys(house.seai_details).length,
   );
+  const canManageHouseDocuments =
+    isReady &&
+    (hasAccessProfile(state.user, "admin") ||
+      hasAccessProfile(state.user, "surveyor"));
+  $("#house-document-form").classList.toggle(
+    "hidden",
+    !canManageHouseDocuments,
+  );
   workPlanForm.classList.toggle(
     "hidden",
     !isReady || !(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")),
@@ -3050,6 +3058,7 @@ function openHouseSurvey(houseId) {
   $("#surveyor-room").classList.remove("hidden");
   setTab("houses");
   updateSurveyRoomNavActive();
+  loadHouseDocuments(houseId, state.surveyRoomRequest, false);
   if ((hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor"))) {
     loadSeaiDocuments(houseId, state.surveyRoomRequest, isReady);
   } else {
@@ -3229,6 +3238,7 @@ async function saveHouseWorkPlan(form, manual = false) {
 }
 async function loadHouseDocuments(houseId, requestId, canModify = true) {
   const list = $("#house-documents-list");
+  list.innerHTML = '<p class="muted">Loading survey PDFs…</p>';
   try {
     const result = await request(
       `/api/house-documents?house_id=${encodeURIComponent(houseId)}`,
@@ -3239,7 +3249,7 @@ async function loadHouseDocuments(houseId, requestId, canModify = true) {
         <div class="house-document-entry">
           <a class="house-document-link" href="/api/house-documents/${document.id}" target="_blank" rel="noreferrer">
             <span class="house-document-icon" aria-hidden="true">PDF</span>
-            <span class="house-document-copy"><strong>${escapeHtml(document.filename)}</strong><small>Uploaded by ${escapeHtml(document.uploaded_by)} · ${escapeHtml(formatAuditDateTime(document.uploaded_at))} · ${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
+            <span class="house-document-copy"><strong>${escapeHtml(document.filename)}</strong><small>Uploaded by ${escapeHtml(document.uploaded_by)} · ${escapeHtml(formatAuditDateTime(document.uploaded_at))} · ${seaiPdfSize(document.size_bytes)}</small></span>
             <span class="house-document-open" aria-hidden="true">↗</span>
           </a>
           ${canModify ? `<div class="house-document-actions">
@@ -8249,6 +8259,11 @@ function bindEvents() {
   });
   $("#back-from-surveyor-room").addEventListener("click", closeSurveyorRoom);
   $("#surveyor-house-notes-form").addEventListener("submit", submitSurveyorHouseNotes);
+  $("#house-document-form").addEventListener("submit", submitHouseDocument);
+  $("#house-document-file").addEventListener("change", (event) => {
+    $("#house-document-file-name").textContent =
+      event.currentTarget.files[0]?.name || "No file selected";
+  });
   $("#survey-room-seai-documents").addEventListener("click", (event) => {
     const deleteSelectedPdf = event.target.closest("[data-selected-seai-delete]");
     if (deleteSelectedPdf) {

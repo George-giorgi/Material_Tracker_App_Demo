@@ -457,6 +457,7 @@
               <a href="#survey-room-work-plan">Work plan</a>
               <a href="#survey-room-seai-details" data-ready-only>SEAI record</a>
               <a href="#survey-room-seai-details" data-not-started-only>SEAI PDFs</a>
+              <a href="#survey-room-house-documents">House PDFs</a>
               <a href="#survey-room-saved-pdfs">Saved PDFs</a>
               <a href="#survey-room-measurements">Measurements</a>
             </nav>
@@ -467,6 +468,16 @@
                 <label class="field full">House notes<textarea name="notes" rows="3" maxlength="2000" placeholder="Add access details or other notes for this house"></textarea></label>
                 <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Visible in the house record.</small><button class="button button-secondary note-delete" type="button" data-delete-note>Delete note</button><button class="button button-secondary" type="submit">Save house notes</button></div>
               </form>
+            </article>
+            <article class="card survey-room-house-documents-card" id="survey-room-house-documents">
+              <div class="card-heading"><div><h2>House PDFs</h2><p>Survey documents attached to this house. Files are stored with the tracker database.</p></div></div>
+              <form id="house-document-form" class="survey-document-upload hidden">
+                <label class="file-picker"><input id="house-document-file" type="file" accept=".pdf,application/pdf"><span>Choose PDF</span></label>
+                <span class="file-name" id="house-document-file-name">No file selected</span>
+                <button class="button button-secondary" type="submit">Upload PDF</button>
+                <small>Ready houses only. PDF files must be 8 MB or smaller.</small>
+              </form>
+              <div id="house-documents-list" class="survey-room-house-documents-list" aria-live="polite"></div>
             </article>
             <article class="card survey-room-seai-card hidden" id="survey-room-seai-details">
               <div class="card-heading"><div><h2>SEAI application record</h2><p>Captured application, property, contractor, measures, tests, variance, notes, and attachment metadata. Surveyors can edit only “Survey Qty including Variation”.</p></div></div>
