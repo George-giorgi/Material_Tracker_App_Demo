@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 240" role="img" aria-labelledby="title desc">
+  <title id="title">Rytons controllable LookRyt panel</title>
+  <desc id="desc">Product-style illustration of the Rytons LookRyt controllable wall vent: a plain rounded white faceplate, black telescopic sleeve, and square fixing flange. Patent No. GB 2523676.</desc>
+  <defs>
+    <linearGradient id="tube" x1="0" y1="0" x2=".95" y2=".65">
+      <stop stop-color="#111416"/>
+      <stop offset=".22" stop-color="#30302d"/>
+      <stop offset=".42" stop-color="#151718"/>
+      <stop offset=".72" stop-color="#292a28"/>
+      <stop offset="1" stop-color="#101213"/>
+    </linearGradient>
+    <linearGradient id="tubeTop" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#45433e"/>
+      <stop offset=".32" stop-color="#272827"/>
+      <stop offset="1" stop-color="#111415"/>
+    </linearGradient>
+    <linearGradient id="panel" x1=".15" y1="0" x2=".82" y2="1">
+      <stop stop-color="#fffef9"/>
+      <stop offset=".58" stop-color="#f8f6ed"/>
+      <stop offset="1" stop-color="#e7e5dc"/>
+    </linearGradient>
+    <linearGradient id="panelEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f0eee5"/>
+      <stop offset=".48" stop-color="#d5d4cb"/>
+      <stop offset="1" stop-color="#aaa9a1"/>
+    </linearGradient>
+    <linearGradient id="flange" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fffef9"/>
+      <stop offset=".7" stop-color="#efeee8"/>
+      <stop offset="1" stop-color="#d4d3cc"/>
+    </linearGradient>
+    <filter id="shadow" x="-.18" y="-.2" width="1.4" height="1.5" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <!-- Soft cast shadow, kept subtle so the object remains legible on white. -->
+  <path d="m25 190 117 43 118-63-111-53z" fill="#22282a" opacity=".17" filter="url(#shadow)"/>
+
+  <!-- Rear wall flange. -->
+  <path d="m166 16 97 9-5 91-99-11z" fill="#9e9c91" opacity=".45"/>
+  <path d="m166 14 97 9-5 91-99-11z" fill="url(#flange)" stroke="#85847c" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="m170 19 89 8-5 81-90-10z" fill="#f3f2ec" stroke="#cbc9c1" stroke-width="1"/>
+  <g fill="#e1dfd7" stroke="#8e8d85" stroke-width="1">
+    <circle cx="175" cy="24" r="1.6"/>
+    <circle cx="254" cy="31" r="1.6"/>
+    <circle cx="249" cy="103" r="1.6"/>
+    <circle cx="170" cy="96" r="1.6"/>
+  </g>
+
+  <!-- One-piece telescopic tube, running back from the faceplate to the flange. -->
+  <path d="M111 105 170 49
+           C184 36 198 30 210 34
+           C224 38 231 50 226 64
+           L207 86 148 140Z"
+        fill="url(#tube)" stroke="#101214" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M119 96 175 46
+           C189 35 201 31 210 36
+           C214 38 217 41 220 46
+           C206 43 194 48 183 57
+           L128 109Z"
+        fill="url(#tubeTop)" opacity=".94"/>
+  <path d="M135 91 187 45 Q201 35 211 39"
+        fill="none" stroke="#77746a" stroke-width="2" opacity=".56" stroke-linecap="round"/>
+
+  <!-- Two shallow seams show the adjustable, overlapping sleeve sections. -->
+  <path d="M154 64 Q169 78 165 94 L148 110"
+        fill="none" stroke="#080b0c" stroke-width="2.2" opacity=".9"/>
+  <path d="M158 62 Q173 76 169 91"
+        fill="none" stroke="#625f57" stroke-width="1.2" opacity=".68"/>
+  <path d="M191 40 Q204 51 201 68 L194 78"
+        fill="none" stroke="#080b0c" stroke-width="1.7" opacity=".82"/>
+
+  <!-- Short connector is mostly hidden behind the blank control panel. -->
+  <path d="m102 106 21-15 44 24-22 20z" fill="#171a1a" stroke="#0d1011" stroke-width="1.4"/>
+  <path d="m110 105 14-9 37 20-14 9z" fill="#383833" opacity=".8"/>
+
+  <!-- Thin molded edge around the broad, almost flat LookRyt cover. -->
+  <path d="M38 90
+           Q38 87 43 88
+           L158 102
+           Q174 104 176 118
+           L176 208
+           Q176 220 165 227
+           Q161 230 155 228
+           L45 212
+           Q34 210 32 198
+           L27 105
+           Q26 96 33 92Z"
+        fill="url(#panelEdge)" stroke="#c5c4bc" stroke-width="1" stroke-linejoin="round"/>
+
+  <!-- Plain, softly rounded face; the photographed LookRyt cover has no grille. -->
+  <path d="M38 91
+           Q38 89 43 90
+           L156 104
+           Q171 106 173 119
+           L173 207
+           Q173 217 164 223
+           Q160 226 155 224
+           L46 208
+           Q37 206 35 197
+           L30 105
+           Q29 97 36 93Z"
+        fill="url(#panel)" stroke="#f8f7f0" stroke-width=".8" stroke-linejoin="round"/>
+  <path d="M33 105 37 195 Q38 204 46 207"
+        fill="none" stroke="#fff" stroke-width="1.4" opacity=".72" stroke-linecap="round"/>
+  <path d="m44 92 110 14q10 2 13 10"
+        fill="none" stroke="#fff" stroke-width="1.2" opacity=".75" stroke-linecap="round"/>
+  <path d="m48 209 106 16q5 1 9-2"
+        fill="none" stroke="#d1d0c8" stroke-width=".9" opacity=".62" stroke-linecap="round"/>
+</svg>

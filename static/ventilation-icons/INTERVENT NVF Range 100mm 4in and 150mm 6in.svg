@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 320" role="img" aria-labelledby="title desc">
+  <title id="title">INTERVENT NVF Range 100mm (4-inch) and 150mm (6-inch)</title>
+  <desc id="desc">Three-quarter product illustration of a white square axial extractor fan with a central motor hub, horizontal protective louvres, and a short round rear spigot.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff"/>
+      <stop offset="1" stop-color="#f8f8f7"/>
+    </linearGradient>
+    <linearGradient id="plasticFront" x1=".08" y1="0" x2=".92" y2="1">
+      <stop stop-color="#fffef9"/>
+      <stop offset=".48" stop-color="#f3f1e9"/>
+      <stop offset="1" stop-color="#d8d6cf"/>
+    </linearGradient>
+    <linearGradient id="plasticSide" x1="0" y1="0" x2="1" y2=".2">
+      <stop stop-color="#d4d1c8"/>
+      <stop offset=".38" stop-color="#f1efe7"/>
+      <stop offset="1" stop-color="#c5c2b9"/>
+    </linearGradient>
+    <linearGradient id="rearDuct" x1="0" y1="0" x2="1" y2=".25">
+      <stop stop-color="#c9c6bd"/>
+      <stop offset=".42" stop-color="#e9e6dd"/>
+      <stop offset="1" stop-color="#bcb9b0"/>
+    </linearGradient>
+    <linearGradient id="capTop" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#fffefb"/>
+      <stop offset=".62" stop-color="#ece9e1"/>
+      <stop offset="1" stop-color="#d2cfc7"/>
+    </linearGradient>
+    <linearGradient id="louvre" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fffef9"/>
+      <stop offset=".48" stop-color="#f1efe8"/>
+      <stop offset="1" stop-color="#c8c6bf"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d5d4ce"/>
+      <stop offset=".5" stop-color="#a8a9a5"/>
+      <stop offset="1" stop-color="#e1dfd8"/>
+    </linearGradient>
+    <radialGradient id="hub" cx=".35" cy=".28" r=".8">
+      <stop stop-color="#fffefa"/>
+      <stop offset=".7" stop-color="#e9e7df"/>
+      <stop offset="1" stop-color="#bbb9b2"/>
+    </radialGradient>
+    <filter id="shadow" x="-.25" y="-.25" width="1.5" height="1.6">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <clipPath id="fanOpening">
+      <path d="M108 94 247 80 245 206 108 224Z"/>
+    </clipPath>
+  </defs>
+
+  <path d="M1 1h358v318H1z" fill="url(#background)"/>
+  <path d="M20 20h320v280H20z" fill="none" stroke="#8c8d8a" stroke-width="1.5"/>
+  <ellipse cx="176" cy="271" rx="94" ry="15" fill="#6d6c66" opacity=".18" filter="url(#shadow)"/>
+
+  <!-- Hollow rear spigot projects from behind the fan casing. -->
+  <path d="M83 112
+           C70 107 58 111 53 121
+           L42 160
+           C39 172 43 183 53 189
+           L91 199 102 125Z"
+        fill="url(#rearDuct)" stroke="#bdbab1" stroke-width="1"/>
+  <path d="M61 123 55 184" fill="none" stroke="#f8f6ef" stroke-width="2" opacity=".72"/>
+  <ellipse cx="53" cy="157" rx="14" ry="35" transform="rotate(12 53 157)"
+           fill="url(#plasticFront)" stroke="#b9b6ad" stroke-width="1.2"/>
+  <ellipse cx="53" cy="157" rx="9.5" ry="29" transform="rotate(12 53 157)"
+           fill="#888981" stroke="#d4d1c8" stroke-width=".8"/>
+  <ellipse cx="52" cy="157" rx="6.5" ry="24" transform="rotate(12 52 157)"
+           fill="#5f615c"/>
+  <path d="M47 132Q54 128 59 133" fill="none" stroke="#fdfcf7" stroke-width="1.2" opacity=".9"/>
+
+  <!-- Housing depth, front shell, and raised upper cover. -->
+  <path d="m92 69 192-21 1 173-192 27Z"
+        fill="#c7c4bb" stroke="#b7b4ab" stroke-width="1"/>
+  <path d="m80 61 192-22q10-1 10 8l-1 164q0 8-8 10L91 244q-9 1-9-8L80 69q0-6 0-8Z"
+        fill="url(#plasticSide)" stroke="#d0cdc4" stroke-width="1.2"/>
+  <path d="m86 67 179-21q7-1 7 6l-1 152q0 7-6 8L96 234q-7 1-7-6L86 74q0-5 0-7Z"
+        fill="url(#plasticFront)" stroke="#e1ded5" stroke-width="1"/>
+  <path d="m82 64 12-10 177-20q8-1 12 4l-10 8L91 67Z"
+        fill="url(#capTop)" stroke="#dfdcd4" stroke-width="1"/>
+  <path d="m95 70 166-19" fill="none" stroke="#fff" stroke-width="1.6" opacity=".9"/>
+  <path d="m96 232 165-23" fill="none" stroke="#c1beb6" stroke-width="1" opacity=".6"/>
+
+  <!-- Dark fan cavity and softly shaded axial blades behind the grille. -->
+  <path d="M107 91 250 76 248 207 106 225Z"
+        fill="#e1dfd7" stroke="#c7c4bc" stroke-width="1"/>
+  <path d="M112 96 245 82 243 201 111 218Z" fill="#777973"/>
+  <g clip-path="url(#fanOpening)" opacity=".96">
+    <path d="M178 151
+             C175 132 183 111 205 100
+             C211 97 218 96 222 98
+             C207 112 202 130 204 148
+             C196 146 187 147 178 151Z" fill="url(#blade)"/>
+    <path d="M178 151
+             C195 151 213 161 220 181
+             C223 187 223 194 221 198
+             C209 184 193 178 177 180
+             C181 171 181 160 178 151Z" fill="url(#blade)"/>
+    <path d="M178 151
+             C170 168 153 180 134 178
+             C127 178 121 175 118 172
+             C136 166 148 154 153 138
+             C160 145 169 149 178 151Z" fill="url(#blade)"/>
+    <path d="M178 151
+             C161 145 149 130 151 111
+             C152 104 155 98 159 95
+             C165 112 177 124 193 129
+             C185 135 180 143 178 151Z" fill="#c1c1bb"/>
+    <path d="M178 151
+             C192 140 211 137 228 147
+             C234 151 237 157 238 161
+             C219 160 203 167 192 180
+             C190 169 185 159 178 151Z" fill="#d9d8d2"/>
+    <circle cx="178" cy="151" r="37" fill="none" stroke="#535650" stroke-width="2" opacity=".55"/>
+  </g>
+
+  <!-- Horizontal grille blades with the central round motor cover overlaid. -->
+  <g stroke="#c9c6bd" stroke-width=".75" stroke-linejoin="round">
+    <path d="m104 99 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m103 113 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m102 127 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m101 141 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m100 155 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m99 169 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m98 183 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+    <path d="m97 197 145-15-1 8-144 15Z" fill="url(#louvre)"/>
+  </g>
+  <path d="M107 96 246 82M99 201 241 186" fill="none" stroke="#fff" stroke-width="1.2" opacity=".85"/>
+  <path d="m109 91 0 129m137-142-2 119" fill="none" stroke="#d4d1c9" stroke-width="1"/>
+
+  <!-- Central circular hub, foreshortened to match the angled front face. -->
+  <ellipse cx="177" cy="151" rx="35" ry="31" transform="rotate(-6 177 151)"
+           fill="url(#hub)" stroke="#c9c6be" stroke-width="1.2"/>
+  <ellipse cx="177" cy="151" rx="30" ry="26" transform="rotate(-6 177 151)"
+           fill="#f3f1ea" stroke="#dedbd3" stroke-width=".8"/>
+  <path d="M157 135Q173 125 191 135" fill="none" stroke="#fff" stroke-width="2" opacity=".85" stroke-linecap="round"/>
+  <circle cx="177" cy="151" r="3" fill="#d0cdc5"/>
+  <path d="m98 214 1 9m155-22 0 8" stroke="#c5c2ba" stroke-width="1"/>
+</svg>

@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 360" role="img" aria-labelledby="title desc">
+  <title id="title">D Series Axial Fan</title>
+  <desc id="desc">White square axial exhaust fan with a circular curved-louvre grille, protective mesh, visible impeller, and short side duct. Air capacity up to 341 cubic metres per hour.</desc>
+  <defs>
+    <linearGradient id="casing" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fafafa"/>
+      <stop offset=".58" stop-color="#f0f1f0"/>
+      <stop offset="1" stop-color="#d5d7d6"/>
+    </linearGradient>
+    <linearGradient id="caseEdge" x1="0" y1="0" x2="1" y2=".2">
+      <stop stop-color="#c7c9c8"/>
+      <stop offset=".45" stop-color="#e7e8e7"/>
+      <stop offset="1" stop-color="#c2c4c3"/>
+    </linearGradient>
+    <linearGradient id="duct" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#eceeed"/>
+      <stop offset=".65" stop-color="#d9dbda"/>
+      <stop offset="1" stop-color="#f4f4f3"/>
+    </linearGradient>
+    <radialGradient id="opening" cx=".45" cy=".4" r=".7">
+      <stop stop-color="#929492"/>
+      <stop offset=".72" stop-color="#444746"/>
+      <stop offset="1" stop-color="#242726"/>
+    </radialGradient>
+    <linearGradient id="louvre" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff"/>
+      <stop offset=".55" stop-color="#f3f4f3"/>
+      <stop offset="1" stop-color="#d7d9d8"/>
+    </linearGradient>
+    <radialGradient id="motor" cx=".35" cy=".3" r=".8">
+      <stop stop-color="#f4f5f4"/>
+      <stop offset=".72" stop-color="#d2d4d3"/>
+      <stop offset="1" stop-color="#aeb1b0"/>
+    </radialGradient>
+    <pattern id="mesh" width="5" height="5" patternUnits="userSpaceOnUse">
+      <path d="M0 0H5M0 0V5" fill="none" stroke="#d3d5d4" stroke-width=".55" opacity=".8"/>
+      <path d="M5 0V5M0 5H5" fill="none" stroke="#252827" stroke-width=".45" opacity=".65"/>
+    </pattern>
+    <clipPath id="roundOpening">
+      <ellipse cx="159" cy="174" rx="104" ry="111"/>
+    </clipPath>
+    <clipPath id="louvreArea">
+      <ellipse cx="159" cy="174" rx="107" ry="114"/>
+    </clipPath>
+  </defs>
+
+  <path d="M0 0h380v360H0z" fill="#fff"/>
+
+  <!-- Short round outlet duct visible beyond the right edge of the casing. -->
+  <path d="M267 89
+           C293 90 317 103 330 124
+           L346 151
+           Q354 164 354 181
+           L352 219
+           Q351 238 337 252
+           C319 270 293 278 267 278Z"
+        fill="url(#duct)" stroke="#d2d4d3" stroke-width="1.2"/>
+  <ellipse cx="342" cy="182" rx="13" ry="57" fill="#e1e3e2" stroke="#c9cbca" stroke-width="1"/>
+  <ellipse cx="345" cy="182" rx="8" ry="45" fill="#d4d6d5" opacity=".8"/>
+
+  <!-- Shallow square face casing with molded corners and bevel. -->
+  <path d="M39 21
+           Q40 17 47 17
+           L299 25
+           Q306 25 307 33
+           L306 321
+           Q305 329 298 330
+           L38 311
+           Q31 310 31 303Z"
+        fill="url(#caseEdge)" stroke="#c8cac9" stroke-width="1.2"/>
+  <path d="M35 23
+           Q36 19 43 19
+           L292 27
+           Q299 27 300 34
+           L299 314
+           Q299 322 292 323
+           L39 305
+           Q35 304 35 299Z"
+        fill="url(#casing)" stroke="#fdfdfd" stroke-width="1.5"/>
+  <path d="M43 27 291 35 290 312 43 294Z"
+        fill="none" stroke="#e0e2e1" stroke-width="1"/>
+
+  <!-- Dark fan cavity, impeller, and fine square safety mesh. -->
+  <ellipse cx="159" cy="174" rx="105" ry="112" fill="#d7d9d8" stroke="#c1c3c2" stroke-width="1.2"/>
+  <g clip-path="url(#roundOpening)">
+    <path d="M48 54h222v240H48z" fill="url(#opening)"/>
+    <g fill="#b9bcbb" stroke="#333635" stroke-width="1">
+      <path d="M159 174
+               C141 148 140 113 155 82
+               Q162 70 174 66
+               C170 98 180 126 197 145
+               Q177 153 159 174Z"/>
+      <path d="M159 174
+               C190 161 225 169 247 193
+               Q256 203 255 216
+               C229 196 199 192 172 201
+               Q170 184 159 174Z"/>
+      <path d="M159 174
+               C172 207 162 242 138 264
+               Q128 273 116 271
+               C136 245 140 215 132 188
+               Q149 185 159 174Z"/>
+      <path d="M159 174
+               C126 187 91 179 69 155
+               Q60 145 61 133
+               C87 153 117 157 145 147
+               Q148 165 159 174Z"/>
+      <path d="M159 174
+               C146 141 158 108 183 87
+               Q193 79 205 82
+               C184 105 179 135 187 161
+               Q170 163 159 174Z"/>
+    </g>
+    <circle cx="159" cy="174" r="37" fill="#555958" stroke="#2b2e2d" stroke-width="2"/>
+    <circle cx="159" cy="174" r="24" fill="url(#motor)" stroke="#aeb1b0" stroke-width="1"/>
+    <circle cx="159" cy="174" r="7" fill="#b6b9b8"/>
+    <path d="M48 54h222v240H48z" fill="url(#mesh)" opacity=".8"/>
+  </g>
+
+  <!-- Circular molded rim around the curved louvre assembly. -->
+  <ellipse cx="159" cy="174" rx="110" ry="117" fill="none" stroke="#fdfdfd" stroke-width="5"/>
+  <ellipse cx="159" cy="174" rx="108" ry="115" fill="none" stroke="#d3d5d4" stroke-width="1.5"/>
+
+  <!-- Horizontal blades bow gently with the circular grille instead of forming a flat slatted panel. -->
+  <g clip-path="url(#louvreArea)" stroke-linejoin="round">
+    <path d="M42 67 Q159 44 276 67 L273 79 Q159 60 45 79Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 91 Q159 69 276 91 L274 104 Q159 86 44 104Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 116 Q159 96 276 116 L275 130 Q159 113 43 130Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 142 Q159 124 276 142 L276 156 Q159 141 42 156Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 168 Q159 153 276 168 L276 182 Q159 169 42 182Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 194 Q159 182 276 194 L276 208 Q159 198 42 208Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 220 Q159 211 276 220 L275 234 Q159 227 43 234Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M42 246 Q159 239 276 246 L274 259 Q159 255 44 259Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+    <path d="M44 272 Q159 267 274 272 L271 285 Q159 283 47 285Z" fill="url(#louvre)" stroke="#d2d4d3" stroke-width="1"/>
+  </g>
+
+  <!-- Narrow central bridge and lower panel seam. -->
+  <path d="M157 61 157 289" fill="none" stroke="#f4f5f4" stroke-width="2" opacity=".65"/>
+  <path d="M40 294 293 312" fill="none" stroke="#d1d3d2" stroke-width="1"/>
+</svg>

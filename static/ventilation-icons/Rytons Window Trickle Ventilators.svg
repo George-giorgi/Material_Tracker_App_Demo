@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-labelledby="title desc">
+  <title id="title">Rytons Window Trickle Ventilators</title>
+  <desc id="desc">Two white elongated window trickle ventilators shown diagonally on a blue studio background, with dark airflow slots and end fittings.</desc>
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2=".28" y2="1">
+      <stop stop-color="#637bd0"/>
+      <stop offset=".58" stop-color="#5475c7"/>
+      <stop offset="1" stop-color="#446bb8"/>
+    </linearGradient>
+    <radialGradient id="blueGlow" cx=".23" cy=".72" r=".8">
+      <stop stop-color="#98a9e3" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#334c99" stop-opacity=".08"/>
+    </radialGradient>
+    <linearGradient id="whitePlastic" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fffefb"/>
+      <stop offset=".48" stop-color="#efefeb"/>
+      <stop offset="1" stop-color="#c9cbd0"/>
+    </linearGradient>
+    <linearGradient id="frontEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f8f8f3"/>
+      <stop offset="1" stop-color="#b9bdc5"/>
+    </linearGradient>
+    <linearGradient id="slot" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#161b27"/>
+      <stop offset=".5" stop-color="#353a47"/>
+      <stop offset="1" stop-color="#111722"/>
+    </linearGradient>
+    <filter id="softShadow" x="-.15" y="-.4" width="1.3" height="1.9">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+  </defs>
+
+  <path d="M1 1h398v298H1z" fill="url(#blue)"/>
+  <path d="M1 1h398v298H1z" fill="url(#blueGlow)"/>
+  <path d="M1 1h398v298H1z" fill="none" stroke="#dfe2eb" stroke-width="1.5"/>
+
+  <!-- Soft cast shadows anchor the two lightweight plastic vents to the surface. -->
+  <path d="m18 69 307 168 17-11L54 49Z" fill="#263765" opacity=".22" filter="url(#softShadow)"/>
+  <path d="m50 49 316 124 17-9L61 30Z" fill="#25345e" opacity=".2" filter="url(#softShadow)"/>
+
+  <!-- Rear trickle vent: long slim housing with a continuous dark airflow grille. -->
+  <path d="m53 36 11-7 313 123 1 11-11 8L53 49Z"
+        fill="#b9bbc2" stroke="#9fa3ad" stroke-width=".8" stroke-linejoin="round"/>
+  <path d="m53 31 11-6 313 123-10 8L53 49Z"
+        fill="url(#whitePlastic)" stroke="#d4d5d9" stroke-width=".9" stroke-linejoin="round"/>
+  <path d="m65 34 302 118-7 7L58 46Z"
+        fill="#d6d8dd" stroke="#bfc2c9" stroke-width=".6"/>
+  <path d="m67 36 291 114-4 5L63 43Z" fill="url(#slot)"/>
+  <g stroke="#a9adb5" stroke-width=".85" opacity=".95">
+    <path d="m72 37-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5m10-2-3 5"/>
+  </g>
+  <path d="m54 31 10-6 2 9-10 7Z" fill="#fbfbf8" stroke="#d2d3d8" stroke-width=".7"/>
+  <path d="m367 148 10 4v11l-10 7-1-12Z" fill="#fafaf6" stroke="#d0d2d7" stroke-width=".8"/>
+  <path d="m69 31 290 114" fill="none" stroke="#fff" stroke-width="1.5" opacity=".9"/>
+
+  <!-- Front assembly: second vent with its cover, end stops, and projecting mounting tabs. -->
+  <path d="m19 59 12-8 288 160 1 11-12 8L18 73Z"
+        fill="#b8bbc2" stroke="#989ca6" stroke-width=".9" stroke-linejoin="round"/>
+  <path d="m19 54 12-8 289 160-12 8L19 68Z"
+        fill="url(#whitePlastic)" stroke="#d8d9dc" stroke-width=".9" stroke-linejoin="round"/>
+  <path d="m32 57 278 154-9 7L23 65Z" fill="#e1e2e4" stroke="#c6c8ce" stroke-width=".6"/>
+  <path d="m35 60 264 145-7 6L29 67Z" fill="#f8f8f4" stroke="#d8d9dc" stroke-width=".6"/>
+  <path d="m40 64 244 135-7 5L34 70Z" fill="url(#slot)"/>
+  <g stroke="#b3b6bd" stroke-width=".8">
+    <path d="m47 65-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6m14-1-4 6"/>
+  </g>
+  <path d="m21 54 10-7 2 9-10 7Z" fill="#fffefa" stroke="#d4d5d9" stroke-width=".7"/>
+  <path d="m297 207 11 5v10l-10 7-2-11Z" fill="#fbfbf7" stroke="#d0d2d8" stroke-width=".8"/>
+  <path d="m34 58 258 143" fill="none" stroke="#fff" stroke-width="1.3" opacity=".92"/>
+
+  <!-- Small molded mounting clips along the near rail. -->
+  <path d="m108 105 13 7 3 12-7 1-13-8-3-7Z" fill="url(#whitePlastic)" stroke="#c4c6cc" stroke-width=".8"/>
+  <path d="m184 147 14 8 3 12-8 1-13-8-2-7Z" fill="url(#whitePlastic)" stroke="#c4c6cc" stroke-width=".8"/>
+  <path d="m250 184 15 8 2 11-8 2-13-8-2-7Z" fill="url(#whitePlastic)" stroke="#c4c6cc" stroke-width=".8"/>
+  <path d="m301 212 11 4 3 10-8 5-7-8Z" fill="#f4f4f0" stroke="#c7c9ce" stroke-width=".8"/>
+  <path d="m314 220 9-5 8 5-2 6-10 7-7-5Z" fill="url(#whitePlastic)" stroke="#c2c5cb" stroke-width=".8"/>
+
+</svg>

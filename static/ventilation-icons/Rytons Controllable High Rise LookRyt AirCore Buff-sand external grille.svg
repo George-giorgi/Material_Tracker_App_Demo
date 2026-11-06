@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-labelledby="title desc">
+  <title id="title">Rytons Controllable High Rise LookRyt AirCore — Buff/sand external grille</title>
+  <desc id="desc">Three-quarter product view of a black cylindrical AirCore sleeve with a buff projecting horizontal-louvre grille and a perforated cream wall flange.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#4f5eae"/>
+      <stop offset=".55" stop-color="#5677c8"/>
+      <stop offset="1" stop-color="#426bb9"/>
+    </linearGradient>
+    <radialGradient id="backdropLight" cx=".23" cy=".65" r=".78">
+      <stop stop-color="#a1b2e8" stop-opacity=".3"/>
+      <stop offset="1" stop-color="#354c96" stop-opacity=".08"/>
+    </radialGradient>
+    <linearGradient id="wallPlate" x1=".1" y1="0" x2=".95" y2="1">
+      <stop stop-color="#fffef3"/>
+      <stop offset=".62" stop-color="#f2efdf"/>
+      <stop offset="1" stop-color="#d0cbb9"/>
+    </linearGradient>
+    <linearGradient id="plateEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#c5c0af"/>
+      <stop offset="1" stop-color="#89897f"/>
+    </linearGradient>
+    <linearGradient id="pipe" x1=".08" y1=".1" x2=".8" y2=".92">
+      <stop stop-color="#323232"/>
+      <stop offset=".2" stop-color="#17191b"/>
+      <stop offset=".57" stop-color="#090b0d"/>
+      <stop offset=".82" stop-color="#101214"/>
+      <stop offset="1" stop-color="#292824"/>
+    </linearGradient>
+    <linearGradient id="pipeSheen" x1=".05" y1="0" x2=".48" y2="1">
+      <stop stop-color="#77746d" stop-opacity=".6"/>
+      <stop offset=".4" stop-color="#4b4a47" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#111315" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="buff" x1=".1" y1="0" x2=".9" y2="1">
+      <stop stop-color="#fff0b8"/>
+      <stop offset=".48" stop-color="#e6d39a"/>
+      <stop offset="1" stop-color="#b39a63"/>
+    </linearGradient>
+    <linearGradient id="slat" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff0bb"/>
+      <stop offset=".48" stop-color="#ead8a0"/>
+      <stop offset="1" stop-color="#c1a871"/>
+    </linearGradient>
+    <linearGradient id="slatSide" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#b9a16d"/>
+      <stop offset="1" stop-color="#8f784c"/>
+    </linearGradient>
+    <filter id="groundShadow" x="-.2" y="-.6" width="1.4" height="2.2">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <clipPath id="grilleFace">
+      <ellipse cx="130" cy="207" rx="50" ry="53" transform="rotate(40 130 207)"/>
+    </clipPath>
+  </defs>
+
+  <path d="M1 1h398v290H1z" fill="url(#backdrop)"/>
+  <path d="M1 1h398v290H1z" fill="url(#backdropLight)"/>
+  <path d="M1 1h398v290H1z" fill="none" stroke="#e0e1e7" stroke-width="2"/>
+  <ellipse cx="198" cy="254" rx="120" ry="13" fill="#19233c" opacity=".23" filter="url(#groundShadow)"/>
+
+  <!-- Rounded wall flange, with the narrow perimeter vents visible around the sleeve. -->
+  <path d="M222 36Q225 33 231 35L313 47Q324 49 324 58L317 139Q316 148 307 149L223 136Q215 135 216 126L220 45Q220 39 222 36Z"
+        fill="url(#plateEdge)" opacity=".8"/>
+  <path d="M220 33Q224 31 230 33L310 45Q321 47 322 56L315 133Q314 143 305 144L224 132Q216 131 217 122L220 43Q220 37 220 33Z"
+        fill="url(#wallPlate)" stroke="#d3cfbd" stroke-width="1.4"/>
+  <path d="M227 40Q230 38 235 40L305 50Q313 51 313 59L307 125Q306 134 298 133L229 123Q222 122 222 115L225 47Q225 42 227 40Z"
+        fill="#f3f0e2" stroke="#ded9c8" stroke-width="1"/>
+  <g fill="none" stroke="#bdb8a7" stroke-width="1.8" stroke-linecap="round">
+    <path d="m234 42 1 5m10-4 1 5m10-4 1 5m10-4 1 5m10-4 1 5m10-4 1 5m10-4 1 5"/>
+    <path d="m223 53 4 1m-4 9 4 1m-4 9 4 1m-4 9 4 1m-4 9 4 1m-4 9 4 1"/>
+    <path d="m310 62-4-1m3 10-4-1m3 10-4-1m3 10-4-1m2 10-4-1m2 10-4-1"/>
+  </g>
+  <g fill="#c6c0ad" stroke="#928a77" stroke-width=".8">
+    <ellipse cx="229" cy="53" rx="2.2" ry="2.6" transform="rotate(-16 229 53)"/>
+    <ellipse cx="304" cy="64" rx="2.2" ry="2.6" transform="rotate(-16 304 64)"/>
+    <ellipse cx="299" cy="121" rx="2.2" ry="2.6" transform="rotate(-16 299 121)"/>
+    <ellipse cx="226" cy="111" rx="2.2" ry="2.6" transform="rotate(-16 226 111)"/>
+  </g>
+
+  <!-- The sleeve and grille share the same projected diameter at the front joint. -->
+  <path d="M91 163
+           C134 130 190 87 243 55
+           C258 46 275 50 286 62
+           C297 75 295 91 282 103
+           C244 139 204 190 168 246
+           C151 250 132 234 119 215
+           C106 195 96 177 91 163Z"
+        fill="url(#pipe)" stroke="#111315" stroke-width="1.3"/>
+  <path d="M95 160C143 124 194 85 245 54C258 48 271 49 281 58
+           C260 58 244 68 228 80C185 112 141 146 101 174Z"
+        fill="url(#pipeSheen)"/>
+  <path d="M94 159C143 122 194 83 245 53C258 47 271 48 280 57"
+        fill="none" stroke="#827f76" stroke-width="1.3" opacity=".42" stroke-linecap="round"/>
+  <path d="M151 132Q158 143 174 154" fill="none" stroke="#050708" stroke-width="2" opacity=".8"/>
+  <path d="M149 130Q156 141 172 152" fill="none" stroke="#514f4a" stroke-width="1" opacity=".55"/>
+  <path d="M194 99Q201 110 218 122" fill="none" stroke="#050708" stroke-width="2" opacity=".8"/>
+  <path d="M192 97Q199 108 216 120" fill="none" stroke="#514f4a" stroke-width="1" opacity=".55"/>
+
+  <!-- Pipe end and grille use the same projected diameter; louvers sit within that shared face. -->
+  <ellipse cx="130" cy="207" rx="54" ry="57" transform="rotate(40 130 207)"
+           fill="#090b0d" stroke="#252523" stroke-width="1.2"/>
+  <ellipse cx="130" cy="207" rx="53" ry="56" transform="rotate(40 130 207)"
+           fill="url(#buff)" stroke="#f3e4b7" stroke-width="1.2"/>
+  <ellipse cx="130" cy="207" rx="50" ry="53" transform="rotate(40 130 207)"
+           fill="#876f46" stroke="#b39a65" stroke-width=".8"/>
+  <g clip-path="url(#grilleFace)" stroke-linejoin="round">
+    <path d="m70 157 120 7v9l-120-7z" fill="url(#slat)" stroke="#bca574" stroke-width=".7"/>
+    <path d="m70 166 120 7-3 3-117-7z" fill="url(#slatSide)"/>
+    <path d="m70 172 120 7v9l-120-7z" fill="url(#slat)" stroke="#b9a170" stroke-width=".7"/>
+    <path d="m70 181 120 7-3 3-117-7z" fill="url(#slatSide)"/>
+    <path d="m70 187 120 7v9l-120-7z" fill="url(#slat)" stroke="#b69d6b" stroke-width=".7"/>
+    <path d="m70 196 120 7-3 3-117-7z" fill="url(#slatSide)"/>
+    <path d="m70 202 120 7v9l-120-7z" fill="url(#slat)" stroke="#b39a69" stroke-width=".7"/>
+    <path d="m70 211 120 7-3 3-117-7z" fill="url(#slatSide)"/>
+    <path d="m70 217 120 7v9l-120-7z" fill="url(#slat)" stroke="#af9766" stroke-width=".7"/>
+    <path d="m70 226 120 7-3 3-117-7z" fill="url(#slatSide)"/>
+    <path d="m70 232 120 7v9l-120-7z" fill="url(#slat)" stroke="#aa9362" stroke-width=".7"/>
+    <path d="m70 241 120 7-3 3-117-7z" fill="url(#slatSide)"/>
+    <path d="m70 247 120 7v9l-120-7z" fill="url(#slat)" stroke="#a58e5d" stroke-width=".7"/>
+  </g>
+</svg>

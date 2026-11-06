@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 403 283" role="img" aria-labelledby="title desc">
+  <title id="title">Rytons Controllable LookRyt AirCore — Terracotta external grille</title>
+  <desc id="desc">Isometric illustration closely following the reference photograph: a terracotta rectangular louvred grille, short black telescopic AirCore wall sleeve, and cream square mounting flange against a blue background.</desc>
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2=".12" y2="1" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5262b5"/>
+      <stop offset=".48" stop-color="#526dbf"/>
+      <stop offset="1" stop-color="#4a73c3"/>
+    </linearGradient>
+    <radialGradient id="blueLight" cx="47%" cy="74%" r="80%">
+      <stop stop-color="#718bd7" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#3b509f" stop-opacity=".12"/>
+    </radialGradient>
+    <linearGradient id="tube" x1=".1" y1="0" x2=".25" y2="1">
+      <stop stop-color="#3e3d39"/>
+      <stop offset=".18" stop-color="#242424"/>
+      <stop offset=".55" stop-color="#101213"/>
+      <stop offset=".82" stop-color="#191a1a"/>
+      <stop offset="1" stop-color="#37352f"/>
+    </linearGradient>
+    <linearGradient id="tubeTop" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#4b4842"/>
+      <stop offset=".35" stop-color="#292a29"/>
+      <stop offset="1" stop-color="#161819"/>
+    </linearGradient>
+    <linearGradient id="flange" x1=".12" y1=".08" x2=".9" y2="1">
+      <stop stop-color="#fffdf3"/>
+      <stop offset=".68" stop-color="#f0eedf"/>
+      <stop offset="1" stop-color="#c5c0ae"/>
+    </linearGradient>
+    <linearGradient id="flangeEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#d7d1bd"/>
+      <stop offset="1" stop-color="#a8a18e"/>
+    </linearGradient>
+    <linearGradient id="terracotta" x1=".15" y1="0" x2=".8" y2="1">
+      <stop stop-color="#e87950"/>
+      <stop offset=".36" stop-color="#d25b39"/>
+      <stop offset=".8" stop-color="#b74730"/>
+      <stop offset="1" stop-color="#913923"/>
+    </linearGradient>
+    <linearGradient id="slatTop" x1="0" y1="0" x2=".15" y2="1">
+      <stop stop-color="#ed8057"/>
+      <stop offset=".5" stop-color="#d45d3a"/>
+      <stop offset="1" stop-color="#c65336"/>
+    </linearGradient>
+    <linearGradient id="slatEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#a3442d"/>
+      <stop offset="1" stop-color="#7e3323"/>
+    </linearGradient>
+    <linearGradient id="grilleReturn" x1="0" y1="0" x2="1" y2=".5">
+      <stop stop-color="#a64830"/>
+      <stop offset=".55" stop-color="#7e3525"/>
+      <stop offset="1" stop-color="#612c20"/>
+    </linearGradient>
+    <filter id="softShadow" x="-.18" y="-.2" width="1.4" height="1.55" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <clipPath id="opening">
+      <path d="M75 149 168 175 171 258 82 235Z"/>
+    </clipPath>
+  </defs>
+
+  <path d="M1 17h401v265H1z" fill="url(#blue)"/>
+  <path d="M1 17h401v265H1z" fill="url(#blueLight)"/>
+  <path d="M1.5 17.5h400v264h-400z" fill="none" stroke="#dedfe5" stroke-width="1.5"/>
+  <ellipse cx="198" cy="266" rx="145" ry="12" fill="#19243a" opacity=".19" filter="url(#softShadow)"/>
+
+  <!-- Square exterior fixing plate at the wall end. -->
+  <path d="m248 45 87 12-3 62-88-13z" fill="#918c7e" opacity=".38"/>
+  <path d="m247 39 88 12-3 64-88-12z" fill="url(#flange)" stroke="#aaa48f" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="m253 45 76 10-3 52-76-11z" fill="#f3f0e2" stroke="#d7d2c1" stroke-width="1"/>
+  <path d="m249 42 8 1 4 59-8-1z" fill="#ddd8c6" opacity=".65"/>
+  <g fill="#c6bfac" stroke="#958d79" stroke-width=".8">
+    <circle cx="256" cy="50" r="1.8"/>
+    <circle cx="327" cy="59" r="1.8"/>
+    <circle cx="324" cy="100" r="1.8"/>
+    <circle cx="253" cy="92" r="1.8"/>
+  </g>
+  <g fill="#c2baa7" opacity=".8">
+    <circle cx="253" cy="55" r=".9"/><circle cx="254" cy="61" r=".9"/>
+    <circle cx="255" cy="67" r=".9"/><circle cx="255" cy="73" r=".9"/>
+    <circle cx="256" cy="79" r=".9"/><circle cx="257" cy="85" r=".9"/>
+    <circle cx="264" cy="50" r=".9"/><circle cx="272" cy="51" r=".9"/>
+    <circle cx="280" cy="52" r=".9"/><circle cx="288" cy="53" r=".9"/>
+    <circle cx="296" cy="54" r=".9"/>
+  </g>
+
+  <!-- Short, substantial cylindrical AirCore sleeve, viewed along its length. -->
+  <path d="M99 164
+           C129 143 185 104 239 70
+           C258 58 273 53 285 58
+           C301 64 310 76 305 88
+           C301 99 288 106 275 114
+           L143 196
+           C129 201 114 193 106 181
+           C102 175 100 169 99 164Z"
+        fill="url(#tube)" stroke="#111314" stroke-width="1.4" stroke-linejoin="round"/>
+  <path d="M103 157
+           C141 131 197 94 244 65
+           C261 55 275 55 286 61
+           C273 59 259 65 245 74
+           L116 169Z"
+        fill="url(#tubeTop)" opacity=".84"/>
+  <path d="M109 151
+           C151 123 206 87 247 63
+           C262 55 275 55 284 60"
+        fill="none" stroke="#76736a" stroke-width="1.5" opacity=".45" stroke-linecap="round"/>
+  <!-- Two subtle nested-wall joints, angled naturally around the cylinder. -->
+  <path d="M165 117 Q174 123 170 134"
+        fill="none" stroke="#080b0c" stroke-width="2" opacity=".8"/>
+  <path d="M169 115 Q179 122 174 133"
+        fill="none" stroke="#5d5a52" stroke-width="1" opacity=".58"/>
+  <path d="M220 82 Q229 88 225 99"
+        fill="none" stroke="#090b0c" stroke-width="1.8" opacity=".72"/>
+
+  <!-- Shadowed outlet behind the grille; its edge remains concealed. -->
+  <path d="m91 144 25-8 43 23-25 16-39-15z" fill="#20201d" opacity=".9"/>
+
+  <!-- Thick terracotta moulding: raised top brow, front grille and right return. -->
+  <path d="m65 131 15-12 104 32-16 20-99-29z"
+        fill="url(#terracotta)" stroke="#a34830" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="m168 169 16-18 2 99-14 16-3-10z"
+        fill="url(#grilleReturn)" stroke="#702f23" stroke-width="1.3" stroke-linejoin="round"/>
+  <path d="M70 137
+           Q70 135 73 136
+           L165 163
+           Q169 164 169 169
+           L172 256
+           Q172 260 169 261
+           L84 237
+           Q80 236 80 232
+           L67 143
+           Q66 139 70 137Z"
+        fill="url(#terracotta)" stroke="#9e412b" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M75 149 166 175 169 255 83 231Z"
+        fill="#823725" stroke="#9a412b" stroke-width=".9" stroke-linejoin="round"/>
+
+  <!-- Nine inset louvres, evenly spaced across the full opening. -->
+  <g clip-path="url(#opening)" stroke-linejoin="round">
+    <path d="m64 145 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m63 149 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m65 154 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m64 158 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m66 163 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m65 167 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m67 172 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m66 176 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m68 181 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m67 185 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m69 190 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m68 194 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m70 199 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m69 203 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m71 208 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m70 212 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m72 217 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+    <path d="m71 221 116 33-3 2-113-32z" fill="url(#slatEdge)"/>
+    <path d="m73 226 116 33-1 4-116-33z" fill="url(#slatTop)" stroke="#a34830" stroke-width=".7"/>
+  </g>
+
+  <!-- Soft highlights follow the molded edges rather than outlining every part. -->
+  <path d="m69 132 10-9 96 29" fill="none" stroke="#f59a70" stroke-width="1.5" opacity=".78" stroke-linecap="round"/>
+  <path d="m71 140 95 27" fill="none" stroke="#f18a60" stroke-width="1.1" opacity=".8"/>
+  <path d="m83 236 84 24" fill="none" stroke="#ed7952" stroke-width="1.2" opacity=".75"/>
+</svg>
