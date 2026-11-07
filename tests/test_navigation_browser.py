@@ -3417,6 +3417,19 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(card.locator(".assign-seai-details").is_visible())
         self.assertEqual(ready_button.inner_text(), "Mark ready for start")
         self.assertFalse(card.locator(".assign-house-team").count())
+        ready_button.click()
+        self.page.wait_for_function(
+            """() => document.querySelector('#houses-list-heading')
+              ?.dataset.status === 'ready'"""
+        )
+        needed_filter = self.page.locator(
+            "#assign-survey-filters [data-assign-survey-filter='needed']"
+        )
+        self.assertTrue(needed_filter.is_visible())
+        self.assertEqual(needed_filter.get_attribute("aria-pressed"), "true")
+        self.page.locator(
+            "#houses-list article[data-house-id='TEAM-PREASSIGN-1']"
+        ).wait_for()
 
     def test_admin_not_started_card_has_only_mark_ready_action(self):
         with server.connect_db() as db:

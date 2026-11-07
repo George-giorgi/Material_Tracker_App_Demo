@@ -4750,7 +4750,7 @@ async function toggleHouseReady(houseId, ready) {
       state.assignSeaiHouseRequest += 1;
       state.houseStatusFilter = ready ? "ready" : "not_started";
       state.readyHouseArrivalId = ready ? houseId : "";
-      if (!ready) state.assignSurveyFilter = "all";
+      state.assignSurveyFilter = ready ? "needed" : "all";
       state.houseTeamFilter = null;
       state.housesTeamsTab = "houses";
       $("#house-search").value = "";
