@@ -543,6 +543,9 @@ body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-
 .plumbing-job-status { flex: 0 0 auto; border: 1px solid #b9ddc4; border-radius: 999px; padding: 5px 9px; background: #edf8f0; color: #22653e; font-size: 9px; font-weight: 750; white-space: nowrap; }
 .plumbing-job-status.is-needed { border-color: #f0d7a8; background: #fff8eb; color: #805a1b; }
 .plumbing-job-status.is-complete { border-color: #b6d2c0; background: #e8f4ec; color: #2d6542; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-assigned { border-color: #bfd5ef; background: #edf5ff; color: #285582; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-complete { border-color: #b6d2c0; background: #e8f4ec; color: #2d6542; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-needed { border-color: #f0d7a8; background: #fff8eb; color: #805a1b; }
 .plumbing-work-detail { border: 1px solid #e0ece3; border-left: 3px solid #72a984; border-radius: 0 10px 10px 0; padding: 12px 14px; background: #f5f9f6; }
 .plumbing-surveyor-detail { display: grid; grid-template-columns: 30px auto minmax(0, 1fr); align-items: center; gap: 5px 9px; margin-bottom: 12px; }
 .plumbing-surveyor-avatar { display: grid; width: 30px; height: 30px; grid-row: span 2; place-items: center; border: 1px solid #d5e5da; border-radius: 50%; background: #e8f3eb; color: #2e6946; font-size: 9px; font-weight: 800; }
@@ -3965,6 +3968,19 @@ body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordin
 .ventilation-house-filter:focus-visible { outline: 3px solid #77aa8b; outline-offset: 2px; }
 .ventilation-house-filter span { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border-radius: 10px; padding: 0 5px; background: #edf2ee; color: #52665a; font-size: 9px; }
 .ventilation-house-filter.active span { background: #ffffff30; color: #fff; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="needs_assignment"] { border-color: #e8cf9d; background: #fff8eb; color: #765317; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="needs_assignment"] span { background: #f5e6c6; color: #765317; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="assigned"] { border-color: #c8d9ed; background: #f0f6fd; color: #285582; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="assigned"] span { background: #dce9f8; color: #285582; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="completed"] { border-color: #c2dbc9; background: #eff8f1; color: #2d6542; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="completed"] span { background: #dcefe1; color: #2d6542; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="needs_assignment"].active { border-color: #946d26; background: #946d26; color: #fff; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="assigned"].active { border-color: #2d6793; background: #2d6793; color: #fff; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="completed"].active { border-color: #276c49; background: #276c49; color: #fff; }
+.vent-coordinator-assignment-reminder { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 14px; border: 1px solid #e8cf9d; border-radius: 10px; padding: 11px 13px; background: #fff8eb; color: #765317; }
+.vent-coordinator-assignment-reminder-icon { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #f5e6c6; font-size: 13px; font-weight: 800; }
+.vent-coordinator-assignment-reminder strong { display: block; font-size: 11px; }
+.vent-coordinator-assignment-reminder p { margin: 3px 0 0; color: #765317; font-size: 10px; line-height: 1.5; }
 .ventilation-house-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 16px; }
 .ventilation-house-card { display: flex; min-width: 0; flex-direction: column; border-color: #e3eae5; border-radius: 13px; padding: 20px; box-shadow: 0 4px 15px #203a2b08; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-color: #e0e9e3; border-radius: 14px; padding: 18px; box-shadow: 0 4px 16px #203a2b0a; }
@@ -4292,6 +4308,9 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .ven
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-assigned { border-color: #3d5e7d; background: #24364a; color: #c2dcf7; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-filter { border-color: var(--line); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-filter.active { border-color: #3b8c63; background: #276c49; color: #fff; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-filter span { background: #31443b; color: #e4ece8; }
@@ -4300,6 +4319,18 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-filter
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-filter.active { border-color: #3b8c63; background: #276c49; color: #fff; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-filter span { background: #31443b; color: #e4ece8; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-filter.active span { background: #ffffff30; color: #fff; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="needs_assignment"] { border-color: #6b542d; background: #382f20; color: #f0d397; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="needs_assignment"] span { background: #514127; color: #f0d397; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="assigned"] { border-color: #3d5e7d; background: #24364a; color: #c2dcf7; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="assigned"] span { background: #30465d; color: #c2dcf7; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="completed"] { border-color: #476253; background: #263d30; color: #c7dfcf; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="completed"] span { background: #354c3e; color: #c7dfcf; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="needs_assignment"].active { border-color: #946d26; background: #79591f; color: #fff; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="assigned"].active { border-color: #2d6793; background: #2d6793; color: #fff; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-filters [data-vent-coordinator-filter="completed"].active { border-color: #276c49; background: #276c49; color: #fff; }
+html[data-theme="dark"] body.ventilation-coordinator-mode .vent-coordinator-assignment-reminder { border-color: #6b542d; background: #382f20; color: #f0d397; }
+html[data-theme="dark"] body.ventilation-coordinator-mode .vent-coordinator-assignment-reminder-icon { background: #514127; }
+html[data-theme="dark"] body.ventilation-coordinator-mode .vent-coordinator-assignment-reminder p { color: #f0d397; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-identity h3,
 html[data-theme="dark"] body.ventilation-mode .ventilation-workload-heading h2,
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-identity h3,

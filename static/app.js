@@ -1785,6 +1785,14 @@ function renderOverview() {
       needsAssignmentCount;
     $("#vent-coordinator-filter-assigned-count").textContent = assignedCount;
     $("#vent-coordinator-filter-completed-count").textContent = completedCount;
+    const assignmentReminder = $("#vent-coordinator-assignment-reminder");
+    const assignmentReminderText = $("#vent-coordinator-assignment-reminder-text");
+    const assignmentReminderMessage =
+      `${needsAssignmentCount} ${needsAssignmentCount === 1 ? "house needs" : "houses need"} a Ventilation Teamlead. Select “Needs assignment” to review.`;
+    assignmentReminder.classList.toggle("hidden", needsAssignmentCount === 0);
+    if (assignmentReminderText.textContent !== assignmentReminderMessage) {
+      assignmentReminderText.textContent = assignmentReminderMessage;
+    }
     $$("#ventilation-coordinator-house-filters [data-vent-coordinator-filter]").forEach(
       (button) => {
         const active =
