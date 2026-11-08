@@ -1223,6 +1223,42 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_ventilation_icon_assets_are_served_without_path_traversal(self):
+        httpd, thread = self.start_test_server()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", httpd.server_address[1], timeout=5
+        )
+        try:
+            icon_paths = sorted((server.STATIC_DIR / "ventilation-icons").glob("*.svg"))
+            self.assertEqual(len(icon_paths), 9)
+            route_names = {
+                filename: route_name
+                for route_name, filename in server.VENTILATION_ICON_FILES.items()
+            }
+            for icon_path in icon_paths:
+                connection.request(
+                    "GET",
+                    f"/ventilation-icons/{route_names[icon_path.name]}",
+                )
+                response = connection.getresponse()
+                image = response.read()
+                self.assertEqual(response.status, 200, icon_path.name)
+                self.assertEqual(
+                    response.getheader("Content-Type"),
+                    "image/svg+xml; charset=utf-8",
+                )
+                self.assertIn(b"<svg", image, icon_path.name)
+
+            connection.request("GET", "/ventilation-icons/%2e%2e/server.py")
+            traversal_response = connection.getresponse()
+            self.assertEqual(traversal_response.status, 404)
+            traversal_response.read()
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def test_cat_favicon_is_served_for_browser_tab(self):
         httpd, thread = self.start_test_server()
         try:

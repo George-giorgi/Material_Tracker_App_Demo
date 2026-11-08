@@ -43,6 +43,17 @@ import reportlab
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+VENTILATION_ICON_FILES = {
+    "5-core-drill-ventilator.svg": "5” Core Drill Ventilator.svg",
+    "d-series-axial-fan.svg": "D Series Axial Fan.svg",
+    "g-range-roof-ventilator.svg": "G RANGE TILE & SLATE VENTILATORS roof.svg",
+    "humidity-controlled-ventilation.svg": "HUMIDITY-controlled ventilation SYSTEMS.svg",
+    "intervent-nvf-axial-fan.svg": "INTERVENT NVF Range 100mm 4in and 150mm 6in.svg",
+    "rytons-high-rise-buff-grille.svg": "Rytons Controllable High Rise LookRyt AirCore Buff-sand external grille.svg",
+    "rytons-terracotta-grille.svg": "Rytons Controllable LookRyt AirCore Terracotta external grille.svg",
+    "rytons-window-trickle-vent.svg": "Rytons Window Trickle Ventilators.svg",
+    "rytons-lookryt-panel.svg": "Rytons controllable LookRyt panel.svg",
+}
 DB_PATH = Path(os.environ.get("EWI_DB_PATH", ROOT / "instance" / "ewi.sqlite3"))
 PORT = int(os.environ.get("EWI_PORT", "8001"))
 HOST = os.environ.get("EWI_HOST", "127.0.0.1")
@@ -4191,6 +4202,18 @@ class LegacyRouteHandlers:
                 self._send_json(404, {"error": "PDF not found."})
                 return
             self._send_pdf(pdf[0], content)
+        elif path.startswith("/ventilation-icons/"):
+            filename = unquote(path.removeprefix("/ventilation-icons/"))
+            asset_filename = VENTILATION_ICON_FILES.get(filename)
+            if asset_filename is None and filename in VENTILATION_ICON_FILES.values():
+                asset_filename = filename
+            if asset_filename is None:
+                self._send_json(404, {"error": "Page not found."})
+                return
+            self._send_file(
+                STATIC_DIR / "ventilation-icons" / asset_filename,
+                "image/svg+xml; charset=utf-8",
+            )
         elif path == "/app.css":
             self._send_file(STATIC_DIR / "app.css", "text/css; charset=utf-8")
         elif path == "/app.js":

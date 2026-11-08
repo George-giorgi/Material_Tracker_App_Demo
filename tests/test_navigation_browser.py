@@ -1310,9 +1310,18 @@ class NavigationBrowserTests(unittest.TestCase):
         complete_card = self.page.locator(
             ".ventilation-house-card"
         ).filter(has_text="VENT-DASHBOARD-COMPLETE")
+        self.assertNotEqual(
+            pending_card.locator(".ventilation-house-icon img").get_attribute("src"),
+            complete_card.locator(".ventilation-house-icon img").get_attribute("src"),
+        )
         self.assertIn("Assigned by: Vent Coordinator", pending_card.inner_text())
         self.assertNotIn("Assigned Vent team:", pending_card.inner_text())
         shared_pdf = pending_card.locator(".ventilation-shared-pdfs")
+        self.assertTrue(
+            shared_pdf.locator(".ventilation-pdf-icon img")
+            .first.get_attribute("src")
+            .startswith("/ventilation-icons/")
+        )
         self.assertFalse(shared_pdf.evaluate("element => element.open"))
         shared_pdf.locator("summary").click()
         self.assertTrue(shared_pdf.evaluate("element => element.open"))
@@ -1343,6 +1352,12 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(attached_pdfs_dialog.evaluate("element => element.open"))
         self.assertIn("VENT-DASHBOARD-PENDING", attached_pdfs_dialog.locator("h2").inner_text())
         self.assertIn("Combined PDFs by Surveyor", attached_pdfs_dialog.locator("h2").inner_text())
+        icon_gallery = attached_pdfs_dialog.locator("#ventilation-icon-gallery-grid")
+        self.assertEqual(icon_gallery.locator(".ventilation-icon-gallery-item").count(), 9)
+        self.assertEqual(
+            icon_gallery.locator(".ventilation-icon-gallery-item img").count(),
+            9,
+        )
         self.assertEqual(attached_pdfs_button.locator(".vent-survey-pdfs-count").inner_text(), "1")
         attached_pdf = attached_pdfs_dialog.locator(
             '.vent-survey-pdf-entry button[aria-label="View VENT-DASHBOARD-selected-seai-pages.pdf"]'
@@ -1376,9 +1391,18 @@ class NavigationBrowserTests(unittest.TestCase):
         attached_pdfs_dialog.get_by_role("button", name="Close attached PDFs").click()
         self.assertFalse(attached_pdfs_dialog.evaluate("element => element.open"))
         self.assertNotIn("annotated-survey.pdf", complete_card.inner_text())
-        pdf_url = pending_card.locator(
-            'a[aria-label="View annotated-survey.pdf"]'
-        ).get_attribute("href")
+        shared_pdf_view = pending_card.get_by_role(
+            "button", name="View annotated-survey.pdf"
+        )
+        self.assertTrue(shared_pdf_view.is_visible())
+        pdf_url = shared_pdf_view.get_attribute("data-pdf-url")
+        shared_pdf_view.click()
+        shared_pdf_viewer = pending_card.locator(".ventilation-shared-pdf-viewer")
+        self.assertTrue(shared_pdf_viewer.is_visible())
+        self.assertEqual(
+            shared_pdf_viewer.locator("iframe").get_attribute("src"),
+            pdf_url,
+        )
         pdf_response = self.page.evaluate(
             """async url => {
               const response = await fetch(url);
@@ -1393,6 +1417,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(pdf_response["status"], 200)
         self.assertTrue(pdf_response["contentType"].startswith("application/pdf"))
         self.assertIn("annotated survey", pdf_response["content"])
+        shared_pdf_viewer.get_by_role("button", name="Close preview").click()
+        self.assertFalse(shared_pdf_viewer.is_visible())
         self.page.set_viewport_size({"width": 390, "height": 844})
         annotate_button = pending_card.get_by_role(
             "button", name="Annotate survey-plan.pdf"

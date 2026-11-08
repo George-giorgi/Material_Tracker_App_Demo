@@ -3987,6 +3987,10 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .ventilation-house-card:hover { transform: translateY(-2px); border-color: #c9ddd0; box-shadow: 0 10px 24px #203a2b12; }
 .ventilation-house-top { display: flex; min-width: 0; align-items: center; gap: 13px; }
 .ventilation-house-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #edf5ef; color: #3a7d5f; font-size: 21px; }
+body.ventilation-mode #ventilation-house-list .ventilation-house-icon { position: relative; width: 56px; height: 56px; overflow: hidden; border: 1px solid #d6e8dd; border-radius: 17px; background: radial-gradient(circle at 30% 15%, #fff 0, #f3fbf5 42%, #dcefe2 100%); box-shadow: inset 0 1px #fff, 0 5px 13px #204a2d12; }
+body.ventilation-mode #ventilation-house-list .ventilation-house-icon::after { position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border: 2px solid #fff; border-radius: 50%; background: #36a46b; box-shadow: 0 1px 5px #1d5e3a40; content: ""; }
+body.ventilation-mode #ventilation-house-list .ventilation-house-icon img { width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
+body.ventilation-mode #ventilation-house-list .ventilation-house-card:hover .ventilation-house-icon img { transform: scale(1.08); }
 .ventilation-house-identity { min-width: 0; flex: 1; }
 .ventilation-house-identity h3 { overflow-wrap: anywhere; margin: 0; color: #1d3729; font: 700 17px Manrope, sans-serif; }
 .ventilation-house-identity p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -3999,7 +4003,8 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .vent-survey-pdfs-button { display: flex; width: 100%; min-height: 66px; align-items: center; gap: 12px; margin-top: 15px; border: 1px solid #dce9df; border-radius: 13px; padding: 10px 13px; background: linear-gradient(110deg, #f8fcf9, #f0f7f2); color: #294d38; text-align: left; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease; }
 .vent-survey-pdfs-button:hover { transform: translateY(-1px); border-color: #9dc6a8; background: linear-gradient(110deg, #f2faf4, #eaf5ed); box-shadow: 0 7px 18px #204a2d12; }
 .vent-survey-pdfs-button:focus-visible { outline: 3px solid #77aa8b; outline-offset: 2px; }
-.vent-survey-pdfs-icon { display: grid; width: 38px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid #d3e4d7; border-radius: 9px; background: #e8f3eb; color: #2f7048; font-size: 9px; font-weight: 850; letter-spacing: .04em; }
+.vent-survey-pdfs-icon { display: grid; width: 38px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid #d3e4d7; border-radius: 9px; background: #e8f3eb; color: #2f7048; }
+.vent-survey-pdfs-icon img { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; }
 .vent-survey-pdfs-button-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .vent-survey-pdfs-button-copy strong { font-size: 12px; font-weight: 750; }
 .vent-survey-pdfs-button-copy small { color: #718078; font-size: 10px; }
@@ -4009,9 +4014,20 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .vent-survey-pdfs-dialog .dialog-heading { margin-bottom: 12px; }
 .vent-survey-pdfs-dialog .dialog-heading h2 { overflow-wrap: anywhere; }
 .vent-survey-pdfs-dialog .dialog-heading .page-subtitle { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.ventilation-icon-gallery { margin: 0 0 14px; border: 1px solid #dce9df; border-radius: 14px; padding: 12px; background: linear-gradient(145deg, #f8fcf9, #eff7f1); }
+.ventilation-icon-gallery-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.ventilation-icon-gallery-heading .eyebrow { color: #648370; font-size: 9px; }
+.ventilation-icon-gallery-heading h3 { margin: 3px 0 0; color: #294d38; font-size: 14px; }
+.ventilation-icon-gallery-count { border: 1px solid #d5e5da; border-radius: 999px; padding: 5px 9px; background: #fff; color: #4a6b55; font-size: 10px; font-weight: 700; }
+.ventilation-icon-gallery-grid { display: grid; max-height: 230px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; overflow-y: auto; padding: 1px 2px 3px 1px; scrollbar-color: #b7cfbd transparent; scrollbar-width: thin; }
+.ventilation-icon-gallery-item { display: grid; min-width: 0; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 8px; border: 1px solid #e0ebe3; border-radius: 11px; padding: 7px; background: #fff; box-shadow: 0 2px 7px #203a2b08; }
+.ventilation-icon-gallery-art { display: grid; width: 48px; height: 48px; place-items: center; overflow: hidden; border: 1px solid #e4eee7; border-radius: 9px; background: radial-gradient(circle at 25% 15%, #fff, #edf5ef); }
+.ventilation-icon-gallery-art img { width: 100%; height: 100%; object-fit: contain; }
+.ventilation-icon-gallery-item strong { display: -webkit-box; overflow: hidden; color: #344c3b; font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .vent-survey-pdfs-list { display: grid; gap: 10px; }
 .vent-survey-pdf-entry { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; border: 1px solid #e0e9e2; border-radius: 12px; padding: 12px; background: #fbfdfb; }
-.vent-survey-pdf-entry-icon { display: grid; width: 38px; height: 42px; place-items: center; border-radius: 9px; background: #eaf3ec; color: #447653; font-size: 9px; font-weight: 850; }
+.vent-survey-pdf-entry-icon { display: grid; width: 38px; height: 42px; place-items: center; border-radius: 9px; background: #eaf3ec; color: #447653; }
+.vent-survey-pdf-entry-icon img { width: 36px; height: 36px; border-radius: 7px; object-fit: cover; }
 .vent-survey-pdf-entry-copy { display: grid; min-width: 0; gap: 5px; }
 .vent-survey-pdf-entry-copy strong { overflow: hidden; color: #263d2e; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .vent-survey-pdf-entry-copy span { color: #718078; font-size: 10px; line-height: 1.45; }
@@ -4026,7 +4042,8 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .vent-survey-pdfs-viewer-heading strong { min-width: 0; overflow: hidden; color: #344c3b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .vent-survey-pdfs-viewer iframe { display: block; width: 100%; height: min(65vh, 680px); border: 0; background: #e8ece9; }
 .vent-survey-pdf-empty { display: grid; justify-items: center; gap: 7px; border: 1px dashed #cbd9cf; border-radius: 12px; padding: 27px 18px; background: #f8fbf8; text-align: center; }
-.vent-survey-pdf-empty > span { display: grid; width: 42px; height: 46px; place-items: center; border-radius: 10px; background: #eaf3ec; color: #447653; font-size: 10px; font-weight: 850; }
+.vent-survey-pdf-empty > span { display: grid; width: 42px; height: 46px; place-items: center; border-radius: 10px; background: #eaf3ec; color: #447653; }
+.vent-survey-pdf-empty > span img { width: 42px; height: 46px; border-radius: 10px; object-fit: cover; }
 .vent-survey-pdf-empty strong { color: #344c3b; font-size: 12px; }
 .vent-survey-pdf-empty p { margin: 0; color: #718078; font-size: 11px; line-height: 1.5; }
 .ventilation-house-actions { margin-top: auto; padding-top: 16px; }
@@ -4291,6 +4308,13 @@ html[data-theme="dark"] .vent-survey-pdfs-error { background: #382522; color: #f
 html[data-theme="dark"] .vent-survey-pdfs-viewer { border-color: #35483f; background: #192622; }
 html[data-theme="dark"] .vent-survey-pdfs-viewer-heading { background: #20352b; }
 html[data-theme="dark"] .vent-survey-pdfs-viewer-heading strong { color: #e0ebe3; }
+html[data-theme="dark"] .ventilation-icon-gallery { border-color: #354d40; background: linear-gradient(145deg, #1d2c24, #1a2822); }
+html[data-theme="dark"] .ventilation-icon-gallery-heading h3,
+html[data-theme="dark"] .ventilation-icon-gallery-item strong { color: #e0ebe3; }
+html[data-theme="dark"] .ventilation-icon-gallery-heading .eyebrow { color: #9db9a6; }
+html[data-theme="dark"] .ventilation-icon-gallery-count { border-color: #40584a; background: #263a30; color: #c9ded0; }
+html[data-theme="dark"] .ventilation-icon-gallery-item { border-color: #35483f; background: #223129; box-shadow: none; }
+html[data-theme="dark"] .ventilation-icon-gallery-art { border-color: #40584a; background: #f2f5f2; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card,
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-empty { border-color: var(--line); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-empty { border-style: dashed; border-color: #476253; background: linear-gradient(145deg, #1d2b26, #192622); }
@@ -4303,7 +4327,7 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-empty 
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-empty p { color: #b1c2b8; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-card:hover { border-color: #527b62; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card:hover { border-color: #527b62; }
-html[data-theme="dark"] body.ventilation-mode .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body.ventilation-mode #ventilation-house-list .ventilation-house-icon { border-color: #42604e; background: radial-gradient(circle at 30% 15%, #30483a, #22372b); box-shadow: inset 0 1px #ffffff18, 0 5px 13px #0003; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
@@ -4757,25 +4781,41 @@ html[data-theme="dark"] .survey-room-seai-pdf-list .seai-document-name small { c
 .ventilation-shared-pdfs { margin-top: 14px; border-color: #dce8df; background: #f8fbf9; }
 .ventilation-shared-pdfs[open] { border-color: #c9ddd0; background: #f8fbf9; box-shadow: 0 3px 12px #203a2b0a; }
 .ventilation-shared-pdfs > summary { min-height: 48px; }
+.ventilation-shared-pdfs > summary > .seai-sec-icon { color: #347653; }
+.ventilation-shared-pdfs > summary > .seai-sec-icon img { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; }
 .ventilation-shared-pdfs > summary > .seai-sec-title { color: #294d38; font-size: 13px; }
 .ventilation-shared-pdfs > summary > .seai-sec-count { border-color: #d5e5da; background: #fff; color: #4a6b55; }
 .ventilation-shared-pdf-list { gap: 10px; padding: 10px; }
 .ventilation-shared-pdf-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 7px 10px; border-color: #e0e9e3; border-radius: 11px; padding: 12px; }
 .ventilation-shared-pdf-list li:hover { border-color: #a9cbb4; box-shadow: 0 3px 10px #24463012; }
 .ventilation-pdf-icon { display: grid; width: 34px; height: 38px; grid-row: span 2; place-items: center; border: 1px solid #d5e6db; border-radius: 8px; background: #edf6f0; color: #28714a; font-size: 9px; font-weight: 800; letter-spacing: .03em; }
+.ventilation-pdf-icon img { width: 34px; height: 38px; border-radius: 7px; object-fit: cover; }
 .ventilation-pdf-name { align-self: end; font-size: 12px; }
 .ventilation-pdf-name strong { color: #233d2e; }
 .ventilation-pdf-name small { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 5px; line-height: 1.45; }
 .ventilation-pdf-actions { display: grid; grid-column: 1 / -1; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ventilation-pdf-actions .button { min-width: 0; min-height: 40px; width: 100%; padding: 7px 10px; text-align: center; white-space: normal; }
+.ventilation-pdf-actions .button svg,
+.vent-survey-pdf-entry-actions .button svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.ventilation-pdf-actions .button,
+.vent-survey-pdf-entry-actions .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.ventilation-pdf-actions [data-vent-shared-pdf-view][aria-pressed="true"] { border-color: #236742; background: #e8f4eb; color: #236742; }
 .ventilation-pdf-actions .vent-pdf-annotate-button { grid-column: 1 / -1; border-color: #2e7c50; background: #2e7c50; font-weight: 750; }
 .ventilation-pdf-actions .vent-pdf-annotate-button:hover { border-color: #236742; background: #236742; }
+.ventilation-shared-pdf-viewer { margin: 0 10px 12px; overflow: hidden; border: 1px solid #dce7df; border-radius: 12px; background: #eef3ef; }
+.ventilation-shared-pdf-viewer[hidden] { display: none; }
+.ventilation-shared-pdf-viewer-heading { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 11px; background: #fff; }
+.ventilation-shared-pdf-viewer-heading strong { min-width: 0; overflow: hidden; color: #344c3b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.ventilation-shared-pdf-viewer-heading > div { display: flex; flex: 0 0 auto; gap: 7px; }
+.ventilation-shared-pdf-viewer-heading .button { min-height: 34px; }
+.ventilation-shared-pdf-viewer iframe { display: block; width: 100%; height: min(62vh, 620px); border: 0; background: #e8ece9; }
 html[data-theme="dark"] .ventilation-shared-pdfs,
 html[data-theme="dark"] .ventilation-shared-pdfs[open] { border-color: #3a5546; background: #192622; box-shadow: 0 4px 14px #0003; }
 html[data-theme="dark"] .ventilation-shared-pdfs > summary { border-color: #35483f; background: #20352b; color: #e2eee6; }
 html[data-theme="dark"] .ventilation-shared-pdfs > summary:hover { background: #263d30; }
 html[data-theme="dark"] .ventilation-shared-pdfs > summary > .seai-sec-title { color: #dcebe1; }
 html[data-theme="dark"] .ventilation-shared-pdfs > summary > .seai-sec-count { border-color: #496555; background: #263a30; color: #c9ded0; }
+html[data-theme="dark"] .ventilation-shared-pdfs > summary > .seai-sec-icon { color: #a9e3bb; }
 html[data-theme="dark"] .ventilation-shared-pdf-list li { border-color: #3a5045; background: #1d2b26; }
 html[data-theme="dark"] .ventilation-shared-pdf-list li:hover { border-color: #62816e; box-shadow: 0 3px 12px #0004; }
 html[data-theme="dark"] .ventilation-pdf-icon { border-color: #42604e; background: #263d30; color: #a9e3bb; }
@@ -4783,8 +4823,13 @@ html[data-theme="dark"] .ventilation-pdf-name strong { color: #eaf4ef; }
 html[data-theme="dark"] .ventilation-pdf-name small { color: #a9bdb0; }
 html[data-theme="dark"] .ventilation-pdf-actions .button-secondary { border-color: #496555; background: #263a30; color: #d3eadb; }
 html[data-theme="dark"] .ventilation-pdf-actions .button-secondary:hover { border-color: #6a997a; background: #30483a; color: #fff; }
+html[data-theme="dark"] .ventilation-pdf-actions [data-vent-shared-pdf-view][aria-pressed="true"] { border-color: #5a9070; background: #263d30; color: #cde8d4; }
 html[data-theme="dark"] .ventilation-pdf-actions .vent-pdf-annotate-button { border-color: #4a9a69; background: #276c49; color: #fff; }
 html[data-theme="dark"] .ventilation-pdf-actions .vent-pdf-annotate-button:hover { border-color: #68b582; background: #318458; }
+html[data-theme="dark"] .ventilation-shared-pdf-viewer { border-color: #35483f; background: #192622; }
+html[data-theme="dark"] .ventilation-shared-pdf-viewer-heading { background: #20352b; }
+html[data-theme="dark"] .ventilation-shared-pdf-viewer-heading strong { color: #e0ebe3; }
+html[data-theme="dark"] .ventilation-shared-pdf-viewer-heading .button-secondary { border-color: #496555; background: #263a30; color: #d3eadb; }
 
 /* SEAI details accordions */
 .seai-accordion-toolbar { display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 8px; }
@@ -4959,6 +5004,17 @@ html[data-theme="dark"] .survey-room-nav a.active { background: linear-gradient(
   .vent-survey-pdf-entry-actions { grid-column: 1 / -1; justify-content: stretch; }
   .vent-survey-pdf-entry-actions .button { flex: 1; }
   .vent-survey-pdfs-dialog .dialog-content { padding: 18px 14px 14px; }
+  .ventilation-icon-gallery { padding: 9px; }
+  .ventilation-icon-gallery-grid { max-height: 210px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .ventilation-icon-gallery-item { grid-template-columns: 40px minmax(0, 1fr); gap: 6px; padding: 5px; }
+  .ventilation-icon-gallery-art { width: 40px; height: 40px; }
+  .ventilation-icon-gallery-item strong { font-size: 8px; }
+  .ventilation-shared-pdf-viewer-heading { align-items: flex-start; flex-direction: column; }
+  .ventilation-shared-pdf-viewer-heading > div { width: 100%; }
+  .ventilation-shared-pdf-viewer-heading .button { flex: 1; }
+}
+@media (max-width: 640px) {
+  body.ventilation-mode .ventilation-shared-pdfs > summary > .seai-sec-icon { display: grid; }
 }
 @media (prefers-reduced-motion: reduce) { .survey-room-flash { animation: none; } }
 .application-id-chip { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0 2px; border: 1px solid #cfe3d5; border-radius: 999px; padding: 4px 12px 4px 10px; background: #eef7f1; color: #24583b; font-size: 11px; }
