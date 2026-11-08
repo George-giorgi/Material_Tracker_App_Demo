@@ -28,6 +28,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 import pymupdf as fitz
+from PIL import Image
 from pypdf.errors import PdfReadError
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib import colors
@@ -92,7 +93,7 @@ def _record_change(path):
         "/api/seai-documents",
         "/api/seai-documents/save-selected",
     } or re.fullmatch(
-        r"/api/(?:house|seai)-documents/\d+/(?:annotations|delete-selected)", path
+        r"/api/(?:house|seai)-documents/\d+/(?:annotations|vent-annotations|delete-selected)", path
     ):
         domain = "documents"
     elif path in {"/api/seai-documents/share"} or re.fullmatch(
@@ -265,12 +266,15 @@ def _render_pdf_page(content, page_number):
         document.close()
 
 
-def _annotate_pdf_document(content, annotations):
+def _annotate_pdf_document(content, annotations, allow_vent_icons=False):
     if not isinstance(annotations, list) or not annotations:
         raise ApiError(400, "Add at least one pen stroke or text note before saving.")
     if len(annotations) > HOUSE_DOCUMENT_MAX_ANNOTATIONS:
         raise ApiError(400, "This PDF has too many annotations to save at once.")
     document = _open_pdf_document(content)
+    allowed_tools = {"pen", "highlighter", "text"}
+    if allow_vent_icons:
+        allowed_tools.add("vent-icon")
     try:
         for annotation in annotations:
             if not isinstance(annotation, dict):
@@ -282,13 +286,19 @@ def _annotate_pdf_document(content, annotations):
                 isinstance(page_number, bool)
                 or not isinstance(page_number, int)
                 or not 1 <= page_number <= document.page_count
-                or tool not in {"pen", "highlighter", "text"}
-                or not isinstance(color_value, str)
-                or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_value)
+                or tool not in allowed_tools
             ):
-                raise ApiError(400, "PDF annotations contain an invalid page, tool, or color.")
+                raise ApiError(400, "PDF annotations contain an invalid page or tool.")
             page = document.load_page(page_number - 1)
             rect = page.rect
+            if tool == "vent-icon":
+                _insert_pdf_vent_icon(page, annotation)
+                continue
+            if (
+                not isinstance(color_value, str)
+                or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_value)
+            ):
+                raise ApiError(400, "PDF annotations contain an invalid color.")
             color = tuple(
                 int(color_value[index:index + 2], 16) / 255
                 for index in (1, 3, 5)
@@ -409,6 +419,76 @@ def _annotate_pdf_document(content, annotations):
         raise ApiError(422, "The annotations could not be added to this PDF.") from exc
     finally:
         document.close()
+
+
+def _insert_pdf_vent_icon(page, annotation):
+    slug = annotation.get("icon")
+    point = annotation.get("point")
+    size = annotation.get("size")
+    rotation = annotation.get("rotation")
+    if (
+        not isinstance(slug, str)
+        or slug not in VENTILATION_ICON_FILES
+        or not isinstance(point, list)
+        or len(point) != 2
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+            for value in point
+        )
+        or isinstance(size, bool)
+        or not isinstance(size, (int, float))
+        or not math.isfinite(size)
+        or not 0.06 <= size <= 0.5
+        or isinstance(rotation, bool)
+        or not isinstance(rotation, (int, float))
+        or not math.isfinite(rotation)
+        or not 0 <= rotation < 360
+    ):
+        raise ApiError(400, "A Vent icon annotation is invalid.")
+
+    svg_path = STATIC_DIR / "ventilation-icons" / VENTILATION_ICON_FILES[slug]
+    svg_document = fitz.open(svg_path)
+    try:
+        svg_pdf = fitz.open("pdf", svg_document.convert_to_pdf())
+        try:
+            pixmap = svg_pdf[0].get_pixmap(alpha=True)
+        finally:
+            svg_pdf.close()
+    finally:
+        svg_document.close()
+
+    icon = Image.frombytes("RGBA", (pixmap.width, pixmap.height), pixmap.samples)
+    tile = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    icon.thumbnail((360, 360), Image.Resampling.LANCZOS)
+    tile.alpha_composite(
+        icon,
+        ((tile.width - icon.width) // 2, (tile.height - icon.height) // 2),
+    )
+    rotated = tile.rotate(
+        -rotation,
+        resample=Image.Resampling.BICUBIC,
+        expand=False,
+    )
+    image_buffer = BytesIO()
+    rotated.save(image_buffer, format="PNG")
+
+    rect = page.rect
+    side = rect.width * size
+    center_x = rect.x0 + point[0] * rect.width
+    center_y = rect.y0 + point[1] * rect.height
+    page.insert_image(
+        fitz.Rect(
+            center_x - side / 2,
+            center_y - side / 2,
+            center_x + side / 2,
+            center_y + side / 2,
+        ),
+        stream=image_buffer.getvalue(),
+        overlay=True,
+    )
 
 
 def _wrap_pdf_annotation_text(text, font, font_size, max_width):
@@ -2942,6 +3022,16 @@ def _survey_has_valid_perimeter(survey):
     return math.isfinite(perimeter) and 0 < perimeter <= 10000
 
 
+def _survey_data_has_valid_perimeter(survey_data):
+    if not isinstance(survey_data, str):
+        return False
+    try:
+        survey = json.loads(survey_data)
+    except (TypeError, ValueError):
+        return False
+    return _survey_has_valid_perimeter(survey)
+
+
 def _dashboard(db):
     snags = _snags_by_house(db)
     house_audit = _house_audit_by_id(db)
@@ -3099,66 +3189,71 @@ def _dashboard(db):
 
 
 def _ventilation_house_list(db, teamlead_user_id):
-    houses = [
-        {
-            "id": row["id"],
-            "postcode": row["postcode"],
-            "address": row["address"],
-            "owner_name": row["owner_name"],
-            "status": row["status"],
-            "notes": row["notes"],
-            "done_by": row["plan_vent_done_by"],
-            "done_at": row["plan_vent_done_at"],
-            "assigned_teamlead_user_id": row["assigned_teamlead_user_id"],
-            "assigned_teamlead_name": row["assigned_teamlead_name"],
-            "assigned_team_name": row["assigned_team_name"],
-            "assignment_assigned_by": row["assignment_assigned_by"],
-            "documents": [],
-            "survey_documents": [],
-        }
-        for row in db.execute(
-            """
-            SELECT p.id, p.postcode, p.address, p.owner_name,
-                   COALESCE(p.plan_vent_notes, '') AS notes,
-                   COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
-                   COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
-                   assignment.teamlead_user_id AS assigned_teamlead_user_id,
-                   COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
-                   COALESCE(teamlead.team_name, '') AS assigned_team_name,
-                   COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
-                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
-                        WHEN h.id IS NULL THEN 'not_started'
-                        WHEN h.is_finished = 1 THEN 'closed'
-                        ELSE 'active' END AS status
-            FROM provided_houses p
-            LEFT JOIN houses h ON h.id = p.id
-            LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
-            LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
-            WHERE p.plan_vent_required = 1
-              AND assignment.teamlead_user_id = ?
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM house_status_history reset
-                  WHERE reset.house_id = p.id
-                    AND reset.status = 'not_started'
-                    AND reset.id = (
-                        SELECT latest.id
-                        FROM house_status_history latest
-                        WHERE latest.house_id = p.id
-                          AND latest.status = 'not_started'
-                        ORDER BY latest.changed_at DESC, latest.id DESC
-                        LIMIT 1
-                    )
-                    AND assignment.assigned_at < reset.changed_at
-              )
-            ORDER BY
-                (COALESCE(p.plan_vent_done_at, '') = ''),
-                COALESCE(p.plan_vent_done_at, '') DESC,
-                p.id COLLATE NOCASE
-            """,
-            (teamlead_user_id,),
+    houses = []
+    for row in db.execute(
+        """
+        SELECT p.id, p.postcode, p.address, p.owner_name,
+               COALESCE(p.plan_vent_notes, '') AS notes,
+               COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
+               COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
+               assignment.teamlead_user_id AS assigned_teamlead_user_id,
+               COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
+               COALESCE(teamlead.team_name, '') AS assigned_team_name,
+               COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
+               CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                    WHEN h.id IS NULL THEN 'not_started'
+                    WHEN h.is_finished = 1 THEN 'closed'
+                    ELSE 'active' END AS status,
+               survey.data AS survey_data
+        FROM provided_houses p
+        LEFT JOIN houses h ON h.id = p.id
+        LEFT JOIN house_surveys survey ON survey.house_id = p.id
+        LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
+        LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
+        WHERE p.plan_vent_required = 1
+          AND assignment.teamlead_user_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM house_status_history reset
+              WHERE reset.house_id = p.id
+                AND reset.status = 'not_started'
+                AND reset.id = (
+                    SELECT latest.id
+                    FROM house_status_history latest
+                    WHERE latest.house_id = p.id
+                      AND latest.status = 'not_started'
+                    ORDER BY latest.changed_at DESC, latest.id DESC
+                    LIMIT 1
+                )
+                AND assignment.assigned_at < reset.changed_at
+          )
+        ORDER BY
+            (COALESCE(p.plan_vent_done_at, '') = ''),
+            COALESCE(p.plan_vent_done_at, '') DESC,
+            p.id COLLATE NOCASE
+        """,
+        (teamlead_user_id,),
+    ):
+        if not _survey_data_has_valid_perimeter(row["survey_data"]):
+            continue
+        houses.append(
+            {
+                "id": row["id"],
+                "postcode": row["postcode"],
+                "address": row["address"],
+                "owner_name": row["owner_name"],
+                "status": row["status"],
+                "notes": row["notes"],
+                "done_by": row["plan_vent_done_by"],
+                "done_at": row["plan_vent_done_at"],
+                "assigned_teamlead_user_id": row["assigned_teamlead_user_id"],
+                "assigned_teamlead_name": row["assigned_teamlead_name"],
+                "assigned_team_name": row["assigned_team_name"],
+                "assignment_assigned_by": row["assignment_assigned_by"],
+                "documents": [],
+                "survey_documents": [],
+            }
         )
-    ]
     documents_by_house = {}
     for row in db.execute(
         """
@@ -3166,9 +3261,11 @@ def _ventilation_house_list(db, teamlead_user_id):
                documents.size_bytes, documents.shared_by, documents.shared_at
         FROM house_vent_documents documents
         JOIN provided_houses houses ON houses.id = documents.house_id
+        JOIN house_surveys survey ON survey.house_id = houses.id
         JOIN house_vent_assignments assignment
           ON assignment.house_id = houses.id
         WHERE houses.plan_vent_required = 1
+          AND survey.data IS NOT NULL
           AND assignment.teamlead_user_id = ?
           AND NOT EXISTS (
               SELECT 1
@@ -3364,10 +3461,9 @@ def _ventilation_coordinator_dashboard(db):
             """
         )
     ]
-    houses = [
-        dict(row)
-        for row in db.execute(
-            """
+    houses = []
+    for row in db.execute(
+        """
             SELECT p.id, p.postcode, p.address, p.owner_name,
                    COALESCE(p.plan_vent_notes, '') AS notes,
                    COALESCE(p.plan_vent_done_by, '') AS done_by,
@@ -3381,9 +3477,11 @@ def _ventilation_coordinator_dashboard(db):
                    COALESCE(teamlead.team_name, '') AS assigned_team_name,
                    COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
                    COALESCE(assignment.assigned_at, '') AS assignment_assigned_at,
-                   COALESCE(surveyor.display_name, '') AS surveyor_name
+                   COALESCE(surveyor.display_name, '') AS surveyor_name,
+                   survey.data AS survey_data
             FROM provided_houses p
             LEFT JOIN houses h ON h.id = p.id
+            LEFT JOIN house_surveys survey ON survey.house_id = p.id
             LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
             LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
             LEFT JOIN house_role_assignments survey_assignment
@@ -3398,8 +3496,35 @@ def _ventilation_coordinator_dashboard(db):
                 (assignment.teamlead_user_id IS NOT NULL),
                 p.id COLLATE NOCASE
             """
+    ):
+        if not _survey_data_has_valid_perimeter(row["survey_data"]):
+            continue
+        house = dict(row)
+        house.pop("survey_data", None)
+        houses.append(house)
+    if houses and db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'seai_applications'"
+    ).fetchone():
+        house_ids = [house["id"] for house in houses]
+        placeholders = ",".join("?" for _ in house_ids)
+        seai_details = db.execute(
+            "SELECT application_id, detail_data_json FROM seai_applications "
+            f"WHERE application_id IN ({placeholders})",
+            house_ids,
         )
-    ]
+        houses_by_id = {house["id"]: house for house in houses}
+        for row in seai_details:
+            try:
+                details = json.loads(row["detail_data_json"])
+            except (TypeError, ValueError) as exc:
+                raise ApiError(
+                    500,
+                    f"SEAI application details for {row['application_id']} are invalid.",
+                ) from exc
+            houses_by_id[row["application_id"]]["seai_application_id"] = (
+                _find_seai_application_id(details)
+            )
     return {
         "ventilation_coordinator_houses": houses,
         "ventilation_teamleads": teamleads,
@@ -4067,7 +4192,7 @@ class LegacyRouteHandlers:
             allowed = allowed or (
                 self.command == "POST"
                 and re.fullmatch(
-                    r"/api/seai-documents/\d+/annotations",
+                    r"/api/seai-documents/\d+/(?:annotations|vent-annotations)",
                     urlparse(self.path).path,
                 )
                 is not None
@@ -4202,6 +4327,8 @@ class LegacyRouteHandlers:
                 self._send_json(404, {"error": "PDF not found."})
                 return
             self._send_pdf(pdf[0], content)
+        elif path == "/ventilation-mark.svg":
+            self._send_file(STATIC_DIR / "ventilation-mark.svg", "image/svg+xml; charset=utf-8")
         elif path.startswith("/ventilation-icons/"):
             filename = unquote(path.removeprefix("/ventilation-icons/"))
             asset_filename = VENTILATION_ICON_FILES.get(filename)
@@ -6509,6 +6636,130 @@ class LegacyRouteHandlers:
                 share_filename = f"{house_id}-selected-seai-pages{suffix}.pdf"
                 self._send_pdf(share_filename, shared_pdf, attachment=True)
                 return
+            vent_seai_annotation_match = re.fullmatch(
+                r"/api/seai-documents/(\d+)/vent-annotations", path
+            )
+            if vent_seai_annotation_match:
+                with connect_db() as db:
+                    if not _in_department(db, user, "Ventilation"):
+                        raise ApiError(
+                            403,
+                            "Ventilation department access is required to annotate combined PDFs.",
+                        )
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PDF annotations must be a JSON object.")
+                document_id = int(vent_seai_annotation_match.group(1))
+                with connect_db() as db:
+                    source = db.execute(
+                        """
+                        SELECT documents.id, documents.application_id AS house_id,
+                               documents.filename, documents.content
+                        FROM seai_documents documents
+                        JOIN selected_seai_documents selected
+                          ON selected.document_id = documents.id
+                         AND selected.house_id = documents.application_id
+                         AND selected.created_by != ''
+                        JOIN provided_houses houses
+                          ON houses.id = documents.application_id
+                         AND houses.plan_vent_required = 1
+                        WHERE documents.id = ?
+                          AND lower(documents.filename) LIKE '%.pdf'
+                          AND documents.content IS NOT NULL
+                        """,
+                        (document_id,),
+                    ).fetchone()
+                    if source is None or not _ventilation_house_is_visible(
+                        db, source["house_id"], user["id"]
+                    ):
+                        raise ApiError(404, "Combined PDF was not found.")
+                annotated_pdf = _annotate_pdf_document(
+                    source["content"],
+                    payload.get("annotations"),
+                    allow_vent_icons=True,
+                )
+                if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
+                    raise ApiError(
+                        413,
+                        "The annotated PDF exceeds the 8 MB Vent document limit.",
+                    )
+                shared_at = datetime.now().isoformat(timespec="seconds")
+                shared_by = f"Vent annotated by {user['display_name']}"
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        current_source = db.execute(
+                            """
+                            SELECT 1
+                            FROM seai_documents documents
+                            JOIN selected_seai_documents selected
+                              ON selected.document_id = documents.id
+                             AND selected.house_id = documents.application_id
+                             AND selected.created_by != ''
+                            JOIN provided_houses houses
+                              ON houses.id = documents.application_id
+                             AND houses.plan_vent_required = 1
+                            WHERE documents.id = ?
+                              AND documents.content = ?
+                            """,
+                            (document_id, source["content"]),
+                        ).fetchone()
+                        if current_source is None or not _ventilation_house_is_visible(
+                            db, source["house_id"], user["id"]
+                        ):
+                            raise ApiError(
+                                409,
+                                "This combined PDF is no longer available to your Vent team.",
+                            )
+                        document_count = db.execute(
+                            "SELECT COUNT(*) FROM house_vent_documents WHERE house_id = ?",
+                            (source["house_id"],),
+                        ).fetchone()[0]
+                        if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
+                            raise ApiError(
+                                409,
+                                "This house already has the maximum of 25 Vent team PDFs.",
+                            )
+                        annotated_stem = f"{Path(source['filename']).stem}-vent-annotated"
+                        annotated_filename = f"{annotated_stem}.pdf"
+                        suffix = 2
+                        while db.execute(
+                            """
+                            SELECT 1 FROM house_vent_documents
+                            WHERE house_id = ? AND filename = ?
+                            """,
+                            (source["house_id"], annotated_filename),
+                        ).fetchone():
+                            annotated_filename = f"{annotated_stem}-{suffix}.pdf"
+                            suffix += 1
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_vent_documents
+                                (house_id, filename, content, size_bytes, shared_by, shared_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                source["house_id"],
+                                annotated_filename,
+                                annotated_pdf,
+                                len(annotated_pdf),
+                                shared_by,
+                                shared_at,
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": source["house_id"],
+                        "source_id": document_id,
+                        "filename": annotated_filename,
+                        "size_bytes": len(annotated_pdf),
+                        "shared_by": shared_by,
+                        "shared_at": shared_at,
+                    },
+                )
+                return
             seai_annotation_match = re.fullmatch(
                 r"/api/seai-documents/(\d+)/annotations", path
             )
@@ -6700,7 +6951,9 @@ class LegacyRouteHandlers:
                 if source is None:
                     raise ApiError(404, "Document was not found.")
                 annotated_pdf = _annotate_pdf_document(
-                    source["content"], payload.get("annotations")
+                    source["content"],
+                    payload.get("annotations"),
+                    allow_vent_icons=True,
                 )
                 if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
                     raise ApiError(413, "The annotated PDF exceeds the 8 MB document limit.")
@@ -7286,17 +7539,24 @@ class LegacyRouteHandlers:
                     with db:
                         house = db.execute(
                             """
-                            SELECT p.id, h.is_finished
+                            SELECT p.id, h.is_finished, survey.data AS survey_data
                             FROM provided_houses p
                             LEFT JOIN houses h ON h.id = p.id
+                            LEFT JOIN house_surveys survey ON survey.house_id = p.id
                             WHERE p.id = ? AND p.plan_vent_required = 1
                             """,
                             (house_id,),
                         ).fetchone()
-                        if house is None or house["is_finished"] == 1:
+                        if (
+                            house is None
+                            or house["is_finished"] == 1
+                            or not _survey_data_has_valid_perimeter(
+                                house["survey_data"]
+                            )
+                        ):
                             raise ApiError(
                                 409,
-                                "Choose an open house with required Vent work.",
+                                "Choose an open house with required Vent work and a completed survey.",
                             )
                         teamlead = db.execute(
                             """

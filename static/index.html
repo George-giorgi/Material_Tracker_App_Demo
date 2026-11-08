@@ -765,9 +765,15 @@
             <button class="pdf-tool-button active" type="button" data-pdf-tool="pen" aria-pressed="true">Pen</button>
             <button class="pdf-tool-button" type="button" data-pdf-tool="highlighter" aria-pressed="false">Highlight</button>
             <button class="pdf-tool-button" type="button" data-pdf-tool="text" aria-pressed="false">Text note</button>
+            <button class="pdf-tool-button hidden" id="pdf-annotator-vent-icon-tool" type="button" data-pdf-tool="vent-icon" aria-pressed="false">Vent icons</button>
           </div>
           <label class="pdf-annotator-color">Colour <select id="pdf-annotator-color" aria-label="Ink colour"><option value="#d93025">Red</option><option value="#245fbd">Blue</option><option value="#18804b">Green</option><option value="#e1aa00">Yellow</option><option value="#202a33">Black</option></select></label>
           <label class="pdf-annotator-size">Size <select id="pdf-annotator-size" aria-label="Pen size"><option value="1.5">Fine</option><option value="2.5" selected>Medium</option><option value="4">Thick</option><option value="6">Extra thick</option></select></label>
+          <div class="pdf-annotator-icon-transform hidden" id="pdf-icon-transform-controls" role="group" aria-label="Selected Vent icon controls">
+            <button class="button button-secondary" id="pdf-icon-rotate-left" type="button" aria-label="Rotate icon counterclockwise 15 degrees">↶ 15°</button>
+            <button class="button button-secondary" id="pdf-icon-rotate-right" type="button" aria-label="Rotate icon clockwise 15 degrees">↷ 15°</button>
+            <button class="button button-secondary" id="pdf-icon-delete" type="button">Remove icon</button>
+          </div>
           <button class="button button-secondary pdf-annotator-undo" id="pdf-annotator-undo" type="button" disabled>Undo</button>
           <div class="pdf-annotator-zoom" role="group" aria-label="PDF zoom">
             <button class="button button-secondary" id="pdf-annotator-zoom-out" type="button" aria-label="Zoom out">−</button>
@@ -815,6 +821,10 @@
             </select>
           </label>
           <span class="pdf-annotator-text-hint">Choose a size, then tap the PDF to place the note.</span>
+        </div>
+        <div class="pdf-annotator-icon-panel hidden" id="pdf-annotator-icon-panel">
+          <div class="pdf-annotator-icon-panel-heading"><strong>Ventilation symbols</strong><span>Drag one onto the page, or select it and tap the page.</span></div>
+          <div class="pdf-annotator-icon-palette" id="pdf-annotator-icon-palette" role="list" aria-label="Draggable Ventilation icons"></div>
         </div>
         <p class="pdf-annotator-help" id="pdf-annotator-help">Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.</p>
         <div class="pdf-annotator-error hidden" id="pdf-annotator-error" role="alert"></div>

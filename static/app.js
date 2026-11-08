@@ -1604,15 +1604,10 @@ function renderOverview() {
       ? filteredHouses.map((house) => {
           const isComplete = Boolean(house.done_at);
           const address = [house.address, house.postcode].filter(Boolean).join(" · ");
-          const houseIndex = ventilationHouses.findIndex(
-            (item) => item.id === house.id,
-          );
-          const ventIcon =
-            ventilationIconAssets[houseIndex % ventilationIconAssets.length];
           return `
             <article class="card surveyor-house-card ventilation-house-card${isComplete ? " is-complete" : ""}">
               <div class="ventilation-house-top">
-                <span class="ventilation-house-icon" aria-hidden="true"><img src="${ventIcon.url}" alt=""></span>
+                <span class="ventilation-house-icon" aria-hidden="true"><img src="/ventilation-mark.svg" alt=""></span>
                 <div class="ventilation-house-identity">
                   <h3>${escapeHtml(house.id)}</h3>
                   <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
@@ -1628,7 +1623,7 @@ function renderOverview() {
               ${isComplete ? `<p class="ventilation-house-audit">${escapeHtml(workPlanDoneLabel(house.done_by || "Vent team", house.done_at, "vent"))}</p>` : ""}
               ${ventPdfSectionHtml(house.documents || [], house.id)}
               <button class="vent-survey-pdfs-button" type="button" data-vent-survey-pdfs data-house-id="${escapeHtml(house.id)}" aria-label="View combined PDFs by Surveyor for ${escapeHtml(house.id)}">
-                <span class="vent-survey-pdfs-icon" aria-hidden="true"><img src="${ventIcon.url}" alt=""></span>
+                <span class="vent-survey-pdfs-icon" aria-hidden="true"><img src="/ventilation-mark.svg" alt=""></span>
                 <span class="vent-survey-pdfs-button-copy"><strong>Combined PDFs by Surveyor</strong><small>Selected survey pages for this house</small></span>
                 <span class="vent-survey-pdfs-count">${(house.survey_documents || []).length}</span>
                 <span class="vent-survey-pdfs-arrow" aria-hidden="true">›</span>
@@ -1823,6 +1818,7 @@ function renderOverview() {
           house.owner_name,
           house.address,
           house.postcode,
+          house.seai_application_id,
           house.notes,
           house.assigned_teamlead_name,
           house.assigned_team_name,
@@ -1886,6 +1882,7 @@ function renderOverview() {
               <span class="ventilation-house-icon" aria-hidden="true">⌂</span>
               <div class="ventilation-house-identity">
                 <h3>${escapeHtml(house.id)}</h3>
+                ${house.seai_application_id ? `<p class="vent-coordinator-seai-id"><span>SEAI application</span> ${escapeHtml(house.seai_application_id)}</p>` : ""}
                 <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
                 ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
               </div>
@@ -3604,6 +3601,8 @@ function closeHouseDocumentAnnotator() {
   const annotator = state.pdfAnnotator;
   if (annotator?.previewUrl) URL.revokeObjectURL(annotator.previewUrl);
   state.pdfAnnotator = null;
+  $("#pdf-annotator-icon-panel").classList.add("hidden");
+  $("#pdf-icon-transform-controls").classList.add("hidden");
   $("#pdf-annotator-dialog").close();
   $("#pdf-annotator-image").removeAttribute("src");
   $("#pdf-annotator-canvas").width = 0;
@@ -3679,6 +3678,49 @@ function wrapPdfAnnotationText(context, text, maxWidth) {
   }
   return lines;
 }
+const pdfVentIconImages = new Map();
+function pdfVentIconImage(slug) {
+  if (!pdfVentIconImages.has(slug)) {
+    const image = new Image();
+    image.onload = () => drawPdfAnnotations();
+    image.onerror = () => showToast("A Ventilation icon could not be loaded.", true);
+    image.src = `/ventilation-icons/${encodeURIComponent(slug)}`;
+    pdfVentIconImages.set(slug, image);
+  }
+  return pdfVentIconImages.get(slug);
+}
+function pdfAnnotatorSupportsVentIcons(annotator = state.pdfAnnotator) {
+  return annotator?.documentType === "vent" ||
+    annotator?.documentType === "vent-seai";
+}
+function updatePdfIconTransformControls() {
+  const annotator = state.pdfAnnotator;
+  const controls = $("#pdf-icon-transform-controls");
+  const selected = annotator?.selectedIcon;
+  controls.classList.toggle("hidden", !pdfAnnotatorSupportsVentIcons(annotator) || !selected);
+  $("#pdf-icon-rotate-left").disabled = !selected;
+  $("#pdf-icon-rotate-right").disabled = !selected;
+  $("#pdf-icon-delete").disabled = !selected;
+}
+function addPdfVentIcon(slug, point) {
+  const annotator = state.pdfAnnotator;
+  if (!pdfAnnotatorSupportsVentIcons(annotator) ||
+      !ventilationIconAssets.some((icon) => icon.url.endsWith(`/${slug}`))) return;
+  const annotation = {
+    page: annotator.page,
+    tool: "vent-icon",
+    icon: slug,
+    point,
+    size: 0.2,
+    rotation: 0,
+  };
+  annotator.annotations.push(annotation);
+  annotator.selectedIcon = annotation;
+  pdfVentIconImage(slug);
+  updatePdfIconTransformControls();
+  drawPdfAnnotations();
+  return annotation;
+}
 function drawPdfAnnotations() {
   const annotator = state.pdfAnnotator;
   const canvas = $("#pdf-annotator-canvas");
@@ -3708,7 +3750,33 @@ function drawPdfAnnotations() {
       context.fillStyle = annotation.color;
       context.lineCap = "round";
       context.lineJoin = "round";
-      if (annotation.tool === "text") {
+      if (annotation.tool === "vent-icon") {
+        const icon = pdfVentIconImage(annotation.icon);
+        const side = annotation.size * width;
+        const centerX = annotation.point[0] * width;
+        const centerY = annotation.point[1] * height;
+        if (icon.complete && icon.naturalWidth) {
+          const iconScale = (side * 360) /
+            (512 * Math.max(icon.naturalWidth, icon.naturalHeight));
+          const iconWidth = icon.naturalWidth * iconScale;
+          const iconHeight = icon.naturalHeight * iconScale;
+          context.translate(centerX, centerY);
+          context.rotate((annotation.rotation * Math.PI) / 180);
+          context.drawImage(
+            icon,
+            -iconWidth / 2,
+            -iconHeight / 2,
+            iconWidth,
+            iconHeight,
+          );
+          if (annotation === annotator.selectedIcon) {
+            context.strokeStyle = "#168550";
+            context.lineWidth = 2;
+            context.setLineDash([5, 3]);
+            context.strokeRect(-side / 2, -side / 2, side, side);
+          }
+        }
+      } else if (annotation.tool === "text") {
         context.textBaseline = "top";
         context.font = `600 ${Math.max(14, annotation.font_size * width)}px system-ui, sans-serif`;
         if (annotation.wrap) {
@@ -3812,6 +3880,10 @@ async function loadHouseDocumentPage(pageNumber) {
   const annotator = state.pdfAnnotator;
   if (!annotator) return;
   if (pageNumber < 1 || pageNumber > annotator.pageCount || annotator.loading) return;
+  if (pageNumber !== annotator.page) {
+    annotator.selectedIcon = null;
+    updatePdfIconTransformControls();
+  }
   annotator.page = pageNumber;
   annotator.loading = true;
   $("#pdf-annotator-page-count").textContent =
@@ -3854,7 +3926,8 @@ async function loadHouseDocumentPage(pageNumber) {
       image.src = previewUrl;
       return;
     }
-    const documentPath = annotator.documentType === "seai"
+    const documentPath = annotator.documentType === "seai" ||
+      annotator.documentType === "vent-seai"
       ? "seai-documents"
       : annotator.documentType === "vent"
         ? "house-vent-documents"
@@ -3951,6 +4024,7 @@ function openHouseDocumentAnnotator(button) {
   openPdfAnnotator(button, "house");
 }
 function openPdfAnnotator(button, documentType) {
+  const canPlaceVentIcons = documentType === "vent" || documentType === "vent-seai";
   state.pdfAnnotator = {
     documentId: button.dataset.documentId,
     filename: button.dataset.documentName,
@@ -3959,7 +4033,7 @@ function openPdfAnnotator(button, documentType) {
     houseId: button.dataset.houseId || state.surveyRoomHouseId,
     page: 1,
     pageCount: 1,
-    tool: "pen",
+    tool: canPlaceVentIcons ? "vent-icon" : "pen",
     penSize: 2.5,
     zoom: 1,
     fitScale: 1,
@@ -3969,6 +4043,9 @@ function openPdfAnnotator(button, documentType) {
     loading: false,
     saving: false,
     drawing: null,
+    iconDrag: null,
+    selectedIcon: null,
+    activeIconSlug: "",
     wheelDelta: 0,
     wheelLocked: false,
   };
@@ -3978,10 +4055,22 @@ function openPdfAnnotator(button, documentType) {
     documentType !== "seai",
   );
   $("#pdf-annotator-page-selection").checked = false;
+  $("#pdf-annotator-vent-icon-tool").classList.toggle("hidden", !canPlaceVentIcons);
+  $("#pdf-annotator-icon-panel").classList.toggle("hidden", !canPlaceVentIcons);
+  $("#pdf-icon-transform-controls").classList.add("hidden");
+  $("#pdf-annotator-icon-palette").innerHTML = ventilationIconAssets
+    .map((icon) => `
+      <button class="pdf-annotator-icon-choice" type="button" draggable="true"
+        data-icon-slug="${icon.url.split("/").pop()}" aria-label="Select or drag ${escapeHtml(icon.name)} onto the PDF">
+        <img src="${icon.url}" alt="">
+        <span>${escapeHtml(icon.name)}</span>
+      </button>
+    `)
+    .join("");
   $(".pdf-annotator-title .eyebrow").textContent =
     documentType === "seai"
       ? "SEAI PDF · ORIGINAL PRESERVED"
-      : documentType === "vent"
+      : canPlaceVentIcons
         ? "VENT TEAM PDF · ORIGINAL PRESERVED"
       : documentType === "blank"
         ? "TEMPORARY BLANK PAGE"
@@ -3990,7 +4079,7 @@ function openPdfAnnotator(button, documentType) {
     documentType === "blank" ? "Add blank page to selection" : "Save annotated copy";
   $("#pdf-annotator-help").textContent = documentType === "seai"
     ? "The original SEAI PDF stays unchanged. Your annotations will be saved as a separate PDF in this category."
-    : documentType === "vent"
+    : canPlaceVentIcons
     ? "The Surveyor-shared original stays unchanged. Save your marks as a separate Vent-annotated PDF for this house."
     : documentType === "blank"
       ? "Annotate this temporary A4 page, then add it to the selected pages for sharing. It will not be saved in the house's PDF library."
@@ -4002,10 +4091,14 @@ function openPdfAnnotator(button, documentType) {
   $("#pdf-annotator-text-size").value = "16";
   $("#pdf-annotator-text-panel").classList.add("hidden");
   $$(".pdf-tool-button").forEach((toolButton) => {
-    const active = toolButton.dataset.pdfTool === "pen";
+    const active = toolButton.dataset.pdfTool === state.pdfAnnotator.tool;
     toolButton.classList.toggle("active", active);
     toolButton.setAttribute("aria-pressed", String(active));
   });
+  if (canPlaceVentIcons) {
+    $("#pdf-annotator-help").textContent =
+      "Drag an icon onto the PDF, or select an icon below and tap the page. Drag placed icons to move them; select one to rotate or remove it.";
+  }
   $("#pdf-annotator-dialog").showModal();
   loadHouseDocumentPage(1);
 }
@@ -4032,13 +4125,17 @@ async function saveHouseDocumentAnnotations() {
     }
     const isSeaiDocument = annotator.documentType === "seai";
     const isVentDocument = annotator.documentType === "vent";
-    const documentPath = isSeaiDocument
+    const isVentCombinedPdf = annotator.documentType === "vent-seai";
+    const documentPath = isSeaiDocument || isVentCombinedPdf
       ? "seai-documents"
       : isVentDocument
         ? "house-vent-documents"
         : "house-documents";
+    const annotationsPath = isVentCombinedPdf
+      ? `/api/seai-documents/${annotator.documentId}/vent-annotations`
+      : `/api/${documentPath}/${annotator.documentId}/annotations`;
     const result = await request(
-      `/api/${documentPath}/${annotator.documentId}/annotations`,
+      annotationsPath,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4049,7 +4146,7 @@ async function saveHouseDocumentAnnotations() {
     if (isSeaiDocument) {
       await loadSeaiDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
       showToast(`Annotated copy saved as ${result.filename}. The original is unchanged.`);
-    } else if (isVentDocument) {
+    } else if (isVentDocument || isVentCombinedPdf) {
       try {
         state.dashboard = await request("/api/dashboard");
         renderOverview();
@@ -6013,15 +6110,7 @@ const ventilationIconAssets = [
   name: filename.replace(/\.svg$/i, ""),
   url: `/ventilation-icons/${slug}`,
 }));
-function ventilationIconForKey(key = "") {
-  const hash = [...String(key)].reduce(
-    (total, character) =>
-      (Math.imul(total, 31) + character.codePointAt(0)) >>> 0,
-    0,
-  );
-  const index = hash % ventilationIconAssets.length;
-  return ventilationIconAssets[index];
-}
+const ventilationMarkUrl = "/ventilation-mark.svg";
 function renderVentilationIconGallery() {
   $("#ventilation-icon-gallery-count").textContent =
     `${ventilationIconAssets.length} products`;
@@ -6039,32 +6128,30 @@ function renderVentilationIconGallery() {
 function ventPdfSectionHtml(documents, houseId = "") {
   if (!documents.length) return "";
   const canAnnotate = isVentilationUser(state.user);
-  return `<details class="survey-room-seai-section survey-room-seai-pdfs ventilation-shared-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true"><img src="${ventilationIconAssets[1].url}" alt=""></span><span class="seai-sec-title">Shared survey PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 PDF" : `${documents.length} PDFs`}</span></summary><ul class="survey-room-seai-pdf-list ventilation-shared-pdf-list">${documents.map((document) => {
+  return `<details class="survey-room-seai-section survey-room-seai-pdfs ventilation-shared-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true"><img src="${ventilationMarkUrl}" alt=""></span><span class="seai-sec-title">Shared survey PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 PDF" : `${documents.length} PDFs`}</span></summary><ul class="survey-room-seai-pdf-list ventilation-shared-pdf-list">${documents.map((document) => {
     const url = `/api/house-vent-documents/${Number(document.id)}/file`;
     const name = escapeHtml(document.filename);
-    const icon = ventilationIconForKey(document.filename);
     const sharedBy = escapeHtml(document.shared_by || "Surveyor");
     const sharedAt = escapeHtml(String(document.shared_at || "").replace("T", " "));
-    return `<li><span class="ventilation-pdf-icon" aria-hidden="true"><img src="${icon.url}" alt=""></span><span class="seai-document-name ventilation-pdf-name" title="${name}"><strong>${name}</strong><small><span>${seaiPdfSize(document.size_bytes)}</span><span>Shared by ${sharedBy}${sharedAt ? ` · ${sharedAt}` : ""}</span></small></span><span class="seai-pdf-actions ventilation-pdf-actions"><button class="button button-primary" type="button" data-vent-shared-pdf-view data-pdf-url="${url}" data-pdf-name="${name}" aria-label="View ${name}" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.5 10s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5-7.5-5-7.5-5Z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="10" r="2.2" stroke="currentColor" stroke-width="1.6"/></svg><span>View PDF</span></button><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.8v9.1m0 0 3.3-3.3M10 11.9 6.7 8.6M3.5 13.5v2.2c0 .8.6 1.4 1.4 1.4h10.2c.8 0 1.4-.6 1.4-1.4v-2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></a>${canAnnotate ? `<button class="button button-primary vent-pdf-annotate-button" type="button" data-vent-pdf-annotate data-document-id="${Number(document.id)}" data-document-name="${name}" data-house-id="${escapeHtml(houseId)}" aria-label="Annotate ${name}"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12.8 3.2 4 4M4 16l1-3.7L13.5 3.8a1.8 1.8 0 0 1 2.6 0l.1.1a1.8 1.8 0 0 1 0 2.6L7.7 15l-3.7 1Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Annotate PDF</span></button>` : ""}</span></li>`;
-  }).join("")}</ul><section class="ventilation-shared-pdf-viewer" aria-label="Shared PDF preview" hidden><div class="ventilation-shared-pdf-viewer-heading"><strong data-vent-shared-pdf-title>PDF preview</strong><div><a class="button button-secondary" data-vent-shared-pdf-download download>Download</a><button class="button button-secondary" type="button" data-vent-shared-pdf-close>Close preview</button></div></div><iframe title="Shared survey PDF preview"></iframe></section></details>`;
+    return `<li><span class="ventilation-pdf-icon" aria-hidden="true"><img src="${ventilationMarkUrl}" alt=""></span><span class="seai-document-name ventilation-pdf-name" title="${name}"><strong>${name}</strong><small><span>${seaiPdfSize(document.size_bytes)}</span><span>Shared by ${sharedBy}${sharedAt ? ` · ${sharedAt}` : ""}</span></small></span><span class="seai-pdf-actions ventilation-pdf-actions"><button class="button button-primary" type="button" data-vent-shared-pdf-view data-document-id="${Number(document.id)}" data-house-id="${escapeHtml(houseId)}" data-pdf-url="${url}" data-pdf-name="${name}" aria-label="View ${name}" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.5 10s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5-7.5-5-7.5-5Z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="10" r="2.2" stroke="currentColor" stroke-width="1.6"/></svg><span>View PDF</span></button><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.8v9.1m0 0 3.3-3.3M10 11.9 6.7 8.6M3.5 13.5v2.2c0 .8.6 1.4 1.4 1.4h10.2c.8 0 1.4-.6 1.4-1.4v-2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></a>${canAnnotate ? `<button class="button button-primary vent-pdf-annotate-button" type="button" data-vent-pdf-annotate data-document-id="${Number(document.id)}" data-document-name="${name}" data-house-id="${escapeHtml(houseId)}" aria-label="Annotate ${name}"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12.8 3.2 4 4M4 16l1-3.7L13.5 3.8a1.8 1.8 0 0 1 2.6 0l.1.1a1.8 1.8 0 0 1 0 2.6L7.7 15l-3.7 1Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Annotate PDF</span></button>` : ""}</span></li>`;
+  }).join("")}</ul><section class="ventilation-shared-pdf-viewer" aria-label="Shared PDF preview" hidden><div class="ventilation-shared-pdf-viewer-heading"><strong data-vent-shared-pdf-title>PDF preview</strong><div>${canAnnotate ? `<button class="button button-primary" type="button" data-vent-shared-pdf-annotate hidden aria-label="Add Ventilation icons to PDF">Add Vent icons</button>` : ""}<a class="button button-secondary" data-vent-shared-pdf-download download>Download</a><button class="button button-secondary" type="button" data-vent-shared-pdf-close>Close preview</button></div></div>${canAnnotate ? `<p class="ventilation-shared-pdf-viewer-hint">Place ventilation symbols, move them, and rotate before saving an annotated copy.</p>` : ""}<iframe title="Shared survey PDF preview"></iframe></section></details>`;
 }
 let ventSurveyPdfsRequestId = 0;
-function renderVentSurveyPdfs(documents) {
+function renderVentSurveyPdfs(documents, houseId) {
   const list = $("#vent-survey-pdfs-list");
   if (!documents.length) {
-    list.innerHTML = `<div class="vent-survey-pdf-empty"><span aria-hidden="true"><img src="${ventilationIconAssets[1].url}" alt=""></span><strong>No combined PDFs saved yet</strong><p>When a Surveyor saves selected pages as a combined PDF for this house, it will appear here.</p></div>`;
+    list.innerHTML = `<div class="vent-survey-pdf-empty"><span aria-hidden="true"><img src="${ventilationMarkUrl}" alt=""></span><strong>No combined PDFs saved yet</strong><p>When a Surveyor saves selected pages as a combined PDF for this house, it will appear here.</p></div>`;
     return;
   }
   list.innerHTML = documents.map((document) => {
     const url = document.file_url;
     const name = escapeHtml(document.filename);
-    const icon = ventilationIconForKey(document.filename);
     const savedBy = escapeHtml(document.uploaded_by || "Surveyor");
     const savedAt = escapeHtml(formatAuditDateTime(document.uploaded_at));
     return `<article class="vent-survey-pdf-entry">
-      <span class="vent-survey-pdf-entry-icon" aria-hidden="true"><img src="${icon.url}" alt=""></span>
+      <span class="vent-survey-pdf-entry-icon" aria-hidden="true"><img src="${ventilationMarkUrl}" alt=""></span>
       <div class="vent-survey-pdf-entry-copy"><strong title="${name}">${name}</strong><span>Combined PDF by ${savedBy}${savedAt ? ` · ${savedAt}` : ""} · ${seaiPdfSize(document.size_bytes)}</span></div>
-      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-vent-survey-pdf-view data-pdf-url="${url}" data-pdf-name="${name}" aria-label="View ${name}" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.5 10s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5-7.5-5-7.5-5Z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="10" r="2.2" stroke="currentColor" stroke-width="1.6"/></svg><span>View PDF</span></button><a class="button button-secondary" href="${url}" download="${name}"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.8v9.1m0 0 3.3-3.3M10 11.9 6.7 8.6M3.5 13.5v2.2c0 .8.6 1.4 1.4 1.4h10.2c.8 0 1.4-.6 1.4-1.4v-2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></a></div>
+      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-vent-survey-pdf-view data-pdf-url="${url}" data-pdf-name="${name}" aria-label="View ${name}" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.5 10s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5-7.5-5-7.5-5Z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="10" r="2.2" stroke="currentColor" stroke-width="1.6"/></svg><span>View PDF</span></button><button class="button button-secondary" type="button" data-vent-survey-pdf-annotate data-document-id="${Number(document.id)}" data-document-name="${name}" data-house-id="${escapeHtml(houseId)}" aria-label="Add Ventilation icons to ${name}">Add Vent icons</button><a class="button button-secondary" href="${url}" download="${name}"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.8v9.1m0 0 3.3-3.3M10 11.9 6.7 8.6M3.5 13.5v2.2c0 .8.6 1.4 1.4 1.4h10.2c.8 0 1.4-.6 1.4-1.4v-2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></a></div>
     </article>`;
   }).join("");
 }
@@ -6108,7 +6195,7 @@ async function openVentSurveyPdfs(houseId) {
     $("#vent-survey-pdfs-description").textContent = documents.length
       ? `${documents.length} combined ${documents.length === 1 ? "PDF" : "PDFs"} saved by the Surveyor for this house.`
       : "Combined PDFs saved by the Surveyor will appear here.";
-    renderVentSurveyPdfs(documents);
+    renderVentSurveyPdfs(documents, houseId);
   } catch (error) {
     if (requestId !== ventSurveyPdfsRequestId) return;
     $("#vent-survey-pdfs-description").textContent = "Could not load PDFs for this house.";
@@ -6258,13 +6345,7 @@ function updateSurveyorAccountSelection(event) {
   const surveyorList = $("#house-assignment-surveyor");
   surveyorList.querySelectorAll(".surveyor-account-option").forEach((option) => {
     const radio = $("input", option);
-    const isSelected = radio.checked;
-    option.classList.toggle("selected", isSelected);
-    $(".surveyor-account-status", option).textContent = isSelected
-      ? "Selected"
-      : radio.disabled
-        ? "Inactive"
-        : "Available";
+    option.classList.toggle("selected", radio.checked);
   });
   updateHouseAssignmentSaveState();
 }
@@ -6300,6 +6381,12 @@ async function openHouseAssignments(houseId) {
     const assigned = result.assignments.find(
       (assignment) => assignment.role === "surveyor",
     );
+    const surveyorWorkload = new Map(
+      (state.dashboard?.surveyor_workload || []).map((surveyor) => [
+        surveyor.user_id,
+        surveyor,
+      ]),
+    );
     const surveyors = [...result.users.surveyor];
     if (assigned && !assigned.is_active) {
       surveyors.unshift({
@@ -6320,11 +6407,20 @@ async function openHouseAssignments(houseId) {
               .slice(0, 2)
               .map((part) => part[0].toLocaleUpperCase())
               .join("");
+            const workload = surveyorWorkload.get(account.id);
+            const status = account.is_active === 0
+              ? "Inactive"
+              : workload
+                ? workload.busy ? "Busy" : "Available"
+                : "Workload unavailable";
+            const workloadDetails = workload
+              ? `${workload.pending_count} pending · ${workload.completed_count} completed`
+              : "Workload unavailable";
             return `<label class="surveyor-account-option${selected ? " selected" : ""}${account.is_active === 0 ? " inactive" : ""}">
               <input type="radio" name="surveyor_user_id" value="${account.id}"${selected ? " checked" : ""}${account.is_active === 0 ? " disabled" : ""} required>
               <span class="surveyor-account-avatar" aria-hidden="true">${escapeHtml(initials || "S")}</span>
-              <span class="surveyor-account-identity"><strong>${escapeHtml(account.display_name)}</strong><small>@${escapeHtml(account.username)}</small></span>
-              <span class="surveyor-account-status">${selected ? "Currently assigned" : account.is_active === 0 ? "Inactive" : "Available"}</span>
+              <span class="surveyor-account-identity"><strong>${escapeHtml(account.display_name)}</strong><small>@${escapeHtml(account.username)}</small><small class="surveyor-account-workload">${workloadDetails}</small></span>
+              <span class="surveyor-account-status${workload?.busy && account.is_active !== 0 ? " busy" : ""}">${status}</span>
             </label>`;
           })
           .join("")
@@ -8272,6 +8368,11 @@ function bindEvents() {
     button.addEventListener("click", () => button.closest("dialog").close()),
   );
   $("#vent-survey-pdfs-dialog").addEventListener("click", (event) => {
+    const annotateButton = event.target.closest("[data-vent-survey-pdf-annotate]");
+    if (annotateButton) {
+      openPdfAnnotator(annotateButton, "vent-seai");
+      return;
+    }
     const previewButton = event.target.closest("[data-vent-survey-pdf-view]");
     if (!previewButton) return;
     const viewer = $("#vent-survey-pdfs-viewer");
@@ -8522,15 +8623,84 @@ function bindEvents() {
       });
       const textTool = annotator.tool === "text";
       $("#pdf-annotator-text-panel").classList.toggle("hidden", !textTool);
+      const iconTool = annotator.tool === "vent-icon";
+      $("#pdf-annotator-icon-panel").classList.toggle("hidden", !iconTool);
       $("#pdf-annotator-help").textContent = textTool
         ? "Choose your note size, type the text, then tap the page to place it."
-        : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.";
+        : iconTool
+          ? "Select an icon to place it, drag an icon directly onto the page, or drag a placed icon to move it. Select an icon to rotate or remove it."
+          : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.";
       if (textTool) $("#pdf-annotator-text").focus();
     }),
   );
+  const iconPalette = $("#pdf-annotator-icon-palette");
+  iconPalette.addEventListener("click", (event) => {
+    const choice = event.target.closest("[data-icon-slug]");
+    const annotator = state.pdfAnnotator;
+    if (!choice || !pdfAnnotatorSupportsVentIcons(annotator)) return;
+    annotator.activeIconSlug = choice.dataset.iconSlug;
+    $("#pdf-annotator-vent-icon-tool").click();
+    $$(".pdf-annotator-icon-choice").forEach((button) => {
+      button.classList.toggle("active", button === choice);
+    });
+  });
+  iconPalette.addEventListener("dragstart", (event) => {
+    const choice = event.target.closest("[data-icon-slug]");
+    const annotator = state.pdfAnnotator;
+    if (!choice || !pdfAnnotatorSupportsVentIcons(annotator) || !event.dataTransfer) return;
+    annotator.activeIconSlug = choice.dataset.iconSlug;
+    $("#pdf-annotator-vent-icon-tool").click();
+    $$(".pdf-annotator-icon-choice").forEach((button) => {
+      button.classList.toggle("active", button === choice);
+    });
+    event.dataTransfer.setData("text/plain", choice.dataset.iconSlug);
+    event.dataTransfer.effectAllowed = "copy";
+  });
+  const pdfCanvas = $("#pdf-annotator-canvas");
+  pdfCanvas.addEventListener("dragover", (event) => {
+    if (pdfAnnotatorSupportsVentIcons() && event.dataTransfer?.types.includes("text/plain")) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+  pdfCanvas.addEventListener("drop", (event) => {
+    const annotator = state.pdfAnnotator;
+    const slug = event.dataTransfer?.getData("text/plain");
+    if (!pdfAnnotatorSupportsVentIcons(annotator) || !slug) return;
+    event.preventDefault();
+    annotator.activeIconSlug = slug;
+    $("#pdf-annotator-vent-icon-tool").click();
+    addPdfVentIcon(slug, pdfCanvasPoint(event));
+  });
+  $("#pdf-icon-rotate-left").addEventListener("click", () => {
+    const icon = state.pdfAnnotator?.selectedIcon;
+    if (!icon) return;
+    icon.rotation = (icon.rotation + 345) % 360;
+    drawPdfAnnotations();
+  });
+  $("#pdf-icon-rotate-right").addEventListener("click", () => {
+    const icon = state.pdfAnnotator?.selectedIcon;
+    if (!icon) return;
+    icon.rotation = (icon.rotation + 15) % 360;
+    drawPdfAnnotations();
+  });
+  $("#pdf-icon-delete").addEventListener("click", () => {
+    const annotator = state.pdfAnnotator;
+    if (!annotator?.selectedIcon) return;
+    annotator.annotations = annotator.annotations.filter(
+      (annotation) => annotation !== annotator.selectedIcon,
+    );
+    annotator.selectedIcon = null;
+    updatePdfIconTransformControls();
+    drawPdfAnnotations();
+  });
   $("#pdf-annotator-undo").addEventListener("click", () => {
     if (!state.pdfAnnotator?.annotations.length) return;
-    state.pdfAnnotator.annotations.pop();
+    const removed = state.pdfAnnotator.annotations.pop();
+    if (removed === state.pdfAnnotator.selectedIcon) {
+      state.pdfAnnotator.selectedIcon = null;
+      updatePdfIconTransformControls();
+    }
     drawPdfAnnotations();
   });
   $("#pdf-annotator-viewport").addEventListener("wheel", scrollPdfPage, {
@@ -8562,7 +8732,6 @@ function bindEvents() {
     const viewport = $("#pdf-annotator-viewport");
     viewport.scrollTo({ left: 0, top: 0, behavior: "instant" });
   });
-  const pdfCanvas = $("#pdf-annotator-canvas");
   const pdfCanvasPoint = (event) => {
     const rect = pdfCanvas.getBoundingClientRect();
     return [
@@ -8576,6 +8745,44 @@ function bindEvents() {
     event.preventDefault();
     const point = pdfCanvasPoint(event);
     const color = $("#pdf-annotator-color").value;
+    if (annotator.tool === "vent-icon" && pdfAnnotatorSupportsVentIcons(annotator)) {
+      const iconAtPoint = annotator.annotations
+        .filter((annotation) => annotation.page === annotator.page && annotation.tool === "vent-icon")
+        .reverse()
+        .find((annotation) => {
+          const side = annotation.size * pdfCanvas.clientWidth / 2;
+          return Math.abs((point[0] - annotation.point[0]) * pdfCanvas.clientWidth) <= side &&
+            Math.abs((point[1] - annotation.point[1]) * pdfCanvas.clientHeight) <= side;
+        });
+      if (iconAtPoint) {
+        annotator.selectedIcon = iconAtPoint;
+        annotator.iconDrag = {
+          pointerId: event.pointerId,
+          annotation: iconAtPoint,
+          offset: [
+            point[0] - iconAtPoint.point[0],
+            point[1] - iconAtPoint.point[1],
+          ],
+        };
+      } else if (annotator.activeIconSlug) {
+        const placed = addPdfVentIcon(annotator.activeIconSlug, point);
+        if (!placed) {
+          showToast("Select a valid Ventilation icon before placing it.", true);
+          return;
+        }
+        annotator.iconDrag = {
+          pointerId: event.pointerId,
+          annotation: placed,
+          offset: [0, 0],
+        };
+      } else {
+        annotator.selectedIcon = null;
+      }
+      updatePdfIconTransformControls();
+      if (annotator.iconDrag) pdfCanvas.setPointerCapture(event.pointerId);
+      drawPdfAnnotations();
+      return;
+    }
     if (annotator.tool === "text") {
       const text = $("#pdf-annotator-text").value.trim();
       const textSize = Number($("#pdf-annotator-text-size").value);
@@ -8617,6 +8824,17 @@ function bindEvents() {
   });
   pdfCanvas.addEventListener("pointermove", (event) => {
     const annotator = state.pdfAnnotator;
+    const iconDrag = annotator?.iconDrag;
+    if (iconDrag?.pointerId === event.pointerId) {
+      event.preventDefault();
+      const point = pdfCanvasPoint(event);
+      iconDrag.annotation.point = [
+        Math.max(0, Math.min(1, point[0] - iconDrag.offset[0])),
+        Math.max(0, Math.min(1, point[1] - iconDrag.offset[1])),
+      ];
+      drawPdfAnnotations();
+      return;
+    }
     const drawing = annotator?.drawing;
     if (!drawing || drawing.pointerId !== event.pointerId) return;
     event.preventDefault();
@@ -8637,6 +8855,10 @@ function bindEvents() {
   });
   const finishPdfStroke = (event) => {
     const annotator = state.pdfAnnotator;
+    if (annotator?.iconDrag?.pointerId === event.pointerId) {
+      annotator.iconDrag = null;
+      drawPdfAnnotations();
+    }
     if (annotator?.drawing?.pointerId === event.pointerId) {
       annotator.drawing = null;
       drawPdfAnnotations();
@@ -9000,6 +9222,13 @@ function bindEvents() {
       const download = viewer.querySelector("[data-vent-shared-pdf-download]");
       download.href = url;
       download.download = name;
+      const annotate = viewer.querySelector("[data-vent-shared-pdf-annotate]");
+      if (annotate) {
+        annotate.dataset.documentId = sharedPdfButton.dataset.documentId;
+        annotate.dataset.documentName = name;
+        annotate.dataset.houseId = sharedPdfButton.dataset.houseId;
+        annotate.hidden = false;
+      }
       viewer.hidden = false;
       section.querySelectorAll("[data-vent-shared-pdf-view]").forEach((button) => {
         button.setAttribute("aria-pressed", String(button === sharedPdfButton));
@@ -9015,12 +9244,16 @@ function bindEvents() {
       const viewer = section.querySelector(".ventilation-shared-pdf-viewer");
       viewer.querySelector("iframe").removeAttribute("src");
       viewer.hidden = true;
+      const annotate = viewer.querySelector("[data-vent-shared-pdf-annotate]");
+      if (annotate) annotate.hidden = true;
       section.querySelectorAll("[data-vent-shared-pdf-view]").forEach((button) => {
         button.setAttribute("aria-pressed", "false");
       });
       return;
     }
-    const annotateButton = event.target.closest("[data-vent-pdf-annotate]");
+    const annotateButton = event.target.closest(
+      "[data-vent-pdf-annotate], [data-vent-shared-pdf-annotate]",
+    );
     if (annotateButton) {
       openPdfAnnotator(annotateButton, "vent");
       return;

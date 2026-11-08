@@ -9,6 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 import server
+import pymupdf as fitz
 from tests.support import UvicornTestServer
 from pypdf import PdfReader
 from reportlab.pdfgen import canvas
@@ -1085,6 +1086,17 @@ class NavigationBrowserTests(unittest.TestCase):
                     ),
                 ],
             )
+            db.executemany(
+                """
+                INSERT INTO house_surveys
+                    (house_id, data, notes, updated_by, updated_at)
+                VALUES (?, '{"perimeter_m":42.5}', '', 'Surveyor Teammate', '2026-11-03T08:30:00')
+                """,
+                [
+                    ("VENT-DASHBOARD-PENDING",),
+                    ("VENT-DASHBOARD-COMPLETE",),
+                ],
+            )
             db.execute(
                 """
                 INSERT INTO house_vent_documents
@@ -1310,17 +1322,21 @@ class NavigationBrowserTests(unittest.TestCase):
         complete_card = self.page.locator(
             ".ventilation-house-card"
         ).filter(has_text="VENT-DASHBOARD-COMPLETE")
-        self.assertNotEqual(
+        self.assertEqual(
             pending_card.locator(".ventilation-house-icon img").get_attribute("src"),
             complete_card.locator(".ventilation-house-icon img").get_attribute("src"),
+        )
+        self.assertEqual(
+            pending_card.locator(".ventilation-house-icon img").get_attribute("src"),
+            "/ventilation-mark.svg",
         )
         self.assertIn("Assigned by: Vent Coordinator", pending_card.inner_text())
         self.assertNotIn("Assigned Vent team:", pending_card.inner_text())
         shared_pdf = pending_card.locator(".ventilation-shared-pdfs")
-        self.assertTrue(
+        self.assertEqual(
             shared_pdf.locator(".ventilation-pdf-icon img")
-            .first.get_attribute("src")
-            .startswith("/ventilation-icons/")
+            .first.get_attribute("src"),
+            "/ventilation-mark.svg",
         )
         self.assertFalse(shared_pdf.evaluate("element => element.open"))
         shared_pdf.locator("summary").click()
@@ -1358,12 +1374,31 @@ class NavigationBrowserTests(unittest.TestCase):
             icon_gallery.locator(".ventilation-icon-gallery-item img").count(),
             9,
         )
+        self.assertTrue(
+            all(
+                src.startswith("/ventilation-icons/")
+                for src in icon_gallery.locator(
+                    ".ventilation-icon-gallery-item img"
+                ).evaluate_all("images => images.map(image => image.getAttribute('src'))")
+            )
+        )
         self.assertEqual(attached_pdfs_button.locator(".vent-survey-pdfs-count").inner_text(), "1")
         attached_pdf = attached_pdfs_dialog.locator(
             '.vent-survey-pdf-entry button[aria-label="View VENT-DASHBOARD-selected-seai-pages.pdf"]'
         )
         self.assertTrue(attached_pdf.is_visible())
         self.assertIn("Combined PDF by Surveyor Teammate", attached_pdfs_dialog.inner_text())
+        add_icons_button = attached_pdfs_dialog.get_by_role(
+            "button",
+            name="Add Ventilation icons to VENT-DASHBOARD-selected-seai-pages.pdf",
+        )
+        self.assertTrue(add_icons_button.is_visible())
+        add_icons_button.click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.assertTrue(self.page.locator("#pdf-annotator-vent-icon-tool").is_visible())
+        self.assertTrue(self.page.locator("#pdf-annotator-icon-panel").is_visible())
+        self.page.locator("#pdf-annotator-close").click()
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         attached_pdf.click()
         self.assertIn(
             "/api/seai-documents/",
@@ -1392,7 +1427,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertFalse(attached_pdfs_dialog.evaluate("element => element.open"))
         self.assertNotIn("annotated-survey.pdf", complete_card.inner_text())
         shared_pdf_view = pending_card.get_by_role(
-            "button", name="View annotated-survey.pdf"
+            "button", name="View survey-plan.pdf"
         )
         self.assertTrue(shared_pdf_view.is_visible())
         pdf_url = shared_pdf_view.get_attribute("data-pdf-url")
@@ -1416,7 +1451,39 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(pdf_response["status"], 200)
         self.assertTrue(pdf_response["contentType"].startswith("application/pdf"))
-        self.assertIn("annotated survey", pdf_response["content"])
+        self.assertTrue(pdf_response["content"].startswith("%PDF-"))
+        self.assertTrue(
+            shared_pdf_viewer.locator("[data-vent-shared-pdf-annotate]").is_visible(),
+            shared_pdf_viewer.inner_html(),
+        )
+        shared_pdf_viewer.get_by_role(
+            "button", name="Add Ventilation icons to PDF"
+        ).click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.assertTrue(self.page.locator("#pdf-annotator-vent-icon-tool").is_visible())
+        icon_palette = self.page.locator("#pdf-annotator-icon-panel")
+        self.assertTrue(icon_palette.is_visible())
+        self.assertEqual(
+            self.page.locator("#pdf-annotator-icon-palette [data-icon-slug]").count(),
+            9,
+        )
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_box = canvas.bounding_box()
+        icon_palette.locator(
+            '[data-icon-slug="d-series-axial-fan.svg"]'
+        ).drag_to(
+            canvas,
+            target_position={
+                "x": canvas_box["width"] * 0.5,
+                "y": canvas_box["height"] * 0.5,
+            },
+        )
+        self.page.locator("#pdf-icon-transform-controls").wait_for(state="visible")
+        self.page.locator("#pdf-annotator-close").click()
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         shared_pdf_viewer.get_by_role("button", name="Close preview").click()
         self.assertFalse(shared_pdf_viewer.is_visible())
         self.page.set_viewport_size({"width": 390, "height": 844})
@@ -1454,6 +1521,29 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.mouse.down()
         self.page.mouse.move(canvas_box["x"] + 130, canvas_box["y"] + 90)
         self.page.mouse.up()
+        self.page.locator("#pdf-annotator-vent-icon-tool").click()
+        canvas_box = canvas.bounding_box()
+        icon = self.page.locator(
+            '#pdf-annotator-icon-palette [data-icon-slug="d-series-axial-fan.svg"]'
+        )
+        icon.drag_to(
+            canvas,
+            target_position={
+                "x": canvas_box["width"] * 0.58,
+                "y": canvas_box["height"] * 0.56,
+            },
+        )
+        self.page.locator("#pdf-icon-transform-controls").wait_for(state="visible")
+        self.page.locator("#pdf-icon-rotate-right").click()
+        canvas_box = canvas.bounding_box()
+        icon_center = (
+            canvas_box["x"] + canvas_box["width"] * 0.58,
+            canvas_box["y"] + canvas_box["height"] * 0.56,
+        )
+        self.page.mouse.move(*icon_center)
+        self.page.mouse.down()
+        self.page.mouse.move(icon_center[0] + 35, icon_center[1] + 20)
+        self.page.mouse.up()
         save_annotated_copy = self.page.get_by_role(
             "button", name="Save annotated copy"
         )
@@ -1485,6 +1575,13 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(original["content"], annotatable_pdf)
         self.assertNotEqual(annotated["content"], annotatable_pdf)
         self.assertEqual(annotated["shared_by"], "Vent annotated by Ventilation Dashboard")
+        saved_pdf = fitz.open(stream=annotated["content"], filetype="pdf")
+        icon_images = saved_pdf[0].get_images(full=True)
+        self.assertTrue(icon_images)
+        icon_rect = saved_pdf[0].get_image_rects(icon_images[0][0])[0]
+        self.assertGreater(icon_rect.x0 + icon_rect.width / 2, saved_pdf[0].rect.width * 0.6)
+        self.assertGreater(icon_rect.y0 + icon_rect.height / 2, saved_pdf[0].rect.height * 0.55)
+        saved_pdf.close()
         self.assertEqual(
             len(
                 self.page.locator("#ventilation-house-list").evaluate(
@@ -1614,6 +1711,7 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertIn("Ventilation Dashboard", pending_card.inner_text())
         self.assertTrue(pending_card.locator(".ventilation-completion-mark.is-done").is_visible())
+        self.page.mouse.move(1279, 719)
         undo_button_style = pending_card.locator(
             ".ventilation-complete-button.is-undo"
         ).evaluate(
@@ -2932,6 +3030,22 @@ class NavigationBrowserTests(unittest.TestCase):
         ).filter(has_text="Available Surveyor")
         self.assertIn("Available", available_surveyor.inner_text())
         self.assertIn("0 pending · 0 completed", available_surveyor.inner_text())
+
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        self.page.locator(
+            "#houses-list article[data-house-id='WORKLOAD-PENDING'] .assign-house-team"
+        ).click()
+        self.page.locator("#house-assignment-dashboard").wait_for(state="visible")
+        busy_option = self.page.locator(
+            "#house-assignment-surveyor .surveyor-account-option"
+        ).filter(has_text="House Surveyor")
+        self.assertIn("Busy", busy_option.inner_text())
+        self.assertIn("1 pending · 1 completed", busy_option.inner_text())
+        available_option = self.page.locator(
+            "#house-assignment-surveyor .surveyor-account-option"
+        ).filter(has_text="Available Surveyor")
+        self.assertIn("Available", available_option.inner_text())
+        self.assertIn("0 pending · 0 completed", available_option.inner_text())
 
         self.page.locator("#theme-toggle").click()
         self.assertEqual(

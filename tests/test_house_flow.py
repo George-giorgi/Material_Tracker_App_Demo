@@ -703,6 +703,14 @@ class HouseDocumentHttpTests(HttpBase):
 
     def test_pdf_saved_for_vent_team_is_listed_and_cleared_on_reset(self):
         self.make_ready_house()
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_surveys
+                    (house_id, data, notes, updated_by, updated_at)
+                VALUES ('DOC-TEST', '{"perimeter_m":42.5}', '', 'Surveyor', '2026-11-03T08:30:00')
+                """
+            )
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.httpd.server_address[1], timeout=5
         )
@@ -923,6 +931,36 @@ class HouseDocumentHttpTests(HttpBase):
             )[0],
             404,
         )
+        vent_icon_annotation = {
+            "annotations": [
+                {
+                    "page": 1,
+                    "tool": "vent-icon",
+                    "icon": "d-series-axial-fan.svg",
+                    "point": [0.5, 0.5],
+                    "size": 0.2,
+                    "rotation": 0,
+                }
+            ]
+        }
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/seai-documents/{unselected_seai_id}/vent-annotations",
+                vent_icon_annotation,
+                cookie=vent_cookie,
+            )[0],
+            404,
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/seai-documents/{selected_document_id}/vent-annotations",
+                vent_icon_annotation,
+                cookie=non_vent_cookie,
+            )[0],
+            403,
+        )
         self.assertEqual(
             self.call_raw(
                 "GET", f"/api/seai-documents/{annotated_seai_id}/file",
@@ -966,6 +1004,13 @@ class HouseDocumentHttpTests(HttpBase):
             db.execute(
                 "UPDATE provided_houses SET plan_vent_required = 1 WHERE id = 'DOC-TEST'"
             )
+            db.execute(
+                """
+                INSERT INTO house_surveys
+                    (house_id, data, notes, updated_by, updated_at)
+                VALUES ('DOC-TEST', '{"perimeter_m":42.5}', '', 'Surveyor', '2026-11-03T08:30:00')
+                """
+            )
             server._insert_user(
                 db,
                 "vent-pdf-annotator",
@@ -973,6 +1018,17 @@ class HouseDocumentHttpTests(HttpBase):
                 "234567",
                 "teamlead",
                 team_name="Ventilation",
+            )
+            vent_user = db.execute(
+                "SELECT id FROM app_users WHERE username = 'vent-pdf-annotator'"
+            ).fetchone()
+            db.execute(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES ('DOC-TEST', ?, 'Vent Coordinator', '2026-11-03T08:00:00')
+                """,
+                (vent_user["id"],),
             )
             original_id = db.execute(
                 """
@@ -982,6 +1038,35 @@ class HouseDocumentHttpTests(HttpBase):
                 """,
                 (original_pdf, len(original_pdf)),
             ).lastrowid
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+            combined_pdf_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, content)
+                VALUES ('DOC-TEST', 'Survey', 'selected-pages.pdf', ?)
+                """,
+                (original_pdf,),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO selected_seai_documents
+                    (document_id, house_id, created_by, created_at)
+                VALUES (?, 'DOC-TEST', 'Surveyor', '2026-11-03T08:30:00')
+                """,
+                (combined_pdf_id,),
+            )
         vent_cookie = self.call(
             "POST",
             "/api/auth/login",
@@ -998,6 +1083,41 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertEqual(headers["X-PDF-Page-Count"], "1")
         self.assertTrue(image.startswith(b"\x89PNG"))
 
+        status, annotated_combined, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{combined_pdf_id}/vent-annotations",
+            {
+                "annotations": [
+                    {
+                        "page": 1,
+                        "tool": "vent-icon",
+                        "icon": "d-series-axial-fan.svg",
+                        "point": [0.5, 0.5],
+                        "size": 0.2,
+                        "rotation": 45,
+                    }
+                ]
+            },
+            cookie=vent_cookie,
+        )
+        self.assertEqual(status, 201, annotated_combined)
+        self.assertEqual(annotated_combined["filename"], "selected-pages-vent-annotated.pdf")
+        with server.connect_db() as db:
+            original_combined = db.execute(
+                "SELECT content FROM seai_documents WHERE id = ?",
+                (combined_pdf_id,),
+            ).fetchone()
+            vent_combined_copy = db.execute(
+                "SELECT content FROM house_vent_documents WHERE id = ?",
+                (annotated_combined["id"],),
+            ).fetchone()
+        self.assertEqual(original_combined["content"], original_pdf)
+        saved_combined = fitz.open(
+            stream=vent_combined_copy["content"], filetype="pdf"
+        )
+        self.assertTrue(saved_combined[0].get_images())
+        saved_combined.close()
+
         status, annotated, _ = self.call(
             "POST",
             f"/api/house-vent-documents/{original_id}/annotations",
@@ -1009,7 +1129,15 @@ class HouseDocumentHttpTests(HttpBase):
                         "color": "#d93025",
                         "width": 0.005,
                         "points": [[0.2, 0.2], [0.4, 0.4]],
-                    }
+                    },
+                    {
+                        "page": 1,
+                        "tool": "vent-icon",
+                        "icon": "d-series-axial-fan.svg",
+                        "point": [0.62, 0.48],
+                        "size": 0.2,
+                        "rotation": 37,
+                    },
                 ]
             },
             cookie=vent_cookie,
@@ -1028,7 +1156,28 @@ class HouseDocumentHttpTests(HttpBase):
             ).fetchone()
         self.assertEqual(source["content"], original_pdf)
         self.assertNotEqual(saved_copy["content"], original_pdf)
-        self.assertEqual(len(PdfReader(BytesIO(saved_copy["content"])).pages), 1)
+        annotated_pdf = fitz.open(stream=saved_copy["content"], filetype="pdf")
+        self.assertEqual(annotated_pdf.page_count, 1)
+        self.assertTrue(annotated_pdf[0].get_images())
+        annotated_pdf.close()
+        invalid_icon_status, invalid_icon_result, _ = self.call(
+            "POST",
+            f"/api/house-vent-documents/{original_id}/annotations",
+            {
+                "annotations": [
+                    {
+                        "page": 1,
+                        "tool": "vent-icon",
+                        "icon": "../outside.svg",
+                        "point": [0.5, 0.5],
+                        "size": 0.2,
+                        "rotation": 0,
+                    }
+                ]
+            },
+            cookie=vent_cookie,
+        )
+        self.assertEqual(invalid_icon_status, 400, invalid_icon_result)
 
         with server.connect_db() as db:
             db.execute(
@@ -5808,9 +5957,10 @@ class UiWiringTests(unittest.TestCase):
         )
         self.assertIn('`/api/seai-documents?house_id=${encodeURIComponent(houseId)}`', APP_JS)
         self.assertIn('data-document-id="${Number(document.id)}"', APP_JS)
-        self.assertRegex(
+        self.assertIn('annotator.documentType === "vent-seai"', APP_JS)
+        self.assertIn(
+            "/api/seai-documents/${annotator.documentId}/vent-annotations",
             APP_JS,
-            r'const documentPath = annotator\.documentType === "seai"\s+\? "seai-documents"\s+: annotator\.documentType === "vent"\s+\? "house-vent-documents"\s+: "house-documents";',
         )
         self.assertIn('"The original SEAI PDF stays unchanged.', APP_JS)
         self.assertIn("The original is unchanged.", APP_JS)

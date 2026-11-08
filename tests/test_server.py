@@ -50,6 +50,13 @@ class TrackerTests(unittest.TestCase):
             )
             db.executemany(
                 """
+                INSERT INTO house_surveys (house_id, data, notes, updated_by, updated_at)
+                VALUES (?, '{"perimeter_m":42.5}', '', 'Surveyor', '2026-11-05T08:30:00')
+                """,
+                [("VENT-OLD-CYCLE",), ("VENT-NEW-CYCLE",)],
+            )
+            db.executemany(
+                """
                 INSERT INTO house_status_history
                     (house_id, status, changed_by, changed_at)
                 VALUES (?, 'not_started', 'Assign', '2026-11-05T10:00:00')
@@ -265,6 +272,64 @@ class TrackerTests(unittest.TestCase):
                 )
                 db.execute(
                     """
+                    INSERT INTO provided_houses
+                        (id, owner_name, source, plan_vent_required)
+                    VALUES ('DEMO-101', 'Demo Owner', 'tracker', 1)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO provided_houses
+                        (id, owner_name, source, plan_vent_required)
+                    VALUES ('DEMO-202', 'Demo Owner 2', 'tracker', 1)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_surveys
+                        (house_id, data, notes, updated_by, updated_at)
+                    VALUES ('DEMO-202', '{}', 'Site note only', 'Surveyor', '2026-11-05T08:30:00')
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_surveys
+                        (house_id, data, notes, updated_by, updated_at)
+                    VALUES (
+                        'VENT-COORDINATOR-1',
+                        '{"perimeter_m":42.5}',
+                        '',
+                        'Vent Role Admin',
+                        '2026-11-05T08:30:00'
+                    )
+                    """
+                )
+                db.execute(
+                    """
+                    CREATE TABLE seai_applications (
+                        application_id TEXT PRIMARY KEY,
+                        detail_data_json TEXT NOT NULL
+                    )
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO seai_applications(application_id, detail_data_json)
+                    VALUES (?, ?)
+                    """,
+                    (
+                        "VENT-COORDINATOR-1",
+                        json.dumps(
+                            {
+                                "Application Details": {
+                                    "Application ID": "DEMO-WH000002"
+                                }
+                            }
+                        ),
+                    ),
+                )
+                db.execute(
+                    """
                     INSERT INTO house_role_assignments
                         (house_id, role, user_id, assigned_by, assigned_at)
                     SELECT 'VENT-COORDINATOR-1', 'surveyor', id, 'Admin',
@@ -305,6 +370,17 @@ class TrackerTests(unittest.TestCase):
                 admin_cookie,
             )
             self.assertEqual(status, 201)
+            with server.connect_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO house_vent_assignments
+                        (house_id, teamlead_user_id, assigned_by, assigned_at)
+                    VALUES
+                        ('DEMO-101', ?, 'Previous Coordinator', '2026-11-05T08:00:00'),
+                        ('DEMO-202', ?, 'Previous Coordinator', '2026-11-05T08:00:00')
+                    """,
+                    (teamlead["user"]["id"], teamlead["user"]["id"]),
+                )
             status, _, coordinator_cookie = self.http_request(
                 httpd,
                 "POST",
@@ -325,9 +401,49 @@ class TrackerTests(unittest.TestCase):
                 "Vent Role Admin",
             )
             self.assertEqual(
+                dashboard["ventilation_coordinator_houses"][0][
+                    "seai_application_id"
+                ],
+                "DEMO-WH000002",
+            )
+            self.assertEqual(
                 dashboard["ventilation_teamleads"][0]["id"],
                 teamlead["user"]["id"],
             )
+            status, _, teamlead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "vent-teamlead", "pin": "234567"},
+            )
+            self.assertEqual(status, 200)
+            status, team_dashboard, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/dashboard",
+                cookie=teamlead_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertNotIn(
+                "DEMO-101",
+                [house["id"] for house in team_dashboard["ventilation_houses"]],
+            )
+            self.assertNotIn(
+                "DEMO-202",
+                [house["id"] for house in team_dashboard["ventilation_houses"]],
+            )
+            for house_id in ("DEMO-101", "DEMO-202"):
+                status, _, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/ventilation-coordinator/assignment",
+                    {
+                        "house_id": house_id,
+                        "teamlead_user_id": teamlead["user"]["id"],
+                    },
+                    coordinator_cookie,
+                )
+                self.assertEqual(status, 409)
             status, assignment, _ = self.http_request(
                 httpd,
                 "POST",
@@ -1253,6 +1369,27 @@ class TrackerTests(unittest.TestCase):
             traversal_response = connection.getresponse()
             self.assertEqual(traversal_response.status, 404)
             traversal_response.read()
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_custom_ventilation_mark_is_served(self):
+        httpd, thread = self.start_test_server()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", httpd.server_address[1], timeout=5
+        )
+        try:
+            connection.request("GET", "/ventilation-mark.svg")
+            response = connection.getresponse()
+            image = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(
+                response.getheader("Content-Type"),
+                "image/svg+xml; charset=utf-8",
+            )
+            self.assertIn(b"Modern fan and airflow symbol", image)
         finally:
             connection.close()
             httpd.shutdown()

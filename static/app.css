@@ -546,6 +546,8 @@ body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-assigned { border-color: #bfd5ef; background: #edf5ff; color: #285582; }
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-complete { border-color: #b6d2c0; background: #e8f4ec; color: #2d6542; }
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-needed { border-color: #f0d7a8; background: #fff8eb; color: #805a1b; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .vent-coordinator-seai-id { margin: 3px 0; color: #526b5b; font-size: 10px; overflow-wrap: anywhere; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .vent-coordinator-seai-id span { color: #75827a; font-weight: 600; }
 .plumbing-work-detail { border: 1px solid #e0ece3; border-left: 3px solid #72a984; border-radius: 0 10px 10px 0; padding: 12px 14px; background: #f5f9f6; }
 .plumbing-surveyor-detail { display: grid; grid-template-columns: 30px auto minmax(0, 1fr); align-items: center; gap: 5px 9px; margin-bottom: 12px; }
 .plumbing-surveyor-avatar { display: grid; width: 30px; height: 30px; grid-row: span 2; place-items: center; border: 1px solid #d5e5da; border-radius: 50%; background: #e8f3eb; color: #2e6946; font-size: 9px; font-weight: 800; }
@@ -2281,6 +2283,18 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
 .pdf-annotator-page-selection { display: inline-flex; min-height: 38px; align-items: center; gap: 6px; color: #425d4d; font-size: 10px; font-weight: 650; cursor: pointer; }
 .pdf-annotator-page-selection input { width: 17px; height: 17px; accent-color: #176347; }
 .pdf-annotator-save { min-width: 150px; }
+.pdf-annotator-icon-transform { display: inline-flex; align-items: center; gap: 5px; }
+.pdf-annotator-icon-transform .button { min-height: 38px; padding: 0 9px; font-size: 11px; }
+.pdf-annotator-icon-panel { display: grid; flex: 0 0 auto; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #dfe9e2; background: linear-gradient(110deg, #f1f8f3, #fff 72%); }
+.pdf-annotator-icon-panel-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; color: #355342; font-size: 11px; }
+.pdf-annotator-icon-panel-heading span { color: #6a7b71; font-size: 10px; }
+.pdf-annotator-icon-palette { display: flex; gap: 8px; overflow-x: auto; padding: 2px 1px 5px; }
+.pdf-annotator-icon-choice { display: grid; flex: 0 0 76px; min-height: 76px; place-items: center; gap: 4px; border: 1px solid #dce8df; border-radius: 11px; padding: 7px; background: #fff; color: #42584a; cursor: grab; }
+.pdf-annotator-icon-choice:hover, .pdf-annotator-icon-choice.active { border-color: #47a976; background: #f0faf3; box-shadow: 0 2px 8px #1c513018; }
+.pdf-annotator-icon-choice:active { cursor: grabbing; }
+.pdf-annotator-icon-choice img { width: 42px; height: 42px; object-fit: contain; pointer-events: none; }
+.pdf-annotator-icon-choice span { max-width: 100%; overflow: hidden; font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.ventilation-shared-pdf-viewer-hint { margin: 0; padding: 8px 14px; color: #536b5c; font-size: 11px; }
 .pdf-annotator-text-panel { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 16px; border-bottom: 1px solid #e7ece9; background: #f4f8fc; color: #415c75; font-size: 11px; }
 .pdf-annotator-text-panel > label { font-weight: 650; }
 .pdf-annotator-text-panel .pdf-annotator-text-label { flex: 0 0 auto; }
@@ -2308,6 +2322,8 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
   .pdf-annotator-dialog { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
   .pdf-annotator-header { padding: 9px 12px; }
   .pdf-annotator-toolbar { justify-content: flex-start; gap: 6px; padding: 8px; }
+  .pdf-annotator-icon-panel { padding: 8px; }
+  .pdf-annotator-icon-choice { flex-basis: 70px; min-height: 72px; }
   .pdf-tool-button { min-height: 44px; padding: 0 9px; font-size: 11px; }
   .pdf-annotator-color { min-height: 44px; }
   .pdf-annotator-color select { min-height: 42px; }
@@ -2349,7 +2365,14 @@ html[data-theme="dark"] .pdf-annotator-page-jump input { border-color: #496555; 
 html[data-theme="dark"] #pdf-annotator-dialog { border-color: #3a5045; background: #17211e; color: #e4ece8; color-scheme: dark; }
 html[data-theme="dark"] .pdf-annotator-header,
 html[data-theme="dark"] .pdf-annotator-toolbar,
-html[data-theme="dark"] .pdf-annotator-text-panel { border-color: #35483f; background: #1b2823; }
+html[data-theme="dark"] .pdf-annotator-text-panel,
+html[data-theme="dark"] .pdf-annotator-icon-panel { border-color: #35483f; background: #1b2823; }
+html[data-theme="dark"] .pdf-annotator-icon-panel-heading { color: #d3eadb; }
+html[data-theme="dark"] .pdf-annotator-icon-panel-heading span { color: #a7b8ae; }
+html[data-theme="dark"] .ventilation-shared-pdf-viewer-hint { color: #a7b8ae; }
+html[data-theme="dark"] .pdf-annotator-icon-choice { border-color: #42584b; background: #17211e; color: #d3eadb; }
+html[data-theme="dark"] .pdf-annotator-icon-choice:hover,
+html[data-theme="dark"] .pdf-annotator-icon-choice.active { border-color: #6a997a; background: #263a30; }
 html[data-theme="dark"] .pdf-annotator-title h2 { color: #eaf4ef; }
 html[data-theme="dark"] .pdf-annotator-title .eyebrow { color: #8bc7a2; }
 html[data-theme="dark"] #pdf-annotator-close { color: #c6d6cc; }
@@ -3805,8 +3828,10 @@ html[data-theme="dark"] .house-map-stage-filter[aria-pressed="false"] {
 .surveyor-account-identity { display: grid; min-width: 0; gap: 3px; }
 .surveyor-account-identity strong { overflow: hidden; color: var(--ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .surveyor-account-identity small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.surveyor-account-identity .surveyor-account-workload { font-weight: 650; }
 .surveyor-account-status { justify-self: end; border-radius: 999px; padding: 4px 7px; background: #eff3f0; color: #62736a; font-size: 9px; font-weight: 700; white-space: nowrap; }
-.surveyor-account-option.selected .surveyor-account-status { background: #dceddf; color: #23613e; }
+.surveyor-account-status.busy { background: #fff1d9; color: #875a13; }
+.surveyor-account-option.selected .surveyor-account-status:not(.busy) { background: #dceddf; color: #23613e; }
 .surveyor-account-option.inactive { cursor: not-allowed; opacity: .58; }
 .surveyor-account-empty, .surveyor-account-loading { grid-column: 1 / -1; margin: 0; border: 1px dashed #cbd9cf; border-radius: 9px; padding: 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .house-assignment-prerequisites { margin: 0; border: 1px solid #dce5e0; border-radius: 9px; padding: 11px 13px; background: var(--paper); color: var(--muted); font-size: 12px; line-height: 1.5; }
@@ -3844,7 +3869,8 @@ html[data-theme="dark"] .surveyor-account-avatar { border-color: #3d5947; backgr
 html[data-theme="dark"] .surveyor-account-identity strong { color: #e5eee8; }
 html[data-theme="dark"] .surveyor-account-identity small { color: #a7b8ad; }
 html[data-theme="dark"] .surveyor-account-status { background: #293630; color: #b7c6bd; }
-html[data-theme="dark"] .surveyor-account-option.selected .surveyor-account-status { background: #2b5139; color: #b7e5c4; }
+html[data-theme="dark"] .surveyor-account-status.busy { background: #493921; color: #f0d397; }
+html[data-theme="dark"] .surveyor-account-option.selected .surveyor-account-status:not(.busy) { background: #2b5139; color: #b7e5c4; }
 html[data-theme="dark"] .surveyor-account-empty,
 html[data-theme="dark"] .surveyor-account-loading { border-color: #46594e; color: #b7c8be; }
 html[data-theme="dark"] .house-assignment-prerequisites { border-color: #35483f; background: #1b2823; color: #b7c8be; }
@@ -4332,6 +4358,8 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .ven
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .vent-coordinator-seai-id { color: #b1c2b8; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .vent-coordinator-seai-id span { color: #8fa397; }
 html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-assigned { border-color: #3d5e7d; background: #24364a; color: #c2dcf7; }
 html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
 html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Ventilation</title>
+  <desc id="desc">Modern fan and airflow symbol.</desc>
+  <defs>
+    <linearGradient id="surface" x1="12" y1="8" x2="84" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8fffb"/>
+      <stop offset="1" stop-color="#d8f1e2"/>
+    </linearGradient>
+    <linearGradient id="rotor" x1="27" y1="22" x2="71" y2="69" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#36b978"/>
+      <stop offset="1" stop-color="#18784e"/>
+    </linearGradient>
+    <filter id="shadow" x="8" y="7" width="82" height="84" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#174d35" flood-opacity=".14"/>
+    </filter>
+  </defs>
+  <rect x="10" y="8" width="76" height="76" rx="25" fill="url(#surface)" filter="url(#shadow)"/>
+  <circle cx="48" cy="43" r="24" fill="#fff" fill-opacity=".72" stroke="#c7e6d3" stroke-width="1.5"/>
+  <g fill="url(#rotor)">
+    <path d="M47.4 39.8c-5.3-7.9-4.1-14.8 1.1-18.2 4.7 5.3 5.7 11 2.3 18.1l-1.6 3.2z"/>
+    <path d="M50.8 42.6c9.5-1.1 15.1 3.1 15.6 9.3-6.9 1.8-12.4.2-17.2-5.9l-2.1-2.9z"/>
+    <path d="M48.3 46.7c-4.2 8.6-10.7 11.1-16 7.8 2.5-6.7 6.9-10.3 14.7-10.9l3.6-.2z"/>
+  </g>
+  <circle cx="48" cy="43" r="4.3" fill="#164f36"/>
+  <path d="M27 67h24c4.4 0 7.2 2.4 7.2 5.7S55.4 78 51 78H38" fill="none" stroke="#269660" stroke-linecap="round" stroke-width="3.2"/>
+  <path d="M42 61h26c4.4 0 7.2 2.4 7.2 5.7S72.4 72 68 72h-3" fill="none" stroke="#80cda0" stroke-linecap="round" stroke-width="3.2"/>
+  <circle cx="26" cy="67" r="2" fill="#269660"/>
+</svg>
