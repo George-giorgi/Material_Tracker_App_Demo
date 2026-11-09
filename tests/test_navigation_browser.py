@@ -1571,6 +1571,87 @@ class NavigationBrowserTests(unittest.TestCase):
             }"""
         )
         self.assertTrue(save_copy.is_enabled())
+        self.page.locator("[data-pdf-tool='pen']").click()
+        self.assertEqual(
+            icon_palette.locator(".pdf-annotator-icon-card.active").count(),
+            0,
+        )
+        self.page.mouse.click(
+            canvas_bounds["x"] + canvas_bounds["width"] * 0.3,
+            canvas_bounds["y"] + canvas_bounds["height"] * 0.3,
+        )
+        annotation_counts = self.page.evaluate(
+            """() => ({
+              icons: state.pdfAnnotator.annotations.filter(
+                annotation => annotation.tool === 'ventilation_icon'
+              ).length,
+              penStrokes: state.pdfAnnotator.annotations.filter(
+                annotation => annotation.tool === 'pen'
+              ).length
+            })"""
+        )
+        self.assertEqual(annotation_counts, {"icons": 1, "penStrokes": 1})
+        self.page.locator("[data-pdf-tool='text']").click()
+        self.page.locator("#pdf-annotator-text").fill("Outlet location")
+        self.page.mouse.click(
+            canvas_bounds["x"] + canvas_bounds["width"] * 0.65,
+            canvas_bounds["y"] + canvas_bounds["height"] * 0.65,
+        )
+        text_annotation_counts = self.page.evaluate(
+            """() => ({
+              icons: state.pdfAnnotator.annotations.filter(
+                annotation => annotation.tool === 'ventilation_icon'
+              ).length,
+              notes: state.pdfAnnotator.annotations.filter(
+                annotation => annotation.tool === 'text'
+              ).length
+            })"""
+        )
+        self.assertEqual(text_annotation_counts, {"icons": 1, "notes": 1})
+        next_icon = icon_palette.locator(".pdf-annotator-icon-card").nth(1)
+        next_icon.click()
+        self.assertEqual(
+            self.page.locator("[data-pdf-tool='pen']").get_attribute("aria-pressed"),
+            "true",
+        )
+        self.assertTrue(self.page.locator("#pdf-annotator-text-panel").is_hidden())
+        self.page.evaluate(
+            """card => {
+              const canvas = document.querySelector('#pdf-annotator-canvas');
+              const transfer = new DataTransfer();
+              card.dispatchEvent(new DragEvent('dragstart', {
+                bubbles: true,
+                dataTransfer: transfer
+              }));
+              const bounds = canvas.getBoundingClientRect();
+              canvas.dispatchEvent(new DragEvent('dragover', {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: transfer,
+                clientX: bounds.left + bounds.width * 0.4,
+                clientY: bounds.top + bounds.height * 0.4
+              }));
+              canvas.dispatchEvent(new DragEvent('drop', {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: transfer,
+                clientX: bounds.left + bounds.width * 0.4,
+                clientY: bounds.top + bounds.height * 0.4
+              }));
+            }""",
+            next_icon.element_handle(),
+        )
+        mode_switch_counts = self.page.evaluate(
+            """() => ({
+              icons: state.pdfAnnotator.annotations.filter(
+                annotation => annotation.tool === 'ventilation_icon'
+              ).length,
+              notes: state.pdfAnnotator.annotations.filter(
+                annotation => annotation.tool === 'text'
+              ).length
+            })"""
+        )
+        self.assertEqual(mode_switch_counts, {"icons": 2, "notes": 1})
         self.page.keyboard.press("Escape")
         self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         annotated_seai_pdf = attached_pdfs_dialog.locator(

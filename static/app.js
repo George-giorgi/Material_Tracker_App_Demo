@@ -9225,6 +9225,13 @@ function bindEvents() {
       const annotator = state.pdfAnnotator;
       if (!annotator) return;
       annotator.tool = button.dataset.pdfTool;
+      annotator.placementIcon = null;
+      $$(".pdf-annotator-icon-card", $("#pdf-annotator-icon-list")).forEach(
+        (card) => {
+          card.classList.remove("active");
+          card.setAttribute("aria-pressed", "false");
+        },
+      );
       $$(".pdf-tool-button").forEach((toolButton) => {
         const active = toolButton === button;
         toolButton.classList.toggle("active", active);
@@ -9234,7 +9241,7 @@ function bindEvents() {
       $("#pdf-annotator-text-panel").classList.toggle("hidden", !textTool);
       $("#pdf-annotator-help").textContent = textTool
         ? "Choose your note size, type the text, then tap the page to place it."
-        : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.";
+        : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark. Select a product icon to place another.";
       if (textTool) $("#pdf-annotator-text").focus();
     }),
   );
@@ -9351,6 +9358,13 @@ function bindEvents() {
     if (!card || !annotator || !isVentAnnotationDocumentType(annotator.documentType)) return;
     const iconKey = card.dataset.iconKey;
     annotator.placementIcon = annotator.placementIcon === iconKey ? null : iconKey;
+    annotator.tool = "pen";
+    $$(".pdf-tool-button").forEach((toolButton) => {
+      const active = toolButton.dataset.pdfTool === annotator.tool;
+      toolButton.classList.toggle("active", active);
+      toolButton.setAttribute("aria-pressed", String(active));
+    });
+    $("#pdf-annotator-text-panel").classList.add("hidden");
     $$(".pdf-annotator-icon-card", iconList).forEach((item) => {
       const active = item.dataset.iconKey === annotator.placementIcon;
       item.classList.toggle("active", active);
@@ -9383,6 +9397,31 @@ function bindEvents() {
     const annotator = state.pdfAnnotator;
     if (!annotator || annotator.loading || !pdfCanvas.clientWidth) return;
     const point = pdfCanvasPoint(event);
+    if (annotator.tool === "text") {
+      event.preventDefault();
+      const text = $("#pdf-annotator-text").value.trim();
+      const textSize = Number($("#pdf-annotator-text-size").value);
+      if (!text) {
+        $("#pdf-annotator-text").focus();
+        showToast("Type a note before tapping the PDF.", true);
+        return;
+      }
+      if (!Number.isFinite(textSize) || textSize < 12 || textSize > 32) {
+        showToast("Choose a text size between 12 and 32.", true);
+        return;
+      }
+      annotator.annotations.push({
+        page: annotator.page,
+        tool: "text",
+        color: $("#pdf-annotator-color").value,
+        point,
+        text,
+        wrap: annotator.documentType === "blank",
+        font_size: textSize / annotator.fitWidth,
+      });
+      drawPdfAnnotations();
+      return;
+    }
     if (isVentAnnotationDocumentType(annotator.documentType)) {
       const handle = selectedIconHandle(annotator, point);
       const hit = ventIconAt(annotator, point);
@@ -9417,30 +9456,6 @@ function bindEvents() {
     }
     event.preventDefault();
     const color = $("#pdf-annotator-color").value;
-    if (annotator.tool === "text") {
-      const text = $("#pdf-annotator-text").value.trim();
-      const textSize = Number($("#pdf-annotator-text-size").value);
-      if (!text) {
-        $("#pdf-annotator-text").focus();
-        showToast("Type a note before tapping the PDF.", true);
-        return;
-      }
-      if (!Number.isFinite(textSize) || textSize < 12 || textSize > 32) {
-        showToast("Choose a text size between 12 and 32.", true);
-        return;
-      }
-      annotator.annotations.push({
-        page: annotator.page,
-        tool: "text",
-        color,
-        point,
-        text,
-        wrap: annotator.documentType === "blank",
-        font_size: textSize / annotator.fitWidth,
-      });
-      drawPdfAnnotations();
-      return;
-    }
     const width = (annotator.tool === "highlighter"
       ? Math.max(8, annotator.penSize * 3)
       : annotator.penSize) / annotator.fitWidth;
