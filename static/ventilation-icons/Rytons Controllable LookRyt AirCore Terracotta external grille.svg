@@ -2,15 +2,6 @@
   <title id="title">Rytons Controllable LookRyt AirCore — Terracotta external grille</title>
   <desc id="desc">Isometric illustration closely following the reference photograph: a terracotta rectangular louvred grille, short black telescopic AirCore wall sleeve, and cream square mounting flange against a blue background.</desc>
   <defs>
-    <linearGradient id="blue" x1="0" y1="0" x2=".12" y2="1" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5262b5"/>
-      <stop offset=".48" stop-color="#526dbf"/>
-      <stop offset="1" stop-color="#4a73c3"/>
-    </linearGradient>
-    <radialGradient id="blueLight" cx="47%" cy="74%" r="80%">
-      <stop stop-color="#718bd7" stop-opacity=".35"/>
-      <stop offset="1" stop-color="#3b509f" stop-opacity=".12"/>
-    </radialGradient>
     <linearGradient id="tube" x1=".1" y1="0" x2=".25" y2="1">
       <stop stop-color="#3e3d39"/>
       <stop offset=".18" stop-color="#242424"/>
@@ -60,9 +51,6 @@
     </clipPath>
   </defs>
 
-  <path d="M1 17h401v265H1z" fill="url(#blue)"/>
-  <path d="M1 17h401v265H1z" fill="url(#blueLight)"/>
-  <path d="M1.5 17.5h400v264h-400z" fill="none" stroke="#dedfe5" stroke-width="1.5"/>
   <ellipse cx="198" cy="266" rx="145" ry="12" fill="#19243a" opacity=".19" filter="url(#softShadow)"/>
 
   <!-- Square exterior fixing plate at the wall end. -->

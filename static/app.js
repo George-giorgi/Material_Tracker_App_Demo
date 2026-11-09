@@ -9,6 +9,7 @@ const state = {
   batchLines: [],
   selectedHouseId: "",
   viewingHouseId: "",
+  houseDetailReturnTab: "houses",
   houseDetailRequest: 0,
   assignSeaiHouseViewId: "",
   assignSeaiHouseRequest: 0,
@@ -73,6 +74,24 @@ const isPlumbingSupervisorUser = (user) =>
     (user?.departments || []).some(
       (department) =>
         department.name?.trim().toLocaleLowerCase() === "plumbing",
+    ));
+const isEwiSupervisorUser = (user) =>
+  hasAccessProfile(user, "supervisor") &&
+  (user?.supervisor_specialty?.trim().toLocaleLowerCase() ===
+    "external wall insulation" ||
+    (user?.departments || []).some(
+      (department) =>
+        department.name?.trim().toLocaleLowerCase() ===
+        "external wall insulation",
+    ));
+const isEwiTeamleadUser = (user) =>
+  hasAccessProfile(user, "teamlead") &&
+  ((user?.team_name || "").trim().toLocaleLowerCase() ===
+    "external wall insulation" ||
+    (user?.departments || []).some(
+      (department) =>
+        department.name?.trim().toLocaleLowerCase() ===
+        "external wall insulation",
     ));
 const canManageReportingRole = (manager, report) =>
   (hasAccessProfile(report, "assign") &&
@@ -273,6 +292,8 @@ let ventilationHouseFilter = "all";
 let plumbingHouseFilter = "all";
 let ventilationCoordinatorHouseFilter = "all";
 let plumbingSupervisorHouseFilter = "all";
+let supervisorHouseFilter = "all";
+let teamleadEwiHouseFilter = "all";
 let weatherRequestId = 0;
 
 function escapeHtml(value) {
@@ -492,6 +513,10 @@ function formatAuditDateTime(value) {
         minute: "2-digit",
         hourCycle: "h23",
       }).format(parsed);
+}
+
+function plumbingIconMarkup() {
+  return `<span class="plumbing-trade-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M5 3v5a4 4 0 0 0 4 4h6a4 4 0 0 1 4 4v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3h4M3 1v4M17 21h4M19 19v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13 3.5c-1.3 1.6-2 2.5-2 3.5a2 2 0 1 0 4 0c0-1-.7-1.9-2-3.5Z" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span>`;
 }
 
 function formatElapsedTime(startValue, endValue) {
@@ -856,7 +881,11 @@ function showWorkspace(user) {
     }
     $(".surveyor-brand")?.classList.remove("has-new-information");
     plumbingSupervisorHouseFilter = "all";
+    supervisorHouseFilter = "all";
+    teamleadEwiHouseFilter = "all";
     $("#plumbing-supervisor-house-search").value = "";
+    $("#supervisor-house-search").value = "";
+    $("#teamlead-ewi-search").value = "";
   }
   state.user = user;
   $("#auth-screen").classList.add("hidden");
@@ -886,6 +915,8 @@ function showWorkspace(user) {
   $("#account-details").textContent = `${user.username} - ${user.role_name || roleNames[user.role] || user.role}`;
   const isSurveyor = hasAccessProfile(user, "surveyor");
   const isSupervisor = hasAccessProfile(user, "supervisor");
+  const isTeamlead = hasAccessProfile(user, "teamlead");
+  const isEwiTeamlead = isEwiTeamleadUser(user);
   const isPlumbingSupervisor = isPlumbingSupervisorUser(user);
   const isAssign = hasAccessProfile(user, "assign");
   const isPlumbingCoordinator = hasAccessProfile(user, "plumbing_coordinator");
@@ -898,13 +929,20 @@ function showWorkspace(user) {
   $("#overview-work-summary").append(dashboardStats);
   $$("[data-house-view]").forEach((tile) => {
     tile.disabled =
-      isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor;
+      isPlumbingCoordinator ||
+      isVentilationCoordinator ||
+      isSupervisor;
   });
   $("#ventilation-workload").classList.toggle("hidden", !isVentilation);
   $("#plumbing-supervisor-workload").classList.toggle(
     "hidden",
     !isPlumbingSupervisor,
   );
+  $("#supervisor-workload").classList.toggle(
+    "hidden",
+    !isSupervisor || isPlumbingSupervisor,
+  );
+  $("#teamlead-ewi-workload").classList.toggle("hidden", !isEwiTeamlead);
   $("#plumbing-coordinator-workload").classList.toggle("hidden", !isPlumbingCoordinator);
   $("#ventilation-coordinator-workload").classList.toggle(
     "hidden",
@@ -912,23 +950,23 @@ function showWorkspace(user) {
   );
   $("#overview-work-summary").classList.toggle(
     "hidden",
-    isPlumbingSupervisor || isPlumbingCoordinator || isVentilationCoordinator,
+    isSupervisor || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator,
   );
   $("#page-overview .overview-grid").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isVentilation || isSupervisor || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator,
   );
   $("#page-overview .kpi-strip").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isVentilation || isSupervisor || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator,
   );
   $("#page-overview .privacy-note").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isVentilation || isSupervisor || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator,
   );
   $("#today-label").classList.toggle(
     "hidden",
-    isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isVentilation || isSupervisor || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator,
   );
   const housesNavLabel = $('[data-tab="houses"] .nav-label');
   if (housesNavLabel) {
@@ -941,6 +979,12 @@ function showWorkspace(user) {
   $("#house-map-activity").classList.toggle("hidden", isAssign);
   document.body.classList.toggle("surveyor-mode", isSurveyor);
   document.body.classList.toggle("supervisor-mode", isSupervisor);
+  document.body.classList.toggle("teamlead-mode", isTeamlead);
+  document.body.classList.toggle("teamlead-workspace-mode", isEwiTeamlead);
+  document.body.classList.toggle(
+    "supervisor-workspace-mode",
+    isSupervisor && !isPlumbingSupervisor,
+  );
   document.body.classList.toggle("ventilation-mode", isVentilation);
   document.body.classList.toggle(
     "plumbing-coordinator-mode",
@@ -953,10 +997,13 @@ function showWorkspace(user) {
   document.body.classList.toggle("plumbing-supervisor-mode", isPlumbingSupervisor);
   $(".main-nav.workspace-nav").classList.toggle(
     "hidden",
-    isVentilation || isAssign || isSurveyor || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isVentilation || isAssign || isSurveyor || isSupervisor || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator,
   );
   $("#surveyor-dashboard-summary").classList.toggle("hidden", !isSurveyor);
-  $("#supervisor-dashboard-summary").classList.toggle("hidden", !isSupervisor);
+  $("#supervisor-dashboard-summary").classList.toggle(
+    "hidden",
+    !isSupervisor || isPlumbingSupervisor || isEwiSupervisorUser(state.user),
+  );
   $("#surveyor-house-filters").classList.toggle("hidden", !isSurveyor);
   const houseRefreshButton = $("#refresh-surveyor-houses");
   houseRefreshButton.classList.toggle("hidden", !isSurveyor && !isAssign);
@@ -968,20 +1015,21 @@ function showWorkspace(user) {
     item.classList.toggle(
       "hidden",
       (isSurveyor && item.dataset.tab === "houses") ||
-        ((isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor) &&
+        (isEwiTeamlead && item.dataset.tab !== "overview") ||
+        ((isPlumbingCoordinator || isVentilationCoordinator || isSupervisor) &&
           item.dataset.tab !== "overview") ||
-        ((isSurveyor || (isSupervisor && !isPlumbingSupervisor) || isAssign) &&
+        ((isSurveyor || isAssign) &&
           item.dataset.tab !== "houses"),
     ),
   );
   $("#new-movement-top").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isSurveyor || isSupervisor || isAssign || isVentilation || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#start-presentation").classList.toggle("hidden", isSurveyor || !hasAccessProfile(user, "admin"));
   $("#start-navigation-tour").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isAssign || isVentilation || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
+    isSurveyor || isSupervisor || isAssign || isVentilation || isEwiTeamlead || isPlumbingCoordinator || isVentilationCoordinator || isPlumbingSupervisor,
   );
   $("#houses-teams-tabs").classList.toggle(
     "hidden",
@@ -993,9 +1041,17 @@ function showWorkspace(user) {
   );
   $("#open-house").classList.toggle(
     "hidden",
-    isSurveyor || isSupervisor || isVentilationCoordinator,
+    isSurveyor || isSupervisor || isEwiTeamlead || isVentilationCoordinator,
   );
-  if (isPlumbingSupervisor) {
+  if (isEwiTeamlead) {
+    $("#overview-eyebrow").textContent = "EWI TEAMLEAD WORKSPACE";
+    $("#overview-title").textContent = "My EWI dashboard";
+    $("#overview-subtitle").textContent =
+      "Your EWI crew, assigned houses, and work progress in one place.";
+    $("#teamlead-ewi-greeting-title").textContent =
+      `Welcome back, ${user.display_name}`;
+    $("#teamlead-ewi-title").textContent = "Your EWI work";
+  } else if (isPlumbingSupervisor) {
     $("#overview-eyebrow").textContent = "PLUMBING TEAM SUPERVISOR";
     $("#overview-title").textContent = "My plumbing dashboard";
     $("#overview-subtitle").textContent =
@@ -1098,6 +1154,8 @@ function showWorkspace(user) {
     $("#house-search").placeholder = "Search your houses";
     $("#house-search").setAttribute("aria-label", "Search your assigned houses");
     loadSurveyorHouses();
+  } else if (isEwiTeamlead) {
+    setTab("overview");
   } else if (isPlumbingCoordinator) {
     setTab("overview");
   } else if (isAssign) {
@@ -1115,26 +1173,43 @@ function showWorkspace(user) {
     $("#house-search").setAttribute("aria-label", "Search houses");
     setTab("houses");
   } else if (isSupervisor) {
-    $("#supervisor-dashboard-greeting").textContent =
-      `Welcome, ${user.display_name}`;
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+    $("#supervisor-workload-greeting").textContent =
+      `${greeting}, ${user.display_name}`;
     if (isPlumbingSupervisor) {
-      $("#supervisor-dashboard-description").textContent =
-        "Only plumbing houses assigned to your account appear here. Choose a delivery person and active Teamlead once a house is active.";
       $("#houses-page-eyebrow").textContent = "PLUMBING TEAM SUPERVISION";
       $("#houses-page-title").textContent = "My plumbing houses";
       $("#houses-page-subtitle").textContent =
         "Coordinate delivery people and teams for the plumbing houses assigned to you.";
       $("#houses-list-heading").textContent = "My assigned plumbing houses";
+    } else if (isEwiSupervisorUser(user)) {
+      $("#overview-eyebrow").textContent = "EWI TEAM SUPERVISION";
+      $("#overview-title").textContent = "My EWI dashboard";
+      $("#overview-subtitle").textContent =
+        "Your EWI Teamleads, assigned houses, and delivery progress in one place.";
+      $("#supervisor-workload-eyebrow").textContent =
+        "EWI SUPERVISOR WORKSPACE";
+      $("#supervisor-workload-greeting").textContent =
+        `Welcome back, ${user.display_name}`;
+      $("#supervisor-workload-intro").textContent =
+        "Review EWI houses, coordinate delivery assignments, and keep your Teamleads informed.";
+      supervisorHouseFilter = "all";
+      $("#supervisor-house-search").value = "";
     } else {
-      $("#houses-page-eyebrow").textContent = "YOUR SUPERVISION DASHBOARD";
-      $("#houses-page-title").textContent = "My assigned houses";
-      $("#houses-page-subtitle").textContent =
-        "Assign a delivery person and team to each house you supervise.";
-      $("#houses-list-heading").textContent = "Houses assigned to you";
+      $("#overview-eyebrow").textContent = "SUPERVISOR WORKSPACE";
+      $("#overview-title").textContent = "My supervisor dashboard";
+      $("#overview-subtitle").textContent =
+        "Your Teamleads, assigned houses, and delivery progress in one place.";
+      $("#supervisor-workload-eyebrow").textContent = "SUPERVISOR WORKSPACE";
+      $("#supervisor-workload-intro").textContent =
+        "Review houses assigned to you, coordinate deliveries, and keep your Teamleads informed.";
+      supervisorHouseFilter = "all";
+      $("#supervisor-house-search").value = "";
     }
     $("#house-search").placeholder = "Search your houses";
     $("#house-search").setAttribute("aria-label", "Search your assigned houses");
-    setTab(isPlumbingSupervisor ? "overview" : "houses");
+    setTab("overview");
   } else {
     $("#houses-page-eyebrow").textContent = "SITE ALLOCATION & RESPONSIBILITY";
     $("#houses-page-title").textContent = "Houses & teams";
@@ -1607,9 +1682,9 @@ function renderOverview() {
           return `
             <article class="card surveyor-house-card ventilation-house-card${isComplete ? " is-complete" : ""}">
               <div class="ventilation-house-top">
-                <span class="ventilation-house-icon" aria-hidden="true">⌂</span>
+                <span class="ventilation-house-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M11.1 10.2c-.7-2.4-.5-4.1.8-4.7 1.5-.7 2.8.8 2.3 2.3-.3 1-1.3 1.8-2.2 2.7ZM13.1 12.5c2.4-.7 4.1-.5 4.7.8.7 1.5-.8 2.8-2.3 2.3-1-.3-1.8-1.3-2.7-2.2ZM10.9 13.1c.7 2.4.5 4.1-.8 4.7-1.5.7-2.8-.8-2.3-2.3.3-1 1.3-1.8 2.2-2.7ZM10.9 11.5c-2.4.7-4.1.5-4.7-.8-.7-1.5.8-2.8 2.3-2.3 1 .3 1.8 1.3 2.7 2.2Z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg></span>
                 <div class="ventilation-house-identity">
-                  <h3>${escapeHtml(house.id)}</h3>
+                  <h3>${houseCardTitle(house, escapeHtml(house.id))}</h3>
                   <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
                   ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
                 </div>
@@ -1732,9 +1807,9 @@ function renderOverview() {
         return `
           <article class="card plumbing-house-card ventilation-house-card${isCompleted ? " is-complete" : ""}">
             <div class="ventilation-house-top">
-              <span class="ventilation-house-icon" aria-hidden="true">⌂</span>
+              ${plumbingIconMarkup()}
               <div class="ventilation-house-identity">
-                <h3>${escapeHtml(house.id)}</h3>
+                <h3>${houseCardTitle(house, escapeHtml(house.id))}</h3>
                 <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
                 ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
               </div>
@@ -1870,9 +1945,9 @@ function renderOverview() {
         return `
           <article class="card plumbing-house-card ventilation-house-card${complete ? " is-complete" : ""}">
             <div class="ventilation-house-top">
-              <span class="ventilation-house-icon" aria-hidden="true">⌂</span>
+              <span class="ventilation-house-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M11.1 10.2c-.7-2.4-.5-4.1.8-4.7 1.5-.7 2.8.8 2.3 2.3-.3 1-1.3 1.8-2.2 2.7ZM13.1 12.5c2.4-.7 4.1-.5 4.7.8.7 1.5-.8 2.8-2.3 2.3-1-.3-1.8-1.3-2.7-2.2ZM10.9 13.1c.7 2.4.5 4.1-.8 4.7-1.5.7-2.8-.8-2.3-2.3.3-1 1.3-1.8 2.2-2.7ZM10.9 11.5c-2.4.7-4.1.5-4.7-.8-.7-1.5.8-2.8 2.3-2.3 1 .3 1.8 1.3 2.7 2.2Z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg></span>
               <div class="ventilation-house-identity">
-                <h3>${escapeHtml(house.id)}</h3>
+                <h3>${houseCardTitle(house, escapeHtml(house.id))}</h3>
                 <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
                 ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
               </div>
@@ -2269,7 +2344,8 @@ function seaiCardDetails(house) {
 }
 function houseCardTitle(house, fallbackHtml) {
   const details = seaiCardDetails(house);
-  const id = details && typeof details === "object" ? findSeaiApplicationId(details) : "";
+  const id = house?.seai_application_id ||
+    (details && typeof details === "object" ? findSeaiApplicationId(details) : "");
   return id ? escapeHtml(id) : fallbackHtml;
 }
 function applicationIdLabelHtml(house, fallback = "") {
@@ -2541,6 +2617,174 @@ function renderSupervisorAssignmentSummary(houses) {
     "No teams assigned yet.",
   );
 }
+function renderSupervisorTeamRosters() {
+  const section = $("#supervisor-team-rosters");
+  const showRosters =
+    hasAccessProfile(state.user, "supervisor") &&
+    !isPlumbingSupervisorUser(state.user);
+  section.classList.toggle("hidden", !showRosters);
+  if (!showRosters) return;
+
+  const rosters = state.dashboard?.team_rosters || [];
+  const houses = state.dashboard?.house_list || [];
+  const memberCount = rosters.reduce(
+    (total, roster) => total + roster.members.length,
+    0,
+  );
+  $("#supervisor-teamlead-count").textContent = rosters.length;
+  $("#supervisor-roster-member-count").textContent = memberCount;
+  $("#supervisor-teamlead-label").textContent =
+    rosters.length === 1 ? "Teamlead" : "Teamleads";
+  $("#supervisor-roster-member-label").textContent =
+    memberCount === 1 ? "roster member" : "roster members";
+  $("#supervisor-team-roster-list").innerHTML = rosters.length
+    ? rosters
+        .map((roster) => {
+          const initials = roster.teamlead_name
+            .split(/\s+/)
+            .map((part) => part[0])
+            .filter(Boolean)
+            .slice(0, 2)
+            .join("")
+            .toLocaleUpperCase();
+          const assignedEwiHouses = houses.filter(
+            (house) =>
+              Number(house.ewi_teamlead_user_id) === Number(roster.teamlead_id),
+          );
+          const openEwiCount = assignedEwiHouses.filter(
+            (house) => !house.ewi_completed_at,
+          ).length;
+          const completedEwiCount =
+            assignedEwiHouses.length - openEwiCount;
+          const members = roster.members.length
+            ? `<ul class="supervisor-team-roster-members">${roster.members
+                .map((member) => {
+                  const memberInitials = member.name
+                    .split(/\s+/)
+                    .map((part) => part[0])
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .join("")
+                    .toLocaleUpperCase();
+                  return `<li><span class="supervisor-roster-member-avatar" aria-hidden="true">${escapeHtml(memberInitials)}</span><span>${escapeHtml(member.name)}</span></li>`;
+                })
+                .join("")}</ul>`
+            : '<div class="supervisor-team-roster-empty"><span aria-hidden="true">＋</span><p>No roster members have been added to this crew yet.</p></div>';
+          const teamName = roster.team_name
+            ? `<span class="supervisor-team-roster-team">${escapeHtml(roster.team_name)}</span>`
+            : '<span class="supervisor-team-roster-team is-unspecified">Team name not set</span>';
+          return `<article class="supervisor-team-roster-card">
+            <div class="supervisor-team-roster-card-heading">
+              <span class="supervisor-teamlead-avatar" aria-hidden="true">${escapeHtml(initials)}</span>
+              <div class="supervisor-team-roster-identity"><span class="supervisor-team-roster-role">TEAMLEAD</span><h3>${escapeHtml(roster.teamlead_name)}</h3></div>
+            </div>
+            <div class="supervisor-team-roster-team-row">${teamName}<span class="supervisor-team-roster-members-heading">${roster.members.length} ${roster.members.length === 1 ? "roster member" : "roster members"}</span></div>
+            <div class="supervisor-team-workload" aria-label="EWI workload: ${openEwiCount} open, ${completedEwiCount} completed">
+              <strong>EWI workload</strong>
+              <div class="supervisor-team-workload-counts">
+                <span class="is-open"><span>Open</span><strong class="supervisor-team-workload-active-count">${openEwiCount}</strong></span>
+                <span class="is-completed"><span>Completed</span><strong class="supervisor-team-workload-closed-count">${completedEwiCount}</strong></span>
+              </div>
+              <small>${openEwiCount ? `${openEwiCount} open EWI ${openEwiCount === 1 ? "house" : "houses"} assigned` : "No open EWI houses assigned"}</small>
+            </div>
+            ${members}
+          </article>`;
+        })
+        .join("")
+    : '<div class="supervisor-team-rosters-empty"><span class="supervisor-team-rosters-empty-icon" aria-hidden="true">⌂</span><div><strong>No reporting Teamleads yet</strong><p>When an administrator links Teamleads to your account, their teams and rosters will appear here.</p></div></div>';
+}
+function renderTeamleadEwiWork() {
+  if (!isEwiTeamleadUser(state.user)) return;
+  const houses = state.dashboard?.teamlead_ewi_houses || [];
+  const openHouses = houses.filter((house) => !house.completed_at);
+  const completedHouses = houses.filter((house) => house.completed_at);
+  const query = $("#teamlead-ewi-search").value.trim().toLocaleLowerCase();
+  const roster = (state.dashboard?.team_rosters || []).find(
+    (item) => Number(item.teamlead_id) === Number(state.user.id),
+  );
+  const crew = $("#teamlead-ewi-crew");
+  crew.classList.toggle("hidden", !roster);
+  if (roster) {
+    const members = roster.members || [];
+    $("#teamlead-ewi-crew-title").textContent =
+      `Your ${roster.team_name || "EWI"} crew`;
+    $("#teamlead-ewi-crew-count").textContent =
+      `${members.length} crew member${members.length === 1 ? "" : "s"}`;
+    $("#teamlead-ewi-crew-list").innerHTML = members
+      .map(
+        (member) =>
+          `<article class="plumbing-supervisor-crew-card"><div class="plumbing-supervisor-crew-teamlead"><span class="plumbing-supervisor-crew-avatar" aria-hidden="true">${escapeHtml(member.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join("").toLocaleUpperCase())}</span><div><span class="plumbing-supervisor-crew-role">CREW MEMBER</span><strong>${escapeHtml(member.name)}</strong></div></div></article>`,
+      )
+      .join("");
+    $("#teamlead-ewi-crew-empty").classList.toggle("hidden", members.length > 0);
+  }
+  $("#teamlead-ewi-all-count").textContent = houses.length;
+  $("#teamlead-ewi-open-count").textContent = openHouses.length;
+  $("#teamlead-ewi-completed-count").textContent = completedHouses.length;
+  $$("#teamlead-ewi-house-filters [data-teamlead-ewi-filter]").forEach(
+    (button) => {
+      const active = button.dataset.teamleadEwiFilter === teamleadEwiHouseFilter;
+      button.setAttribute("aria-pressed", String(active));
+      button.classList.toggle("active", active);
+    },
+  );
+  const rows = houses.filter((house) => {
+    const completed = Boolean(house.completed_at);
+    const matchesFilter =
+      teamleadEwiHouseFilter === "all" ||
+      (teamleadEwiHouseFilter === "open" && !completed) ||
+      (teamleadEwiHouseFilter === "completed" && completed);
+    const searchableText = [
+      house.id,
+      house.owner_name,
+      house.address,
+      house.postcode,
+      house.supervisor_name,
+      house.assigned_by,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+    return matchesFilter && (!query || searchableText.includes(query));
+  });
+  $("#teamlead-ewi-work-list").innerHTML = rows.length
+    ? rows
+        .map((house) => {
+          const completed = Boolean(house.completed_at);
+          const houseAddress = [
+            house.address,
+            house.postcode,
+          ].filter(Boolean).join(" · ");
+          return `<article class="teamlead-ewi-house-card${completed ? " is-complete" : ""}" data-house-id="${escapeHtml(house.id)}">
+            <div class="teamlead-ewi-house-identity">
+              <span class="teamlead-ewi-house-icon" aria-hidden="true">⌂</span>
+              <div><h3>${escapeHtml(houseCardTitle(house, house.id))}</h3><p>${escapeHtml(houseAddress || house.owner_name || "Address not provided")}</p></div>
+            </div>
+            <div class="teamlead-ewi-house-meta">
+              <span class="teamlead-ewi-status${completed ? " is-complete" : ""}">${completed ? "EWI work complete" : "EWI work assigned"}</span>
+              <small>Assigned by ${escapeHtml(house.supervisor_name || house.assigned_by || "Supervisor")}</small>
+              ${completed ? `<small>Completed by ${escapeHtml(house.completed_by)} · ${escapeHtml(formatAuditDateTime(house.completed_at))}</small>` : ""}
+            </div>
+            ${completed
+              ? '<span class="teamlead-ewi-complete-mark" aria-label="Completed">✓</span>'
+              : `<button class="button button-primary teamlead-ewi-complete-button" type="button" data-teamlead-ewi-complete="${escapeHtml(house.id)}">Mark EWI work complete</button>`}
+          </article>`;
+        })
+        .join("")
+    : "";
+  const empty = $("#teamlead-ewi-work-empty");
+  empty.classList.toggle("hidden", rows.length > 0);
+  empty.querySelector("strong").textContent = houses.length
+    ? query || teamleadEwiHouseFilter !== "all"
+      ? "No EWI houses match these filters"
+      : "All assigned houses are shown"
+    : "No EWI houses assigned yet";
+  empty.querySelector("p").textContent = houses.length
+    ? query || teamleadEwiHouseFilter !== "all"
+      ? "Try another search or choose a different work filter."
+      : "Your assigned EWI houses will appear here."
+    : "Houses assigned to you by your Supervisor will appear here.";
+}
 function renderPlumbingSupervisorCrew() {
   const rosters = state.dashboard?.plumbing_crew || [];
   const memberCount = rosters.reduce(
@@ -2617,21 +2861,50 @@ function renderVentilationTeamRoster() {
       ${members}
     </article>`;
 }
+function plumbingSurveyPdfsHtml(documents = []) {
+  const entries = documents.length
+    ? `<ul class="plumbing-survey-pdf-list">${documents
+        .map((document) => {
+          const url = document.source === "seai"
+            ? `/api/seai-documents/${Number(document.id)}/file`
+            : `/api/house-documents/${Number(document.id)}`;
+          const filename = escapeHtml(document.filename);
+          const uploadedBy = escapeHtml(document.uploaded_by || "Surveyor");
+          const uploadedAt = document.uploaded_at
+            ? escapeHtml(formatAuditDateTime(document.uploaded_at))
+            : "";
+          return `<li>
+            <span class="ventilation-pdf-icon" aria-hidden="true">PDF</span>
+            <span class="plumbing-survey-pdf-copy"><strong>${filename}</strong><small>Saved by ${uploadedBy}${uploadedAt ? ` · ${uploadedAt}` : ""} · ${seaiPdfSize(document.size_bytes)}</small></span>
+            <span class="seai-pdf-actions"><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer">View</a><a class="button button-secondary" href="${url}" download="${filename}">Download</a></span>
+          </li>`;
+        })
+        .join("")}</ul>`
+    : '<p class="plumbing-survey-pdf-empty">No survey PDFs saved for this house yet.</p>';
+  return `<details class="plumbing-survey-pdfs">
+    <summary><span>Survey PDFs</span><span class="plumbing-survey-pdf-count">${documents.length}</span></summary>
+    ${entries}
+  </details>`;
+}
 function renderSupervisorHouses() {
   const isPlumbingSupervisor = isPlumbingSupervisorUser(state.user);
   const list = isPlumbingSupervisor
     ? $("#plumbing-supervisor-house-list")
-    : $("#houses-list");
+    : $("#supervisor-house-list");
   const search = isPlumbingSupervisor
     ? $("#plumbing-supervisor-house-search").value
-    : $("#house-search").value;
+    : $("#supervisor-house-search").value;
   const query = search.trim().toLocaleLowerCase();
   const houses = state.dashboard?.house_list || [];
   const assignmentOptions =
     state.dashboard?.supervisor_assignment_options || {
       delivery_people: ["Karol", "Gary Lowther"],
       teams: [],
+      ewi_teamleads: [],
     };
+  const ewiTeamleads = assignmentOptions.ewi_teamleads || [];
+  const canAssignEwiWork =
+    isEwiSupervisorUser(state.user) && !isPlumbingSupervisor;
   const missingAssignments = houses.filter(
     (house) => !house.delivery_person || !house.delivery_team,
   ).length;
@@ -2639,6 +2912,7 @@ function renderSupervisorHouses() {
   $("#supervisor-stat-assigned").textContent = houses.length;
   $("#supervisor-stat-unassigned").textContent = missingAssignments;
   renderSupervisorAssignmentSummary(houses);
+  renderSupervisorTeamRosters();
   const isPlumbingComplete = (house) => house.plumber_status === "done";
   const isPlumbingOutstanding = (house) =>
     house.plumber_status === "not_done" ||
@@ -2660,12 +2934,76 @@ function renderSupervisorHouses() {
         button.setAttribute("aria-pressed", String(active));
         button.classList.toggle("active", active);
       });
+  } else {
+    const activeCount = canAssignEwiWork
+      ? houses.filter(
+          (house) => house.ewi_teamlead_user_id && !house.ewi_completed_at,
+        ).length
+      : houses.filter((house) => !house.is_finished).length;
+    const closedCount = canAssignEwiWork
+      ? houses.filter((house) => Boolean(house.ewi_completed_at)).length
+      : houses.length - activeCount;
+    const filterLabels = canAssignEwiWork
+      ? {
+          all: "All houses",
+          needs_assignment: "Needs assignment",
+          active: "Assigned",
+          closed: "Completed",
+        }
+      : {
+          all: "All houses",
+          needs_assignment: "Needs delivery details",
+          active: "Active",
+          closed: "Closed",
+        };
+    $("#supervisor-house-filters").setAttribute(
+      "aria-label",
+      canAssignEwiWork ? "Filter EWI houses" : "Filter assigned houses",
+    );
+    const supervisorFilterButtons = $$("#supervisor-house-filters [data-supervisor-filter]");
+    const filterOrder = canAssignEwiWork
+      ? ["all", "active", "needs_assignment", "closed"]
+      : ["all", "needs_assignment", "active", "closed"];
+    filterOrder.forEach((filter) => {
+      const button = supervisorFilterButtons.find(
+        (item) => item.dataset.supervisorFilter === filter,
+      );
+      if (button) $("#supervisor-house-filters").append(button);
+    });
+    supervisorFilterButtons.forEach((button) => {
+      button.firstChild.textContent = `${filterLabels[button.dataset.supervisorFilter]} `;
+    });
+    $("#supervisor-filter-all-count").textContent = houses.length;
+    $("#supervisor-filter-needs-assignment-count").textContent =
+      canAssignEwiWork
+        ? houses.filter((house) => !house.ewi_teamlead_user_id).length
+        : missingAssignments;
+    $("#supervisor-filter-active-count").textContent = activeCount;
+    $("#supervisor-filter-closed-count").textContent = closedCount;
+    $$("#supervisor-house-filters [data-supervisor-filter]").forEach((button) => {
+      const active = button.dataset.supervisorFilter === supervisorHouseFilter;
+      button.setAttribute("aria-pressed", String(active));
+      button.classList.toggle("active", active);
+    });
   }
-  const rows = houses.filter((house) =>
-    (plumbingSupervisorHouseFilter === "all" ||
-      (plumbingSupervisorHouseFilter === "active" && isActiveHouse(house)) ||
-      (plumbingSupervisorHouseFilter === "plumbing_complete" &&
-        isPlumbingComplete(house))) &&
+  const rows = houses.filter((house) => {
+    const matchesStatus = isPlumbingSupervisor
+      ? plumbingSupervisorHouseFilter === "all" ||
+        (plumbingSupervisorHouseFilter === "active" && isActiveHouse(house)) ||
+        (plumbingSupervisorHouseFilter === "plumbing_complete" &&
+          isPlumbingComplete(house))
+      : supervisorHouseFilter === "all" ||
+        (supervisorHouseFilter === "active" &&
+          (canAssignEwiWork
+            ? house.ewi_teamlead_user_id && !house.ewi_completed_at
+            : !house.is_finished)) ||
+        (supervisorHouseFilter === "closed" &&
+          (canAssignEwiWork ? Boolean(house.ewi_completed_at) : house.is_finished)) ||
+        (supervisorHouseFilter === "needs_assignment" &&
+          (canAssignEwiWork
+            ? !house.ewi_teamlead_user_id
+            : !house.delivery_person || !house.delivery_team));
+    return matchesStatus &&
     [
       house.id,
       house.owner_name,
@@ -2677,8 +3015,8 @@ function renderSupervisorHouses() {
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase()
-      .includes(query),
-  );
+      .includes(query);
+  });
   list.classList.remove("house-grid-compact");
   list.classList.add("house-grid-ready");
   list.innerHTML = rows.length
@@ -2713,7 +3051,42 @@ function renderSupervisorHouses() {
                 `<option value="${escapeHtml(team)}"${team === house.delivery_team ? " selected" : ""}>${escapeHtml(team)}</option>`,
             )
             .join("");
-          const needsAssignment = !house.delivery_person || !house.delivery_team;
+          const ewiTeamleadOptions = ewiTeamleads
+            .map(
+              (teamlead) =>
+                `<option value="${teamlead.id}"${Number(teamlead.id) === Number(house.ewi_teamlead_user_id) ? " selected" : ""}>${escapeHtml(teamlead.name)}</option>`,
+            )
+            .join("");
+          const ewiAssignmentStatus = house.ewi_teamlead_user_id
+            ? house.ewi_completed_at
+              ? "EWI work completed"
+              : `Assigned to ${house.ewi_teamlead_name}`
+            : "No Teamlead assigned";
+          const needsAssignment = canAssignEwiWork
+            ? !house.ewi_teamlead_user_id
+            : !house.delivery_person || !house.delivery_team;
+          const seaiApplication = house.seai_summary?.["Application Details"] || {};
+          const seaiProperty = house.seai_summary?.["Property Details"] || {};
+          const ewiMeasure = (house.seai_summary?.Measures || []).find((measure) =>
+            /external wall insulation/i.test(String(measure.Name || "")),
+          );
+          const ewiQuantity = String(
+            [
+              house.seai_ewi_area_m2,
+              ewiMeasure?.["Survey Qty including Variation"],
+              ewiMeasure?.["Survey Quantity"],
+            ].map((value) => String(value ?? "").trim()).find(Boolean) || "",
+          );
+          const ewiSeaiDetails = canAssignEwiWork
+            ? `<section class="supervisor-ewi-seai" aria-label="SEAI EWI details">
+                <div class="supervisor-ewi-seai-heading"><span>SEAI EWI DETAILS</span><strong>${ewiQuantity ? `${escapeHtml(ewiQuantity)} m²` : "No EWI m² in SEAI record"}</strong></div>
+                <div class="supervisor-ewi-seai-facts">
+                  ${seaiApplication["Applicant Name"] ? `<span><small>Applicant</small><strong>${escapeHtml(seaiApplication["Applicant Name"])}</strong></span>` : ""}
+                  ${seaiProperty.Eircode ? `<span><small>Eircode</small><strong>${escapeHtml(seaiProperty.Eircode)}</strong></span>` : ""}
+                  ${ewiMeasure?.Name ? `<span class="supervisor-ewi-seai-measure"><small>Measure</small><strong>${escapeHtml(ewiMeasure.Name)}</strong></span>` : ""}
+                </div>
+              </section>`
+            : "";
           const plumbingStatus = isPlumbingComplete(house)
             ? "Plumbing complete"
             : isPlumbingOutstanding(house)
@@ -2739,9 +3112,9 @@ function renderSupervisorHouses() {
                   </span>
                 </div>`
               : "";
-          return `<article class="card house-card surveyor-house-card supervisor-house-card${isPlumbingSupervisor ? " plumbing-house-card ventilation-house-card" : ""}${needsAssignment ? " needs-assignment" : ""}" data-house-id="${houseId}">
+          return `<article class="card house-card surveyor-house-card supervisor-house-card${isPlumbingSupervisor ? " plumbing-house-card ventilation-house-card" : ""}${canAssignEwiWork ? " ewi-supervisor-house-card" : ""}${needsAssignment ? " needs-assignment" : ""}" data-house-id="${houseId}">
             <div class="house-top">
-              <span class="house-avatar" aria-hidden="true">&#8962;</span>
+              ${isPlumbingSupervisor ? plumbingIconMarkup() : '<span class="house-avatar" aria-hidden="true">&#8962;</span>'}
               <div class="house-meta">
                 <h2>${houseCardTitle(house, houseId)}</h2>
                 ${applicationIdLabelHtml(house, [house.owner_name, house.address, house.postcode].filter(Boolean).join(" · ") || "Address not provided")}
@@ -2749,8 +3122,10 @@ function renderSupervisorHouses() {
               <div class="house-status-stack">${isPlumbingSupervisor && house.plumbing_assignment_pending_activation ? "" : `<span class="status-pill ${house.is_finished ? "closed" : "active"}">${status}</span>`}${isPlumbingSupervisor ? `<span class="plumbing-job-status ${plumbingStatusClass}">${plumbingStatus}</span>` : ""}</div>
             </div>
             ${supervisorAssignmentCredit}
+            ${isPlumbingSupervisor ? plumbingSurveyPdfsHtml(house.survey_documents) : ""}
             ${isPlumbingSupervisor && Number(house.plan_plumber_required) === 1 ? `<button class="plumbing-completion-toggle${isPlumbingComplete(house) ? " is-complete" : ""}" type="button" data-house-id="${houseId}" data-plumber-status="${isPlumbingComplete(house) ? "not_done" : "done"}" aria-label="${isPlumbingComplete(house) ? "Reopen plumbing work" : "Mark plumbing complete"} for ${houseId}" aria-pressed="${isPlumbingComplete(house)}">${isPlumbingComplete(house) ? '<span aria-hidden="true">↶</span> Reopen plumbing work' : '<span aria-hidden="true">✓</span> Mark plumbing complete'}</button>` : ""}
-            ${house.plumbing_assignment_pending_activation ? "" : `<form class="supervisor-house-assignment" data-house-id="${houseId}" aria-label="Delivery assignments for ${houseId}">
+            ${ewiSeaiDetails}
+            ${!canAssignEwiWork && !house.plumbing_assignment_pending_activation ? `<form class="supervisor-house-assignment" data-house-id="${houseId}" aria-label="Delivery assignments for ${houseId}">
               <div class="supervisor-assignment-heading">
                 <div><h3>Delivery assignments</h3><p>Choose who delivers and the Teamlead responsible.</p></div>
                 <span class="supervisor-assignment-status${needsAssignment ? " is-needed" : ""}" aria-live="polite">${needsAssignment ? "Needs assignment" : "Assigned"}</span>
@@ -2759,11 +3134,41 @@ function renderSupervisorHouses() {
               <label>Teamlead<select name="delivery_team" required aria-label="Teamlead for ${houseId}"${hasTeamLeads || house.delivery_team ? "" : " disabled"}><option value="" disabled${house.delivery_team ? "" : " selected"}>${hasTeamLeads ? "Choose a Teamlead" : "No active Teamleads"}</option>${teamOptions}</select></label>
               ${hasTeamLeads ? "" : '<p class="supervisor-assignment-help">Ask an administrator to add an active Teamlead account before assigning a team.</p>'}
               <button class="button button-primary" type="submit"${!house.delivery_person || !house.delivery_team ? " disabled" : ""}>Save assignments</button>
-            </form>`}
+            </form>`
+              : ""}
+            ${canAssignEwiWork && !house.plumbing_assignment_pending_activation
+              ? `<form class="supervisor-house-assignment supervisor-ewi-delivery-assignment" data-house-id="${houseId}" aria-label="Delivery person assignment for ${houseId}">
+                  <div class="supervisor-assignment-heading">
+                    <div><h3>Delivery person</h3><p>${house.delivery_person ? `Currently assigned to ${escapeHtml(house.delivery_person)}.` : "Choose the person responsible for delivery."}</p></div>
+                    <span class="supervisor-assignment-status${house.delivery_person ? "" : " is-needed"}" aria-live="polite">${house.delivery_person ? "Assigned" : "Needs assignment"}</span>
+                  </div>
+                  <label>Delivery person<select name="delivery_person" required aria-label="Delivery person for ${houseId}"><option value="" disabled${house.delivery_person ? "" : " selected"}>Choose a delivery person</option>${deliveryPersonOptions}</select></label>
+                  <input type="hidden" name="delivery_team" value="${escapeHtml(house.delivery_team || "")}">
+                  <button class="button button-primary" type="submit"${!deliveryPeople.length ? " disabled" : ""}>Save delivery person</button>
+                </form>`
+              : ""}
+            ${canAssignEwiWork && !house.plumbing_assignment_pending_activation
+              ? `<form class="supervisor-ewi-assignment" data-house-id="${houseId}" aria-label="EWI work assignment for ${houseId}">
+                  <div class="supervisor-ewi-assignment-heading">
+                    <div><h3>EWI work assignment</h3><p>Assign this house to one of your reporting EWI Teamleads.</p></div>
+                    <span class="supervisor-ewi-assignment-status${house.ewi_teamlead_user_id ? " is-assigned" : ""}" aria-live="polite">${escapeHtml(ewiAssignmentStatus)}</span>
+                  </div>
+                  <label>EWI Teamlead<select name="teamlead_user_id" aria-label="EWI Teamlead for ${houseId}">
+                    <option value="">Not assigned</option>${ewiTeamleadOptions}
+                  </select></label>
+                  <button class="button button-secondary" type="submit"${!ewiTeamleads.length && !house.ewi_teamlead_user_id ? " disabled" : ""}>Save EWI assignment</button>
+                </form>`
+              : ""}
+            ${canAssignEwiWork
+              ? `<div class="supervisor-ewi-card-actions">
+                  <button class="button button-secondary house-open" type="button" data-house-id="${houseId}">View house details</button>
+                  <button class="button button-secondary" type="button" data-ewi-house-pdfs="${houseId}">Annotated PDFs</button>
+                </div>`
+              : ""}
           </article>`;
         })
         .join("")
-    : isPlumbingSupervisor
+    : isPlumbingSupervisor || hasAccessProfile(state.user, "supervisor")
       ? ""
       : `<div class="surveyor-empty-state"><span class="surveyor-empty-icon" aria-hidden="true">&#8962;</span><strong>${query ? "No matching houses" : "No houses assigned yet"}</strong><p>${query ? "Try a different house ID, owner, address, delivery person or team." : "Houses assigned to you will appear here."}</p></div>`;
   if (isPlumbingSupervisor) {
@@ -2779,8 +3184,21 @@ function renderSupervisorHouses() {
         ? "Try another house ID, owner, address, delivery person, or Teamlead."
         : "There are no houses in this filter yet. Switch to All houses to see your assignments."
       : "When a plumbing house is assigned to you, it will appear here.";
+  } else {
+    const empty = $("#supervisor-house-empty");
+    empty.classList.toggle("hidden", rows.length > 0);
+    empty.querySelector("strong").textContent = houses.length
+      ? query || supervisorHouseFilter !== "all"
+        ? "No houses match these filters"
+        : "All assigned houses are shown"
+      : "No assigned houses yet";
+    empty.querySelector("p").textContent = houses.length
+      ? query || supervisorHouseFilter !== "all"
+        ? "Try a different search or choose another house filter."
+        : "Your assigned houses will appear here."
+      : "Houses assigned to your account will appear here.";
   }
-  if (!isPlumbingSupervisor) {
+  if (!isPlumbingSupervisor && !canAssignEwiWork) {
     list.insertAdjacentHTML(
       "beforeend",
       '<section class="supervisor-shared-seai card" aria-labelledby="supervisor-shared-seai-title"><div class="supervisor-shared-seai-heading"><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><div><h2 id="supervisor-shared-seai-title">PDFs shared with you</h2><p>Annotated survey PDFs sent by the Surveyor team.</p></div></div><div class="supervisor-shared-seai-content" aria-live="polite">Loading shared PDFs...</div></section>',
@@ -2845,7 +3263,13 @@ async function saveSupervisorHouseAssignment(event) {
       showToast(`Delivery assignments saved for ${result.house_id}.`);
       return;
     }
+    if (isEwiSupervisorUser(state.user)) {
+      renderSupervisorHouses();
+      showToast(`Delivery person saved for ${result.house_id}.`);
+      return;
+    }
     renderSupervisorAssignmentSummary(state.dashboard.house_list);
+    renderSupervisorTeamRosters();
     const card = form.closest(".supervisor-house-card");
     const needsAssignment = !result.delivery_person || !result.delivery_team;
     card?.classList.toggle("needs-assignment", needsAssignment);
@@ -2859,15 +3283,86 @@ async function saveSupervisorHouseAssignment(event) {
     $("#supervisor-stat-unassigned").textContent = state.dashboard.house_list.filter(
       (item) => !item.delivery_person || !item.delivery_team,
     ).length;
+    $("#supervisor-filter-needs-assignment-count").textContent =
+      $("#supervisor-stat-unassigned").textContent;
+    if (supervisorHouseFilter === "needs_assignment") {
+      renderSupervisorHouses();
+    }
     button.textContent = "Saved";
     button.classList.add("is-saved");
     showToast(`Delivery assignments saved for ${result.house_id}.`);
   } catch (error) {
-    button.textContent = "Save assignments";
+    button.textContent = form.classList.contains("supervisor-ewi-delivery-assignment")
+      ? "Save delivery person"
+      : "Save assignments";
     showToast(error.message, true);
   } finally {
     button.disabled = !form.elements.delivery_person.value ||
-      !form.elements.delivery_team.value;
+      (!form.classList.contains("supervisor-ewi-delivery-assignment") &&
+        !form.elements.delivery_team.value);
+  }
+}
+async function saveSupervisorEwiAssignment(event) {
+  const form = event.target.closest(".supervisor-ewi-assignment");
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await request("/api/supervisor/ewi-assignment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        house_id: form.dataset.houseId,
+        teamlead_user_id: form.elements.teamlead_user_id.value || null,
+      }),
+    });
+    const house = state.dashboard.house_list.find(
+      (item) => item.id === result.house_id,
+    );
+    if (house) {
+      house.ewi_teamlead_user_id = result.teamlead_user_id;
+      house.ewi_teamlead_name = result.teamlead_name;
+      house.ewi_assigned_by = result.assigned_by;
+      house.ewi_assigned_at = result.assigned_at;
+      house.ewi_completed_by = result.completed_by;
+      house.ewi_completed_at = result.completed_at;
+    }
+    renderSupervisorHouses();
+    showToast(
+      result.teamlead_user_id
+        ? `${result.house_id} assigned to ${result.teamlead_name} for EWI work.`
+        : `EWI work assignment removed from ${result.house_id}.`,
+    );
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+async function completeTeamleadEwiWork(button) {
+  const houseId = button.dataset.teamleadEwiComplete;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const result = await request("/api/teamlead/ewi-work/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ house_id: houseId }),
+    });
+    const house = (state.dashboard?.teamlead_ewi_houses || []).find(
+      (item) => item.id === result.house_id,
+    );
+    if (house) {
+      house.completed_by = result.completed_by;
+      house.completed_at = result.completed_at;
+    }
+    renderTeamleadEwiWork();
+    showToast(`EWI work for ${result.house_id} marked complete.`);
+  } catch (error) {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    showToast(error.message, true);
   }
 }
 async function updatePlumbingCompletion(button) {
@@ -2915,7 +3410,8 @@ function updateSupervisorAssignmentFormState(event) {
   }
   button.disabled =
     !form.elements.delivery_person.value ||
-    !form.elements.delivery_team.value;
+    (!form.classList.contains("supervisor-ewi-delivery-assignment") &&
+      !form.elements.delivery_team.value);
 }
 function surveyRow(list, value = {}) {
   const isLength = list.endsWith("corners");
@@ -3685,6 +4181,7 @@ function drawPdfAnnotations() {
     canvas.height = backingHeight;
   }
   const context = canvas.getContext("2d");
+  const iconImages = annotator.iconImages || (annotator.iconImages = new Map());
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, width, height);
   annotator.annotations
@@ -3695,7 +4192,50 @@ function drawPdfAnnotations() {
       context.fillStyle = annotation.color;
       context.lineCap = "round";
       context.lineJoin = "round";
-      if (annotation.tool === "text") {
+      if (annotation.tool === "ventilation_icon") {
+        let iconImage = iconImages.get(annotation.icon);
+        if (!iconImage) {
+          iconImage = new Image();
+          iconImage.onload = drawPdfAnnotations;
+          iconImage.src = `/ventilation-icons/${encodeURIComponent(annotation.filename)}`;
+          iconImages.set(annotation.icon, iconImage);
+        }
+        const x = annotation.point[0] * width;
+        const y = annotation.point[1] * height;
+        const iconWidth = annotation.width * width;
+        const iconHeight = annotation.height * height;
+        context.translate(x, y);
+        context.rotate((annotation.rotation * Math.PI) / 180);
+        if (iconImage.complete && iconImage.naturalWidth) {
+          context.drawImage(iconImage, -iconWidth / 2, -iconHeight / 2, iconWidth, iconHeight);
+        }
+        if (annotator.selectedIconId === annotation.id) {
+          context.strokeStyle = "#16865a";
+          context.fillStyle = "#fff";
+          context.lineWidth = 2;
+          context.setLineDash([6, 4]);
+          context.strokeRect(-iconWidth / 2, -iconHeight / 2, iconWidth, iconHeight);
+          context.setLineDash([]);
+          const handleSize = 9;
+          for (const [handleX, handleY] of [
+            [-iconWidth / 2, -iconHeight / 2],
+            [iconWidth / 2, -iconHeight / 2],
+            [-iconWidth / 2, iconHeight / 2],
+            [iconWidth / 2, iconHeight / 2],
+          ]) {
+            context.fillRect(handleX - handleSize / 2, handleY - handleSize / 2, handleSize, handleSize);
+            context.strokeRect(handleX - handleSize / 2, handleY - handleSize / 2, handleSize, handleSize);
+          }
+          context.beginPath();
+          context.moveTo(0, -iconHeight / 2);
+          context.lineTo(0, -iconHeight / 2 - 22);
+          context.stroke();
+          context.beginPath();
+          context.arc(0, -iconHeight / 2 - 25, 6, 0, Math.PI * 2);
+          context.fill();
+          context.stroke();
+        }
+      } else if (annotation.tool === "text") {
         context.textBaseline = "top";
         context.font = `600 ${Math.max(14, annotation.font_size * width)}px system-ui, sans-serif`;
         if (annotation.wrap) {
@@ -3752,6 +4292,13 @@ function drawPdfAnnotations() {
   $("#pdf-annotator-undo").disabled = annotator.annotations.length === 0;
   $("#pdf-annotator-save").disabled =
     annotator.annotations.length === 0 || annotator.saving;
+  const selectedIcon = annotator.annotations.find(
+    (annotation) => annotation.id === annotator.selectedIconId,
+  );
+  $("#pdf-annotator-icon-edit").hidden = !selectedIcon;
+  if (selectedIcon) {
+    $("#pdf-annotator-selected-icon-name").textContent = selectedIcon.label;
+  }
   $("#pdf-annotator-page-count").textContent =
     annotator.loading
       ? `Loading page ${annotator.page} of ${annotator.pageCount || 1}…`
@@ -3841,13 +4388,16 @@ async function loadHouseDocumentPage(pageNumber) {
       image.src = previewUrl;
       return;
     }
-    const documentPath = annotator.documentType === "seai"
+    const previewType = annotator.previewDocumentType || annotator.documentType;
+    const documentPath = previewType === "seai" ||
+      previewType === "vent_seai"
       ? "seai-documents"
-      : annotator.documentType === "vent"
+      : previewType === "vent"
         ? "house-vent-documents"
         : "house-documents";
+    const previewDocumentId = annotator.previewDocumentId || annotator.documentId;
     const response = await fetch(
-      `/api/${documentPath}/${annotator.documentId}/preview?page=${pageNumber}`,
+      `/api/${documentPath}/${previewDocumentId}/preview?page=${pageNumber}`,
       { cache: "no-store" },
     );
     if (!response.ok) {
@@ -3937,9 +4487,24 @@ function jumpToPdfPage(event) {
 function openHouseDocumentAnnotator(button) {
   openPdfAnnotator(button, "house");
 }
+const VENT_ANNOTATION_ICONS = [
+  { key: "trickle-vent", label: "Window trickle vent", filename: "Rytons Window Trickle Ventilators.svg" },
+  { key: "controllable-panel", label: "Controllable air vent panel", filename: "Rytons controllable LookRyt panel.svg" },
+  { key: "terracotta-grille", label: "Terracotta external grille", filename: "Rytons Controllable LookRyt AirCore Terracotta external grille.svg" },
+  { key: "high-rise-grille", label: "High-rise buff external grille", filename: "Rytons Controllable High Rise LookRyt AirCore Buff-sand external grille.svg" },
+  { key: "wall-ventilator", label: "100/150 mm wall ventilator", filename: "INTERVENT NVF Range 100mm 4in and 150mm 6in.svg" },
+  { key: "humidity-ventilator", label: "Humidity-controlled ventilation system", filename: "HUMIDITY-controlled ventilation SYSTEMS.svg" },
+  { key: "roof-ventilator", label: "Roof tile/slate ventilator", filename: "G RANGE TILE & SLATE VENTILATORS roof.svg" },
+  { key: "axial-fan", label: "Axial exhaust fan", filename: "D Series Axial Fan.svg" },
+  { key: "core-drill", label: "5-inch core-drill ventilator", filename: "5” Core Drill Ventilator.svg", urlName: "core-drill-ventilator.svg" },
+];
+function isVentAnnotationDocumentType(documentType) {
+  return documentType === "vent" || documentType === "vent_seai";
+}
 function openPdfAnnotator(button, documentType) {
   state.pdfAnnotator = {
     documentId: button.dataset.documentId,
+    previewDocumentId: button.dataset.documentId,
     filename: button.dataset.documentName,
     category: button.dataset.documentCategory || "",
     documentType,
@@ -3956,6 +4521,11 @@ function openPdfAnnotator(button, documentType) {
     loading: false,
     saving: false,
     drawing: null,
+    iconDrag: null,
+    placementIcon: null,
+    selectedIconId: null,
+    nextIconId: 1,
+    iconImages: new Map(),
     wheelDelta: 0,
     wheelLocked: false,
   };
@@ -3970,15 +4540,25 @@ function openPdfAnnotator(button, documentType) {
       ? "SEAI PDF · ORIGINAL PRESERVED"
       : documentType === "vent"
         ? "VENT TEAM PDF · ORIGINAL PRESERVED"
+          : documentType === "vent_seai"
+            ? "SURVEYOR PDF · ANNOTATED COPY SAVED TO VENT"
       : documentType === "blank"
         ? "TEMPORARY BLANK PAGE"
         : "SURVEY PDF";
   $("#pdf-annotator-save").textContent =
-    documentType === "blank" ? "Add blank page to selection" : "Save annotated copy";
+    documentType === "blank"
+      ? "Add blank page to selection"
+      : documentType === "vent" && button.dataset.annotationsEditable === "true"
+        ? "Save changes"
+        : "Save annotated copy";
   $("#pdf-annotator-help").textContent = documentType === "seai"
     ? "The original SEAI PDF stays unchanged. Your annotations will be saved as a separate PDF in this category."
     : documentType === "vent"
-    ? "The Surveyor-shared original stays unchanged. Save your marks as a separate Vent-annotated PDF for this house."
+    ? button.dataset.annotationsEditable === "true"
+      ? "Adjust the saved annotations and icons, then save to update this copy. The Surveyor-shared original stays unchanged."
+      : "Drag or select a product icon to place it. Move, rotate, and resize icons, then save a separate Vent-annotated PDF; the original stays unchanged."
+    : documentType === "vent_seai"
+      ? "Choose an icon, then tap the plan to place it or drag it onto the PDF. Move, rotate, and resize icons; saving creates an editable Vent copy and keeps the Surveyor’s original unchanged."
     : documentType === "blank"
       ? "Annotate this temporary A4 page, then add it to the selected pages for sharing. It will not be saved in the house's PDF library."
       : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.";
@@ -3988,13 +4568,81 @@ function openPdfAnnotator(button, documentType) {
   $("#pdf-annotator-text").value = "";
   $("#pdf-annotator-text-size").value = "16";
   $("#pdf-annotator-text-panel").classList.add("hidden");
+  const isVentAnnotator = isVentAnnotationDocumentType(documentType);
+  const iconPalette = $("#pdf-annotator-icon-palette");
+  iconPalette.hidden = !isVentAnnotator;
+  $("#pdf-annotator-icon-edit").hidden = true;
+  if (isVentAnnotator) {
+    const iconList = $("#pdf-annotator-icon-list");
+    iconList.replaceChildren();
+    for (const asset of VENT_ANNOTATION_ICONS) {
+      const card = document.createElement("button");
+      card.className = "pdf-annotator-icon-card";
+      card.type = "button";
+      card.dataset.iconKey = asset.key;
+      card.setAttribute("aria-label", `Place ${asset.label}`);
+      card.setAttribute("aria-pressed", "false");
+      card.draggable = true;
+      const image = document.createElement("img");
+      image.src = `/ventilation-icons/${encodeURIComponent(asset.urlName || asset.filename)}`;
+      image.alt = "";
+      image.draggable = false;
+      const caption = document.createElement("span");
+      caption.textContent = asset.label;
+      card.append(image, caption);
+      iconList.append(card);
+    }
+    $("#pdf-annotator-icon-count").textContent = `${VENT_ANNOTATION_ICONS.length} icons`;
+  }
   $$(".pdf-tool-button").forEach((toolButton) => {
     const active = toolButton.dataset.pdfTool === "pen";
     toolButton.classList.toggle("active", active);
     toolButton.setAttribute("aria-pressed", String(active));
   });
   $("#pdf-annotator-dialog").showModal();
-  loadHouseDocumentPage(1);
+  if (
+    documentType === "vent" &&
+    button.dataset.annotationsEditable === "true"
+  ) {
+    state.pdfAnnotator.loading = true;
+    drawPdfAnnotations();
+    loadSavedVentAnnotations(state.pdfAnnotator);
+  } else {
+    loadHouseDocumentPage(1);
+  }
+}
+async function loadSavedVentAnnotations(annotator) {
+  try {
+    const result = await request(
+      `/api/house-vent-documents/${annotator.documentId}/annotations`,
+    );
+    if (!Array.isArray(result.annotations)) {
+      throw new Error("The saved Vent annotations could not be read.");
+    }
+    annotator.previewDocumentId = result.source_document_id;
+    annotator.previewDocumentType = result.source_type || "vent";
+    annotator.annotations = result.annotations.map((annotation) => {
+      if (annotation.tool !== "ventilation_icon") return annotation;
+      const asset = VENT_ANNOTATION_ICONS.find((item) => item.key === annotation.icon);
+      if (!asset) {
+        throw new Error("A saved ventilation icon is no longer available.");
+      }
+      return {
+        ...annotation,
+        id: annotator.nextIconId++,
+        label: asset.label,
+        filename: asset.urlName || asset.filename,
+      };
+    });
+    annotator.loading = false;
+    drawPdfAnnotations();
+    await loadHouseDocumentPage(1);
+  } catch (error) {
+    annotator.loading = false;
+    $("#pdf-annotator-error").textContent = error.message;
+    $("#pdf-annotator-error").classList.remove("hidden");
+    drawPdfAnnotations();
+  }
 }
 async function saveHouseDocumentAnnotations() {
   const annotator = state.pdfAnnotator;
@@ -4018,14 +4666,13 @@ async function saveHouseDocumentAnnotations() {
       return;
     }
     const isSeaiDocument = annotator.documentType === "seai";
-    const isVentDocument = annotator.documentType === "vent";
-    const documentPath = isSeaiDocument
-      ? "seai-documents"
-      : isVentDocument
-        ? "house-vent-documents"
-        : "house-documents";
+    const isVentDocument = annotator.documentType === "vent" ||
+      annotator.documentType === "vent_seai";
+    const annotationUrl = annotator.documentType === "vent_seai"
+      ? `/api/seai-documents/${annotator.documentId}/vent-annotations`
+      : `/api/${isSeaiDocument ? "seai-documents" : isVentDocument ? "house-vent-documents" : "house-documents"}/${annotator.documentId}/annotations`;
     const result = await request(
-      `/api/${documentPath}/${annotator.documentId}/annotations`,
+      annotationUrl,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4040,7 +4687,11 @@ async function saveHouseDocumentAnnotations() {
       try {
         state.dashboard = await request("/api/dashboard");
         renderOverview();
-        showToast(`Vent-annotated copy saved as ${result.filename}. The Surveyor's original is unchanged.`);
+        showToast(
+          result.updated
+            ? `Vent-annotated copy updated: ${result.filename}. The Surveyor's original is unchanged.`
+            : `Vent-annotated copy saved as ${result.filename}. The Surveyor's original is unchanged.`,
+        );
       } catch (error) {
         showToast(
           `Vent-annotated copy saved as ${result.filename}, but the card could not refresh: ${error.message}`,
@@ -5681,7 +6332,7 @@ function renderHouseDetail(result) {
     ["Assigned employee", house.employee_name],
     ["Postcode / Eircode", house.postcode],
     ["Address", house.address],
-    ["EWI area", ewiArea ? `${ewiArea} m²` : ""],
+    ["EWI area", ewiArea ? `${ewiArea} m²` : "No EWI m² in SEAI record"],
     ["Perimeter", surveyPerimeter == null ? "" : `${formatQuantity(surveyPerimeter)} m`],
     ["Status", statusLabel],
   ]
@@ -5988,12 +6639,25 @@ async function sendPreparedPdfToEwiTeam() {
 function ventPdfSectionHtml(documents, houseId = "") {
   if (!documents.length) return "";
   const canAnnotate = isVentilationUser(state.user);
-  return `<details class="survey-room-seai-section survey-room-seai-pdfs ventilation-shared-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><span class="seai-sec-title">Shared survey PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 PDF" : `${documents.length} PDFs`}</span></summary><ul class="survey-room-seai-pdf-list ventilation-shared-pdf-list">${documents.map((document) => {
+  return `<details class="survey-room-seai-section survey-room-seai-pdfs ventilation-shared-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><span class="seai-sec-title">Vent team PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 PDF" : `${documents.length} PDFs`}</span></summary><ul class="survey-room-seai-pdf-list ventilation-shared-pdf-list">${documents.map((document) => {
     const url = `/api/house-vent-documents/${Number(document.id)}/file`;
     const name = escapeHtml(document.filename);
-    const sharedBy = escapeHtml(document.shared_by || "Surveyor");
-    const sharedAt = escapeHtml(String(document.shared_at || "").replace("T", " "));
-    return `<li><span class="ventilation-pdf-icon" aria-hidden="true">PDF</span><span class="seai-document-name ventilation-pdf-name" title="${name}"><strong>${name}</strong><small><span>${seaiPdfSize(document.size_bytes)}</span><span>Shared by ${sharedBy}${sharedAt ? ` · ${sharedAt}` : ""}</span></small></span><span class="seai-pdf-actions ventilation-pdf-actions"><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer" aria-label="View ${name}">View PDF</a><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}">Download</a>${canAnnotate ? `<button class="button button-primary vent-pdf-annotate-button" type="button" data-vent-pdf-annotate data-document-id="${Number(document.id)}" data-document-name="${name}" data-house-id="${escapeHtml(houseId)}" aria-label="Annotate ${name}">Annotate PDF</button>` : ""}</span></li>`;
+    const sharedBy = String(document.shared_by || "Vent team");
+    const isAnnotated = Boolean(document.annotations_editable);
+    const author = escapeHtml(
+      isAnnotated ? sharedBy.replace(/^Vent annotated by\s*/i, "") : sharedBy,
+    );
+    const timestamp = formatAuditDateTime(document.shared_at);
+    const savedAt = timestamp ? escapeHtml(timestamp) : "";
+    const authorLabel = isAnnotated ? "Annotated by" : "Shared by";
+    return `<li class="ventilation-pdf-card${isAnnotated ? " is-annotated" : ""}">
+      <span class="ventilation-pdf-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M6 2.75h8l4.25 4.3v14.2H6a2 2 0 0 1-2-2v-14.5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4.5h4.5M7.5 12h7M7.5 15.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+      <span class="seai-document-name ventilation-pdf-name" title="${name}"><strong>${name}</strong><small><span class="ventilation-pdf-size">${seaiPdfSize(document.size_bytes)}</span><span class="ventilation-pdf-audit"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.3"/><path d="M3.7 13c.3-2.3 1.8-3.5 4.3-3.5s4 1.2 4.3 3.5"/></svg>${authorLabel} ${author}${savedAt ? `<span class="ventilation-pdf-audit-date"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M8 4.8V8l2.2 1.4"/></svg>${savedAt}</span>` : ""}</span></small></span>
+      <span class="seai-pdf-actions ventilation-pdf-actions">
+        ${canAnnotate ? `<button class="button button-primary vent-pdf-view-button" type="button" data-vent-pdf-preview data-document-id="${Number(document.id)}" data-document-name="${name}" data-house-id="${escapeHtml(houseId)}" data-pdf-url="${url}" data-document-type="vent" data-audit-label="${authorLabel}" data-audit-name="${author}" data-audit-at="${savedAt}" data-annotations-editable="${isAnnotated}" aria-label="Open and annotate ${name}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 10s2.7-5 8-5 8 5 8 5-2.7 5-8 5-8-5-8-5Z"/><circle cx="10" cy="10" r="2.2"/></svg>Open &amp; annotate</button>` : `<a class="button button-primary vent-pdf-view-button" href="${url}" target="_blank" rel="noreferrer" aria-label="View ${name}">View PDF</a>`}
+        <a class="button button-secondary vent-pdf-download-button" href="${url}" download="${name}" aria-label="Download ${name}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5v9m0 0 3.5-3.5M10 11.5 6.5 8M3.5 13.5v3h13v-3"/></svg>Download</a>
+      </span>
+    </li>`;
   }).join("")}</ul></details>`;
 }
 let ventSurveyPdfsRequestId = 0;
@@ -6009,11 +6673,115 @@ function renderVentSurveyPdfs(documents) {
     const savedBy = escapeHtml(document.uploaded_by || "Surveyor");
     const savedAt = escapeHtml(formatAuditDateTime(document.uploaded_at));
     return `<article class="vent-survey-pdf-entry">
-      <span class="vent-survey-pdf-entry-icon" aria-hidden="true">PDF</span>
+      <span class="vent-survey-pdf-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M6 2.75h8l4.25 4.3v14.2H6a2 2 0 0 1-2-2v-14.5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4.5h4.5M7.5 12h7M7.5 15.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
       <div class="vent-survey-pdf-entry-copy"><strong title="${name}">${name}</strong><span>Combined PDF by ${savedBy}${savedAt ? ` · ${savedAt}` : ""} · ${seaiPdfSize(document.size_bytes)}</span></div>
-      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-vent-survey-pdf-view data-pdf-url="${url}" data-pdf-name="${name}" aria-label="View ${name}" aria-pressed="false">View PDF</button><a class="button button-secondary" href="${url}" download="${name}">Download</a></div>
+      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-vent-survey-pdf-view data-document-id="${Number(document.id)}" data-document-name="${name}" data-pdf-url="${url}" data-pdf-name="${name}" data-document-type="vent_seai" data-house-id="${escapeHtml(document.application_id || "")}" data-audit-label="Combined PDF by" data-audit-name="${savedBy}" data-audit-at="${savedAt}" data-annotations-editable="false" aria-label="Open and annotate ${name}" aria-pressed="false">Open &amp; annotate</button><a class="button button-secondary" href="${url}" download="${name}">Download</a></div>
     </article>`;
   }).join("");
+}
+function renderEwiSupervisorPdfs(houseId, surveyorShares, surveyorUploads, ventDocuments) {
+  const sections = [
+    {
+      title: "Surveyor PDFs shared with EWI",
+      documents: surveyorShares,
+      getUrl: (document) => document.file_url,
+      getAuthor: (document) => document.shared_by || "Surveyor",
+      getDate: (document) => document.shared_at,
+      filter: () => true,
+    },
+    {
+      title: "Surveyor annotated PDFs",
+      documents: surveyorUploads,
+      getUrl: (document) => `/api/house-documents/${Number(document.id)}`,
+      getAuthor: (document) => document.uploaded_by || "Surveyor",
+      getDate: (document) => document.uploaded_at,
+      filter: (document) => document.is_annotated,
+    },
+    {
+      title: "Vent team annotated PDFs",
+      documents: ventDocuments,
+      getUrl: (document) => `/api/house-vent-documents/${Number(document.id)}/file`,
+      getAuthor: (document) =>
+        String(document.shared_by || "Vent team").replace(/^Vent annotated by\s*/i, ""),
+      getDate: (document) => document.shared_at,
+      filter: (document) =>
+        document.annotations_editable ||
+        /^Vent annotated by\s*/i.test(String(document.shared_by || "")),
+    },
+  ];
+  const content = sections.map((section) => {
+    const documents = section.documents.filter(section.filter);
+    if (!documents.length) {
+      return `<section class="ewi-house-pdf-group"><h3>${escapeHtml(section.title)}</h3><p>No PDFs available for this house.</p></section>`;
+    }
+    return `<section class="ewi-house-pdf-group"><h3>${escapeHtml(section.title)} <span>${documents.length}</span></h3><ul>${documents.map((document) => {
+      const name = escapeHtml(document.filename || "PDF document");
+      const url = escapeHtml(section.getUrl(document));
+      const author = escapeHtml(section.getAuthor(document));
+      const sharedAt = formatAuditDateTime(section.getDate(document));
+      return `<li><span class="house-document-icon" aria-hidden="true">PDF</span><span class="seai-document-name"><strong>${name}</strong><small>${escapeHtml(author)}${sharedAt ? ` · ${escapeHtml(sharedAt)}` : ""} · ${seaiPdfSize(document.size_bytes)}</small></span><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer">View PDF</a></li>`;
+    }).join("")}</ul></section>`;
+  }).join("");
+  const list = $("#vent-survey-pdfs-list");
+  list.innerHTML = content;
+  const count = sections.reduce(
+    (total, section) =>
+      total + section.documents.filter(section.filter).length,
+    0,
+  );
+  $("#vent-survey-pdfs-description").textContent =
+    count === 0
+      ? `No annotated Surveyor or Vent team PDFs have been shared for ${houseId}.`
+      : `${count} annotated or team-shared PDF${count === 1 ? "" : "s"} for ${houseId}.`;
+}
+let ewiHousePdfsRequestId = 0;
+async function openEwiSupervisorPdfs(houseId) {
+  const house = (state.dashboard?.house_list || []).find(
+    (item) => item.id === houseId,
+  );
+  if (!house || !isEwiSupervisorUser(state.user)) {
+    showToast("This house is not assigned to your EWI Supervisor account.", true);
+    return;
+  }
+  const requestId = ++ewiHousePdfsRequestId;
+  ventSurveyPdfsRequestId += 1;
+  $("#vent-survey-pdfs-title").textContent = `Annotated PDFs · ${house.id}`;
+  $("#vent-survey-pdfs-description").textContent =
+    "Loading Surveyor and Vent team PDFs…";
+  $("#vent-survey-pdfs-list").innerHTML =
+    '<p class="vent-survey-pdfs-loading" role="status">Loading PDFs…</p>';
+  $("#vent-survey-pdfs-dialog").showModal();
+  try {
+    const [sharedResult, surveyorResult, ventResult] = await Promise.all([
+      request("/api/supervisor/shared-seai-documents", { cache: "no-store" }),
+      request(
+        `/api/house-documents?house_id=${encodeURIComponent(houseId)}`,
+        { cache: "no-store" },
+      ),
+      request(
+        `/api/house-vent-documents?house_id=${encodeURIComponent(houseId)}`,
+        { cache: "no-store" },
+      ),
+    ]);
+    if (
+      requestId !== ewiHousePdfsRequestId ||
+      !$("#vent-survey-pdfs-dialog").open
+    ) return;
+    renderEwiSupervisorPdfs(
+      houseId,
+      (sharedResult.documents || []).filter(
+        (document) => document.house_id === houseId,
+      ),
+      surveyorResult.documents || [],
+      ventResult.documents || [],
+    );
+  } catch (error) {
+    if (requestId !== ewiHousePdfsRequestId) return;
+    $("#vent-survey-pdfs-description").textContent =
+      "Could not load PDFs for this house.";
+    $("#vent-survey-pdfs-list").innerHTML =
+      `<p class="vent-survey-pdfs-error" role="alert">${escapeHtml(error.message)}</p>`;
+  }
 }
 async function openVentSurveyPdfs(houseId) {
   const house = (state.dashboard?.ventilation_houses || []).find(
@@ -6024,11 +6792,11 @@ async function openVentSurveyPdfs(houseId) {
     return;
   }
   const requestId = ++ventSurveyPdfsRequestId;
+  ewiHousePdfsRequestId += 1;
   $("#vent-survey-pdfs-title").textContent = `Combined PDFs by Surveyor · ${house.id}`;
   $("#vent-survey-pdfs-description").textContent = "Loading combined PDFs saved by the Surveyor…";
   $("#vent-survey-pdfs-list").innerHTML = '<p class="vent-survey-pdfs-loading" role="status">Loading combined PDFs…</p>';
-  $("#vent-survey-pdfs-viewer").hidden = true;
-  $("#vent-survey-pdfs-frame").removeAttribute("src");
+  $("#vent-survey-pdfs-list").hidden = false;
   $("#vent-survey-pdfs-dialog").showModal();
   try {
     const seaiResult = await request(
@@ -6043,6 +6811,7 @@ async function openVentSurveyPdfs(houseId) {
       .filter((document) => document.is_selected_pdf)
       .map((document) => ({
         ...document,
+        application_id: houseId,
         file_url: `/api/seai-documents/${Number(document.id)}/file`,
         uploaded_by: document.saved_by || "Surveyor",
         uploaded_at: document.saved_at || "",
@@ -6082,7 +6851,6 @@ async function loadAssignSeaiPdfSections(houseId, requestId) {
       seaiPdfSectionsHtml(result.documents || []);
     if (!html) return;
     $("#assign-seai-house-record").insertAdjacentHTML("beforeend", html);
-    $("#assign-seai-house-empty").classList.add("hidden");
   } catch {
     // PDFs are limited to administrators and surveyors; other users just see the details.
   }
@@ -6116,7 +6884,7 @@ async function loadAssignSeaiHouseRecord(houseId, requestId) {
     const detailsHtml = seaiApplicationRecordHtml(result.seai_details, true);
     const recordHtml = detailsHtml + seaiVariationHistoryHtml(result.variation_history);
     $("#assign-seai-house-record").innerHTML = recordHtml;
-    $("#assign-seai-house-empty").classList.toggle("hidden", Boolean(recordHtml));
+    $("#assign-seai-house-empty").classList.toggle("hidden", Boolean(detailsHtml));
     $("#assign-seai-toolbar").classList.toggle("hidden", !detailsHtml);
     loadAssignSeaiPdfSections(houseId, requestId);
   } catch (error) {
@@ -6168,6 +6936,11 @@ function closeAssignSeaiHouseRecord() {
 }
 
 function openHouseDetail(houseId) {
+  const activeTab = $(".page.active")?.dataset.page || "houses";
+  state.houseDetailReturnTab = activeTab;
+  if (activeTab !== "houses") {
+    setTab("houses");
+  }
   state.houseMapMode = false;
   $("#house-map-view").classList.add("hidden");
   state.viewingHouseId = houseId;
@@ -6468,6 +7241,13 @@ function showHousesOverview() {
   void refreshPendingChanges().catch((error) => showToast(error.message, true));
 }
 
+function returnFromHouseDetail() {
+  const returnTab = state.houseDetailReturnTab || "houses";
+  state.houseDetailReturnTab = "houses";
+  showHousesOverview();
+  if (returnTab !== "houses") setTab(returnTab);
+}
+
 function renderMovementTable() {
   const query = $("#movement-search").value.trim().toLocaleLowerCase();
   const movements = state.movements.filter((item) =>
@@ -6660,6 +7440,7 @@ function fillSeaiHouse(h) {
 
 function renderAll(preserveMovementLines = false) {
   renderOverview();
+  renderTeamleadEwiWork();
   renderInventory();
   if (hasAccessProfile(state.user, "supervisor")) {
     renderSupervisorHouses();
@@ -6727,6 +7508,7 @@ async function refreshPendingChanges() {
       } else {
         renderHouses();
       }
+      renderTeamleadEwiWork();
     }
 
     if (pendingDashboardViews.has(activeTab)) {
@@ -8170,7 +8952,7 @@ function bindEvents() {
     $("#material-dialog").showModal(),
   );
   $("#open-house").addEventListener("click", () => openHouseDialog());
-  $("#back-to-houses").addEventListener("click", showHousesOverview);
+  $("#back-to-houses").addEventListener("click", returnFromHouseDetail);
   $("#assign-seai-house-back").addEventListener("click", () => {
     closeAssignSeaiHouseRecord();
   });
@@ -8220,32 +9002,15 @@ function bindEvents() {
   $("#vent-survey-pdfs-dialog").addEventListener("click", (event) => {
     const previewButton = event.target.closest("[data-vent-survey-pdf-view]");
     if (!previewButton) return;
-    const viewer = $("#vent-survey-pdfs-viewer");
-    const frame = $("#vent-survey-pdfs-frame");
-    const url = previewButton.dataset.pdfUrl;
-    const name = previewButton.dataset.pdfName;
-    if (!url || !name) return;
-    frame.src = url;
-    $("#vent-survey-pdfs-viewer-title").textContent = name;
-    viewer.hidden = false;
-    $$("#vent-survey-pdfs-list [data-vent-survey-pdf-view]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button === previewButton));
-      button.textContent = button === previewButton ? "Viewing PDF" : "View PDF";
-    });
-    viewer.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  });
-  $("#vent-survey-pdfs-viewer-close").addEventListener("click", () => {
-    $("#vent-survey-pdfs-frame").removeAttribute("src");
-    $("#vent-survey-pdfs-viewer").hidden = true;
-    $$("#vent-survey-pdfs-list [data-vent-survey-pdf-view]").forEach((button) => {
-      button.setAttribute("aria-pressed", "false");
-      button.textContent = "View PDF";
-    });
+    $("#vent-survey-pdfs-dialog").close();
+    openPdfAnnotator(
+      previewButton,
+      previewButton.dataset.documentType,
+    );
   });
   $("#vent-survey-pdfs-dialog").addEventListener("close", () => {
     ventSurveyPdfsRequestId += 1;
-    $("#vent-survey-pdfs-frame").removeAttribute("src");
-    $("#vent-survey-pdfs-viewer").hidden = true;
+    ewiHousePdfsRequestId += 1;
   });
   $("#selected-pdf-preview-dialog").addEventListener(
     "close",
@@ -8515,11 +9280,142 @@ function bindEvents() {
       Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
     ];
   };
+  const placeVentIcon = (annotator, iconKey, point) => {
+    const asset = VENT_ANNOTATION_ICONS.find((item) => item.key === iconKey);
+    if (!asset) return;
+    const annotation = {
+      id: annotator.nextIconId++,
+      page: annotator.page,
+      tool: "ventilation_icon",
+      icon: asset.key,
+      filename: asset.urlName || asset.filename,
+      label: asset.label,
+      color: "#ffffff",
+      point,
+      width: 0.18,
+      height: 0.12,
+      rotation: 0,
+    };
+    annotator.annotations.push(annotation);
+    annotator.selectedIconId = annotation.id;
+    drawPdfAnnotations();
+  };
+  const ventIconAt = (annotator, point) => {
+    const width = pdfCanvas.clientWidth;
+    const height = pdfCanvas.clientHeight;
+    return [...annotator.annotations].reverse().find((annotation) => {
+      if (annotation.tool !== "ventilation_icon" || annotation.page !== annotator.page) return false;
+      const dx = (point[0] - annotation.point[0]) * width;
+      const dy = (point[1] - annotation.point[1]) * height;
+      const radians = (-annotation.rotation * Math.PI) / 180;
+      const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
+      const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
+      return Math.abs(localX) <= (annotation.width * width) / 2 &&
+        Math.abs(localY) <= (annotation.height * height) / 2;
+    });
+  };
+  const selectedIconHandle = (annotator, point) => {
+    const annotation = annotator.annotations.find(
+      (item) => item.id === annotator.selectedIconId && item.page === annotator.page,
+    );
+    if (!annotation) return null;
+    const width = pdfCanvas.clientWidth;
+    const height = pdfCanvas.clientHeight;
+    const dx = (point[0] - annotation.point[0]) * width;
+    const dy = (point[1] - annotation.point[1]) * height;
+    const radians = (-annotation.rotation * Math.PI) / 180;
+    const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
+    const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
+    const tolerance = 14;
+    if (Math.hypot(localX, localY + annotation.height * height / 2 + 25) <= tolerance) {
+      return { annotation, mode: "rotate" };
+    }
+    for (const [handleX, handleY] of [
+      [-1, -1], [1, -1], [-1, 1], [1, 1],
+    ]) {
+      if (
+        Math.hypot(
+          localX - handleX * annotation.width * width / 2,
+          localY - handleY * annotation.height * height / 2,
+        ) <= tolerance
+      ) {
+        return { annotation, mode: "resize" };
+      }
+    }
+    return null;
+  };
+  const iconList = $("#pdf-annotator-icon-list");
+  iconList.addEventListener("click", (event) => {
+    const card = event.target.closest(".pdf-annotator-icon-card");
+    const annotator = state.pdfAnnotator;
+    if (!card || !annotator || !isVentAnnotationDocumentType(annotator.documentType)) return;
+    const iconKey = card.dataset.iconKey;
+    annotator.placementIcon = annotator.placementIcon === iconKey ? null : iconKey;
+    $$(".pdf-annotator-icon-card", iconList).forEach((item) => {
+      const active = item.dataset.iconKey === annotator.placementIcon;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-pressed", String(active));
+    });
+    $("#pdf-annotator-help").textContent = annotator.placementIcon
+      ? "Drag the selected product onto the plan or tap the page to place it. Tap a placed icon to select it."
+      : "Drag a placed icon to move it. Select a product to add another one.";
+  });
+  iconList.addEventListener("dragstart", (event) => {
+    const card = event.target.closest(".pdf-annotator-icon-card");
+    if (!card || !event.dataTransfer) return;
+    event.dataTransfer.setData("application/x-ventilation-icon", card.dataset.iconKey);
+    event.dataTransfer.effectAllowed = "copy";
+  });
+  pdfCanvas.addEventListener("dragover", (event) => {
+    if (event.dataTransfer?.types.includes("application/x-ventilation-icon")) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+  pdfCanvas.addEventListener("drop", (event) => {
+    const annotator = state.pdfAnnotator;
+    const iconKey = event.dataTransfer?.getData("application/x-ventilation-icon");
+    if (!annotator || !isVentAnnotationDocumentType(annotator.documentType) || !iconKey) return;
+    event.preventDefault();
+    placeVentIcon(annotator, iconKey, pdfCanvasPoint(event));
+  });
   pdfCanvas.addEventListener("pointerdown", (event) => {
     const annotator = state.pdfAnnotator;
     if (!annotator || annotator.loading || !pdfCanvas.clientWidth) return;
-    event.preventDefault();
     const point = pdfCanvasPoint(event);
+    if (isVentAnnotationDocumentType(annotator.documentType)) {
+      const handle = selectedIconHandle(annotator, point);
+      const hit = ventIconAt(annotator, point);
+      if (handle || hit) {
+        event.preventDefault();
+        const annotation = handle?.annotation || hit;
+        annotator.selectedIconId = annotation.id;
+        const center = annotation.point;
+        annotator.iconDrag = {
+          pointerId: event.pointerId,
+          annotation,
+          mode: handle?.mode || "move",
+          start: point,
+          center: [...center],
+          width: annotation.width,
+          height: annotation.height,
+          rotation: annotation.rotation,
+          startAngle: Math.atan2(
+            (point[1] - center[1]) * pdfCanvas.clientHeight,
+            (point[0] - center[0]) * pdfCanvas.clientWidth,
+          ),
+        };
+        pdfCanvas.setPointerCapture(event.pointerId);
+        drawPdfAnnotations();
+        return;
+      }
+      if (annotator.placementIcon) {
+        event.preventDefault();
+        placeVentIcon(annotator, annotator.placementIcon, point);
+        return;
+      }
+    }
+    event.preventDefault();
     const color = $("#pdf-annotator-color").value;
     if (annotator.tool === "text") {
       const text = $("#pdf-annotator-text").value.trim();
@@ -8562,6 +9458,34 @@ function bindEvents() {
   });
   pdfCanvas.addEventListener("pointermove", (event) => {
     const annotator = state.pdfAnnotator;
+    const iconDrag = annotator?.iconDrag;
+    if (iconDrag?.pointerId === event.pointerId) {
+      event.preventDefault();
+      const point = pdfCanvasPoint(event);
+      const annotation = iconDrag.annotation;
+      if (iconDrag.mode === "move") {
+        annotation.point = [
+          Math.max(0, Math.min(1, iconDrag.center[0] + point[0] - iconDrag.start[0])),
+          Math.max(0, Math.min(1, iconDrag.center[1] + point[1] - iconDrag.start[1])),
+        ];
+      } else if (iconDrag.mode === "rotate") {
+        const angle = Math.atan2(
+          (point[1] - iconDrag.center[1]) * pdfCanvas.clientHeight,
+          (point[0] - iconDrag.center[0]) * pdfCanvas.clientWidth,
+        );
+        annotation.rotation = ((iconDrag.rotation + (angle - iconDrag.startAngle) * 180 / Math.PI) % 360 + 360) % 360;
+      } else {
+        const dx = (point[0] - iconDrag.center[0]) * pdfCanvas.clientWidth;
+        const dy = (point[1] - iconDrag.center[1]) * pdfCanvas.clientHeight;
+        const radians = (-iconDrag.rotation * Math.PI) / 180;
+        const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
+        const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
+        annotation.width = Math.max(0.04, Math.min(0.7, Math.abs(localX) * 2 / pdfCanvas.clientWidth));
+        annotation.height = Math.max(0.04, Math.min(0.7, Math.abs(localY) * 2 / pdfCanvas.clientHeight));
+      }
+      drawPdfAnnotations();
+      return;
+    }
     const drawing = annotator?.drawing;
     if (!drawing || drawing.pointerId !== event.pointerId) return;
     event.preventDefault();
@@ -8582,6 +9506,10 @@ function bindEvents() {
   });
   const finishPdfStroke = (event) => {
     const annotator = state.pdfAnnotator;
+    if (annotator?.iconDrag?.pointerId === event.pointerId) {
+      annotator.iconDrag = null;
+      drawPdfAnnotations();
+    }
     if (annotator?.drawing?.pointerId === event.pointerId) {
       annotator.drawing = null;
       drawPdfAnnotations();
@@ -8589,6 +9517,44 @@ function bindEvents() {
   };
   pdfCanvas.addEventListener("pointerup", finishPdfStroke);
   pdfCanvas.addEventListener("pointercancel", finishPdfStroke);
+  const adjustSelectedVentIcon = (update) => {
+    const annotator = state.pdfAnnotator;
+    const annotation = annotator?.annotations.find(
+      (item) => item.id === annotator.selectedIconId,
+    );
+    if (!annotation) return;
+    update(annotation);
+    drawPdfAnnotations();
+  };
+  $("#pdf-annotator-icon-rotate-left").addEventListener("click", () =>
+    adjustSelectedVentIcon((icon) => { icon.rotation = (icon.rotation - 15 + 360) % 360; }),
+  );
+  $("#pdf-annotator-icon-rotate-right").addEventListener("click", () =>
+    adjustSelectedVentIcon((icon) => { icon.rotation = (icon.rotation + 15) % 360; }),
+  );
+  $("#pdf-annotator-icon-smaller").addEventListener("click", () =>
+    adjustSelectedVentIcon((icon) => {
+      icon.width = Math.max(0.04, icon.width - 0.02);
+      icon.height = Math.max(0.04, icon.height - 0.02);
+    }),
+  );
+  $("#pdf-annotator-icon-larger").addEventListener("click", () =>
+    adjustSelectedVentIcon((icon) => {
+      icon.width = Math.min(0.7, icon.width + 0.02);
+      icon.height = Math.min(0.7, icon.height + 0.02);
+    }),
+  );
+  $("#pdf-annotator-icon-delete").addEventListener("click", () => {
+    const annotator = state.pdfAnnotator;
+    if (!annotator) return;
+    const index = annotator.annotations.findIndex(
+      (item) => item.id === annotator.selectedIconId,
+    );
+    if (index < 0) return;
+    annotator.annotations.splice(index, 1);
+    annotator.selectedIconId = null;
+    drawPdfAnnotations();
+  });
   new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-viewport"));
   const mapCanvas = $("#house-map-canvas");
   let mapDrag = null;
@@ -8767,6 +9733,10 @@ function bindEvents() {
     "input",
     renderSupervisorHouses,
   );
+  $("#supervisor-house-search").addEventListener(
+    "input",
+    renderSupervisorHouses,
+  );
   $("#house-search").addEventListener("input", () => {
     if (hasAccessProfile(state.user, "surveyor")) {
       renderSurveyorHouses();
@@ -8778,6 +9748,27 @@ function bindEvents() {
   });
   $("#houses-list").addEventListener("submit", saveSupervisorHouseAssignment);
   $("#houses-list").addEventListener("change", updateSupervisorAssignmentFormState);
+  $("#supervisor-house-list").addEventListener(
+    "submit",
+    saveSupervisorHouseAssignment,
+  );
+  $("#supervisor-house-list").addEventListener(
+    "submit",
+    saveSupervisorEwiAssignment,
+  );
+  $("#supervisor-house-list").addEventListener("click", (event) => {
+    const pdfButton = event.target.closest("[data-ewi-house-pdfs]");
+    if (pdfButton) {
+      void openEwiSupervisorPdfs(pdfButton.dataset.ewiHousePdfs);
+      return;
+    }
+    const detailButton = event.target.closest(".house-open");
+    if (detailButton) openHouseDetail(detailButton.dataset.houseId);
+  });
+  $("#supervisor-house-list").addEventListener(
+    "change",
+    updateSupervisorAssignmentFormState,
+  );
   $("#plumbing-supervisor-house-list").addEventListener(
     "submit",
     saveSupervisorHouseAssignment,
@@ -8792,6 +9783,37 @@ function bindEvents() {
     "change",
     updateSupervisorAssignmentFormState,
   );
+  $("#teamlead-ewi-work-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-teamlead-ewi-complete]");
+    if (button && !button.disabled) {
+      void completeTeamleadEwiWork(button);
+    }
+  });
+  $("#teamlead-ewi-house-filters").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-teamlead-ewi-filter]");
+    if (!button) return;
+    teamleadEwiHouseFilter = button.dataset.teamleadEwiFilter;
+    renderTeamleadEwiWork();
+  });
+  $("#teamlead-ewi-search").addEventListener("input", renderTeamleadEwiWork);
+  $("#refresh-teamlead-ewi-houses").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const label = button.querySelector("span");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.setAttribute("aria-label", "Refreshing your EWI houses");
+    label.textContent = "Refreshing…";
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(`Could not refresh EWI houses: ${error.message}`, true);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.setAttribute("aria-label", "Refresh your EWI houses");
+      label.textContent = "Refresh";
+    }
+  });
   $("#refresh-plumbing-supervisor-houses").addEventListener(
     "click",
     async (event) => {
@@ -8813,6 +9835,24 @@ function bindEvents() {
       }
     },
   );
+  $("#refresh-supervisor-houses").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const label = button.querySelector("span");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.setAttribute("aria-label", "Refreshing assigned houses");
+    label.textContent = "Refreshing…";
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(`Could not refresh assigned houses: ${error.message}`, true);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.setAttribute("aria-label", "Refresh assigned houses");
+      label.textContent = "Refresh";
+    }
+  });
   $("#refresh-surveyor-houses").addEventListener("click", async (event) => {
     if (hasAccessProfile(state.user, "surveyor")) {
       await loadSurveyorHouses();
@@ -8926,15 +9966,24 @@ function bindEvents() {
     plumbingSupervisorHouseFilter = button.dataset.plumbingSupervisorFilter;
     renderSupervisorHouses();
   });
+  $("#supervisor-house-filters").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-supervisor-filter]");
+    if (!button) return;
+    supervisorHouseFilter = button.dataset.supervisorFilter;
+    renderSupervisorHouses();
+  });
   $("#ventilation-house-list").addEventListener("click", (event) => {
     const surveyPdfsButton = event.target.closest("[data-vent-survey-pdfs]");
     if (surveyPdfsButton) {
       openVentSurveyPdfs(surveyPdfsButton.dataset.houseId);
       return;
     }
-    const annotateButton = event.target.closest("[data-vent-pdf-annotate]");
-    if (annotateButton) {
-      openPdfAnnotator(annotateButton, "vent");
+    const previewButton = event.target.closest("[data-vent-pdf-preview]");
+    if (previewButton) {
+      openPdfAnnotator(
+        previewButton,
+        previewButton.dataset.documentType || "vent",
+      );
       return;
     }
     const button = event.target.closest("[data-ventilation-complete]");

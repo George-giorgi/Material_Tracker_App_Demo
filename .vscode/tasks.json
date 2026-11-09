@@ -18,8 +18,18 @@
         "cwd": "${workspaceFolder}",
         "env": {
           "EWI_DB_PATH": "${workspaceFolder}\\instance\\ewi.seai-red.sqlite3",
-          "EWI_PORT": "8011"
+          "EWI_PORT": "8011",
+          "EWI_TRUST_CLOUDFLARE_PROXY": "1"
         }
+      },
+      "inAgents": true
+    },
+    {
+      "label": "Run Cloudflare Quick Tunnel (port 8011)",
+      "type": "shell",
+      "command": "cloudflared tunnel --url http://127.0.0.1:8011",
+      "options": {
+        "cwd": "${workspaceFolder}"
       },
       "inAgents": true
     }

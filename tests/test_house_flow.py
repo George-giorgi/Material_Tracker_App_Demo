@@ -373,6 +373,120 @@ class HouseDocumentHttpTests(HttpBase):
             count = db.execute("SELECT COUNT(*) FROM house_documents").fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_selected_survey_pdf_can_be_annotated_and_reopened_by_vent_team(self):
+        self.make_ready_house("VENT-SURVEY-TEST")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_vent_required = 1 WHERE id = ?",
+                ("VENT-SURVEY-TEST",),
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL,
+                    downloaded INTEGER NOT NULL DEFAULT 1,
+                    content BLOB
+                )
+                """
+            )
+            vent_department_id = db.execute(
+                "SELECT id FROM departments WHERE name = 'Ventilation'"
+            ).fetchone()["id"]
+            user_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'admin1'"
+            ).fetchone()["id"]
+            db.execute(
+                """
+                INSERT INTO user_departments(user_id, department_id, is_primary)
+                VALUES (?, ?, 1)
+                """,
+                (user_id, vent_department_id),
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES (?, ?, 'Test Admin', '2026-01-01')
+                """,
+                ("VENT-SURVEY-TEST", user_id),
+            )
+            source_pdf = self.make_test_pdf("Original Surveyor plan")
+            source_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, downloaded, content)
+                VALUES (?, 'survey', 'survey-plan.pdf', '.pdf', 1, ?)
+                """,
+                ("VENT-SURVEY-TEST", source_pdf),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO selected_seai_documents
+                    (document_id, house_id, created_by, created_at)
+                VALUES (?, ?, 'Test Surveyor', '2026-01-01')
+                """,
+                (source_id, "VENT-SURVEY-TEST"),
+            )
+
+        annotations = [{
+            "page": 1,
+            "tool": "ventilation_icon",
+            "icon": "trickle-vent",
+            "color": "#ffffff",
+            "point": [0.5, 0.5],
+            "width": 0.18,
+            "height": 0.12,
+            "rotation": 0,
+        }]
+        status, saved, _ = self.call(
+            "POST",
+            f"/api/seai-documents/{source_id}/vent-annotations",
+            {"annotations": annotations},
+        )
+        self.assertEqual(status, 201, saved)
+        status, metadata, _ = self.call(
+            "GET", f"/api/house-vent-documents/{saved['id']}/annotations"
+        )
+        self.assertEqual(status, 200, metadata)
+        self.assertEqual(metadata["source_type"], "seai")
+        self.assertEqual(metadata["source_document_id"], source_id)
+        self.assertEqual(metadata["annotations"][0]["icon"], "trickle-vent")
+        status, documents, _ = self.call(
+            "GET", "/api/house-vent-documents?house_id=VENT-SURVEY-TEST"
+        )
+        self.assertEqual(status, 200, documents)
+        annotated_document = next(
+            document
+            for document in documents["documents"]
+            if document["id"] == saved["id"]
+        )
+        self.assertTrue(annotated_document["annotations_editable"])
+
+        updated_annotations = [{**annotations[0], "point": [0.6, 0.4]}]
+        status, updated, _ = self.call(
+            "POST",
+            f"/api/house-vent-documents/{saved['id']}/annotations",
+            {"annotations": updated_annotations},
+        )
+        self.assertEqual(status, 200, updated)
+        self.assertTrue(updated["updated"])
+        status, metadata, _ = self.call(
+            "GET", f"/api/house-vent-documents/{saved['id']}/annotations"
+        )
+        self.assertEqual(status, 200, metadata)
+        self.assertEqual(metadata["source_type"], "seai")
+        self.assertEqual(metadata["source_document_id"], source_id)
+        self.assertEqual(metadata["annotations"][0]["point"], [0.6, 0.4])
+        with server.connect_db() as db:
+            source_content = db.execute(
+                "SELECT content FROM seai_documents WHERE id = ?", (source_id,)
+            ).fetchone()["content"]
+            self.assertEqual(source_content, source_pdf)
+
     def test_share_pdf_appends_only_the_survey_note_on_a_separate_page(self):
         self.make_ready_house()
         original_pdf = self.make_test_pdf("Original plan content")
@@ -604,7 +718,7 @@ class HouseDocumentHttpTests(HttpBase):
             cookie=employee_cookie,
         )
         self.assertEqual(status, 403)
-        self.assertIn("Assign access", result["error"])
+        self.assertIn("assigned Supervisor access", result["error"])
         status, result, _ = self.call(
             "POST",
             f"/api/house-documents/{document_id}/delete",
@@ -795,7 +909,7 @@ class HouseDocumentHttpTests(HttpBase):
             cookie=vent_cookie,
         )
         self.assertEqual(status, 403)
-        self.assertEqual(listing["error"], "Administrator, Surveyor, or Assign access is required to view house documents.")
+        self.assertEqual(listing["error"], "Administrator, Surveyor, Assign, or assigned Supervisor access is required to view house documents.")
         status, _, _, _ = self.call_raw(
             "GET", f"/api/house-documents/{house_document_id}",
             cookie=vent_cookie,
@@ -1009,6 +1123,16 @@ class HouseDocumentHttpTests(HttpBase):
                         "color": "#d93025",
                         "width": 0.005,
                         "points": [[0.2, 0.2], [0.4, 0.4]],
+                    },
+                    {
+                        "page": 1,
+                        "tool": "ventilation_icon",
+                        "icon": "trickle-vent",
+                        "color": "#ffffff",
+                        "point": [0.65, 0.55],
+                        "width": 0.18,
+                        "height": 0.12,
+                        "rotation": 32,
                     }
                 ]
             },
@@ -1029,6 +1153,62 @@ class HouseDocumentHttpTests(HttpBase):
         self.assertEqual(source["content"], original_pdf)
         self.assertNotEqual(saved_copy["content"], original_pdf)
         self.assertEqual(len(PdfReader(BytesIO(saved_copy["content"])).pages), 1)
+        annotated_document = fitz.open(stream=saved_copy["content"], filetype="pdf")
+        try:
+            self.assertGreater(len(annotated_document[0].get_images(full=True)), 0)
+        finally:
+            annotated_document.close()
+        edit_status, editable_annotations, _ = self.call(
+            "GET",
+            f"/api/house-vent-documents/{annotated['id']}/annotations",
+            cookie=vent_cookie,
+        )
+        self.assertEqual(edit_status, 200, editable_annotations)
+        self.assertEqual(editable_annotations["source_document_id"], original_id)
+        self.assertEqual(len(editable_annotations["annotations"]), 2)
+        updated_annotations = editable_annotations["annotations"]
+        updated_icon = next(
+            annotation
+            for annotation in updated_annotations
+            if annotation["tool"] == "ventilation_icon"
+        )
+        updated_icon["point"] = [0.7, 0.6]
+        updated_icon["rotation"] = 90
+        update_status, update_result, _ = self.call(
+            "POST",
+            f"/api/house-vent-documents/{annotated['id']}/annotations",
+            {"annotations": updated_annotations},
+            cookie=vent_cookie,
+        )
+        self.assertEqual(update_status, 200, update_result)
+        self.assertTrue(update_result["updated"])
+        self.assertEqual(update_result["id"], annotated["id"])
+        with server.connect_db() as db:
+            updated_copy = db.execute(
+                "SELECT content FROM house_vent_documents WHERE id = ?",
+                (annotated["id"],),
+            ).fetchone()
+        self.assertNotEqual(updated_copy["content"], saved_copy["content"])
+        invalid_icon_status, invalid_icon_result, _ = self.call(
+            "POST",
+            f"/api/house-vent-documents/{original_id}/annotations",
+            {
+                "annotations": [
+                    {
+                        "page": 1,
+                        "tool": "ventilation_icon",
+                        "icon": "../untrusted.svg",
+                        "color": "#ffffff",
+                        "point": [0.5, 0.5],
+                        "width": 0.18,
+                        "height": 0.12,
+                        "rotation": 0,
+                    }
+                ]
+            },
+            cookie=vent_cookie,
+        )
+        self.assertEqual(invalid_icon_status, 400, invalid_icon_result)
 
         with server.connect_db() as db:
             db.execute(
@@ -1641,7 +1821,10 @@ class CalculatorApiTests(HttpBase):
 
     def test_seai_application_details_are_returned_only_to_survey_roles(self):
         details = {
-            "Application Details": {"Applicant Name": "Sample Applicant"},
+            "Application Details": {
+                "Application ID": "DEMO-WH000001",
+                "Applicant Name": "Sample Applicant",
+            },
             "Measures": [{"Name": "Attic (Loft) Insulation", "Survey Quantity": "45"}],
         }
         with server.connect_db() as db:
@@ -1726,6 +1909,7 @@ class CalculatorApiTests(HttpBase):
         employee_house = next(house for house in employee_result["houses"] if house["id"] == "WH2131")
         self.assertNotIn("seai_details", employee_house)
         self.assertNotIn("seai_summary", employee_house)
+        self.assertEqual(employee_house["seai_application_id"], "DEMO-WH000001")
         self.assertEqual(
             next(house for house in admin_result["houses"] if house["id"] == "WH2131")["seai_summary"]["Application Details"]["Applicant Name"],
             "Sample Applicant",
@@ -5810,7 +5994,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('data-document-id="${Number(document.id)}"', APP_JS)
         self.assertRegex(
             APP_JS,
-            r'const documentPath = annotator\.documentType === "seai"\s+\? "seai-documents"\s+: annotator\.documentType === "vent"\s+\? "house-vent-documents"\s+: "house-documents";',
+            r'const documentPath = previewType === "seai"\s+\|\|\s+previewType === "vent_seai"\s+\? "seai-documents"\s+: previewType === "vent"\s+\? "house-vent-documents"\s+: "house-documents";',
         )
         self.assertIn('"The original SEAI PDF stays unchanged.', APP_JS)
         self.assertIn("The original is unchanged.", APP_JS)
@@ -5859,6 +6043,143 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(".house-document-share-options { display: grid;", css)
         self.assertIn("PDFs shared with you", APP_JS)
         self.assertIn('html[data-theme="dark"] body.supervisor-mode .supervisor-shared-seai', css)
+        self.assertIn("if (!isPlumbingSupervisor && !canAssignEwiWork)", APP_JS)
+        self.assertIn(
+            'html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting {',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-workload-actions .ventilation-refresh-button {',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-card { border-color: #3a5045;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload-counts > span.is-completed',
+            css,
+        )
+        self.assertIn('canAssignEwiWork ? " ewi-supervisor-house-card" : ""', APP_JS)
+        self.assertIn("!canAssignEwiWork && !house.plumbing_assignment_pending_activation", APP_JS)
+        self.assertIn('house.seai_summary?.["Application Details"]', APP_JS)
+        self.assertIn('class="supervisor-ewi-seai"', APP_JS)
+        self.assertIn("supervisor-ewi-delivery-assignment", APP_JS)
+        self.assertIn('data-ewi-house-pdfs="${houseId}"', APP_JS)
+        self.assertIn(">View house details</button>", APP_JS)
+        self.assertIn("openEwiSupervisorPdfs", APP_JS)
+        self.assertIn("request(`/api/house-vent-documents?house_id=", APP_JS)
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card",
+            css,
+        )
+        self.assertIn(
+            ".supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-seai",
+            css,
+        )
+        self.assertIn(
+            "html[data-theme=\"dark\"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card",
+            css,
+        )
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {\n  min-height: 276px;\n  align-items: start;",
+            css,
+        )
+        self.assertIn(
+            "html[data-theme=\"dark\"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {",
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment select:focus-visible',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment button:not(:disabled)',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-seai {',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-mode .ewi-house-pdf-group li',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-complete-button',
+            css,
+        )
+
+    def test_ewi_supervisor_house_list_receives_seai_measure_summary(self):
+        db = sqlite3.connect(":memory:")
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                (
+                    "EWI-CARD-01",
+                    json.dumps(
+                        {
+                            "Application Details": {"Applicant Name": "Test Applicant"},
+                            "Property Details": {"Eircode": "D01 TEST"},
+                            "Measures": [
+                                {
+                                    "Name": "External Wall Insulation",
+                                    "Survey Quantity": "94",
+                                    "Survey Qty including Variation": "108",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            houses = [{"id": "EWI-CARD-01"}, {"id": "OTHER-HOUSE"}]
+            server._attach_seai_application_summaries(db, houses)
+            self.assertEqual(
+                houses[0]["seai_summary"]["Measures"][0][
+                    "Survey Qty including Variation"
+                ],
+                "108",
+            )
+            self.assertIsNone(houses[1]["seai_summary"])
+        finally:
+            db.close()
+
+    def test_ewi_supervisor_detection_accepts_database_rows(self):
+        db = sqlite3.connect(":memory:")
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute(
+                "CREATE TABLE departments "
+                "(id INTEGER PRIMARY KEY, name TEXT, is_active INTEGER)"
+            )
+            db.execute(
+                "CREATE TABLE user_departments "
+                "(user_id INTEGER, department_id INTEGER)"
+            )
+            db.execute(
+                """
+                CREATE TABLE app_role_permissions
+                    (role_key TEXT, permission_key TEXT, is_allowed INTEGER)
+                """
+            )
+            db.execute(
+                "INSERT INTO app_role_permissions VALUES "
+                "('supervisor', 'access.supervisor', 1)"
+            )
+            user = db.execute(
+                """
+                SELECT 'supervisor' AS role, 'access.supervisor' AS role_permissions,
+                       'External Wall Insulation' AS supervisor_specialty, 1 AS id
+                """
+            ).fetchone()
+            self.assertTrue(server._is_ewi_supervisor(db, user))
+        finally:
+            db.close()
 
     def test_surveyor_seai_pdf_library_is_separately_highlighted(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -5985,6 +6306,7 @@ class UiWiringTests(unittest.TestCase):
                 + APP_JS[start:end]
                 + '\nconsole.log(applicationIdLabelHtml({seai_summary:{"Application Details":{"Application ID":"REF-123","Applicant Name":"Jane Doe"},"Property Details":{"Eircode":"T58 V4X9","Address Line 1":"1 Main Street"}}}));'
                 + '\nconsole.log(houseCardTitle({seai_summary:{"Application Details":{"Application ID":"REF-123"}}}, "HOUSE-1"), houseCardTitle({}, "HOUSE-1"));'
+                + '\nconsole.log(houseCardTitle({seai_application_id:"DEMO-WH000001"}, "HOUSE-1"));'
                 + '\nconsole.log(JSON.stringify(applicationIdLabelHtml({})));',
             ],
             capture_output=True,
@@ -5994,6 +6316,7 @@ class UiWiringTests(unittest.TestCase):
         )
         self.assertEqual(reference_result.returncode, 0, reference_result.stderr)
         self.assertIn("REF-123 HOUSE-1", reference_result.stdout)
+        self.assertIn("DEMO-WH000001", reference_result.stdout)
         self.assertIn("Jane Doe", reference_result.stdout)
         self.assertIn("T58 V4X9", reference_result.stdout)
         self.assertIn("1 Main Street", reference_result.stdout)
@@ -6128,7 +6451,24 @@ console.log(JSON.stringify([blankValid,blankMessage,assignedValid,employee.value
         ]
         self.assertIn('house.seai_details?.Measures?.find', detail_renderer)
         self.assertIn('house.survey_perimeter_m ?? house.perimeter_m', detail_renderer)
-        self.assertIn('["EWI area", ewiArea ? `${ewiArea} m²` : ""]', detail_renderer)
+        self.assertIn(
+            '["EWI area", ewiArea ? `${ewiArea} m²` : "No EWI m² in SEAI record"]',
+            detail_renderer,
+        )
+        open_detail = APP_JS[
+            APP_JS.index("function openHouseDetail"):
+            APP_JS.index("function updateHouseAssignmentSaveState")
+        ]
+        self.assertIn(
+            'state.houseDetailReturnTab = activeTab;',
+            open_detail,
+        )
+        self.assertIn('if (activeTab !== "houses")', open_detail)
+        return_from_detail = APP_JS[
+            APP_JS.index("function returnFromHouseDetail"):
+            APP_JS.index("function renderMovementTable")
+        ]
+        self.assertIn("if (returnTab !== \"houses\") setTab(returnTab);", return_from_detail)
         self.assertIn('["Perimeter", surveyPerimeter == null ? "" : `${formatQuantity(surveyPerimeter)} m`]', detail_renderer)
         self.assertNotIn('"Floor area"', detail_renderer)
 
@@ -6838,6 +7178,19 @@ class PlumbingCoordinatorTests(HttpBase):
         )
         self.assertEqual(status, 201)
         return result["user"]["id"]
+
+    def test_ewi_supervisor_dashboard_returns_success(self):
+        _, _, ewi_supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "ewi-supervisor", "pin": "567891"},
+        )
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=ewi_supervisor_cookie
+        )
+
+        self.assertEqual(status, 200, dashboard)
 
     def test_plumbing_supervisor_does_not_see_assignment_from_before_reset(self):
         self.provide("PLUMBING-OLD-CYCLE")

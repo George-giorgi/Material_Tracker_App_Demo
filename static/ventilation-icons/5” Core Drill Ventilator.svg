@@ -20,8 +20,6 @@
     </linearGradient>
   </defs>
 
-  <path d="M0 0h500v320H0z" fill="#fff"/>
-
   <!-- Square internal wall plate, set behind the duct. -->
   <path d="m35 165 119 14v125l-119-18Z" fill="#c4c6c5"/>
   <path d="m37 165 115 14v122l-115-17Z" fill="url(#plate)" stroke="#a9acab" stroke-width="1.2"/>

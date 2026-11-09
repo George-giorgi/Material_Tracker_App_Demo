@@ -2,15 +2,6 @@
   <title id="title">Rytons Controllable High Rise LookRyt AirCore — Buff/sand external grille</title>
   <desc id="desc">Three-quarter product view of a black cylindrical AirCore sleeve with a buff projecting horizontal-louvre grille and a perforated cream wall flange.</desc>
   <defs>
-    <linearGradient id="backdrop" x1="0" y1="0" x2="0" y2="1">
-      <stop stop-color="#4f5eae"/>
-      <stop offset=".55" stop-color="#5677c8"/>
-      <stop offset="1" stop-color="#426bb9"/>
-    </linearGradient>
-    <radialGradient id="backdropLight" cx=".23" cy=".65" r=".78">
-      <stop stop-color="#a1b2e8" stop-opacity=".3"/>
-      <stop offset="1" stop-color="#354c96" stop-opacity=".08"/>
-    </radialGradient>
     <linearGradient id="wallPlate" x1=".1" y1="0" x2=".95" y2="1">
       <stop stop-color="#fffef3"/>
       <stop offset=".62" stop-color="#f2efdf"/>
@@ -54,9 +45,6 @@
     </clipPath>
   </defs>
 
-  <path d="M1 1h398v290H1z" fill="url(#backdrop)"/>
-  <path d="M1 1h398v290H1z" fill="url(#backdropLight)"/>
-  <path d="M1 1h398v290H1z" fill="none" stroke="#e0e1e7" stroke-width="2"/>
   <ellipse cx="198" cy="254" rx="120" ry="13" fill="#19233c" opacity=".23" filter="url(#groundShadow)"/>
 
   <!-- Rounded wall flange, with the narrow perimeter vents visible around the sleeve. -->

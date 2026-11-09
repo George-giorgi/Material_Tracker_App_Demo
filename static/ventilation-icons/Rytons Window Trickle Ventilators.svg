@@ -2,15 +2,6 @@
   <title id="title">Rytons Window Trickle Ventilators</title>
   <desc id="desc">Two white elongated window trickle ventilators shown diagonally on a blue studio background, with dark airflow slots and end fittings.</desc>
   <defs>
-    <linearGradient id="blue" x1="0" y1="0" x2=".28" y2="1">
-      <stop stop-color="#637bd0"/>
-      <stop offset=".58" stop-color="#5475c7"/>
-      <stop offset="1" stop-color="#446bb8"/>
-    </linearGradient>
-    <radialGradient id="blueGlow" cx=".23" cy=".72" r=".8">
-      <stop stop-color="#98a9e3" stop-opacity=".35"/>
-      <stop offset="1" stop-color="#334c99" stop-opacity=".08"/>
-    </radialGradient>
     <linearGradient id="whitePlastic" x1="0" y1="0" x2="0" y2="1">
       <stop stop-color="#fffefb"/>
       <stop offset=".48" stop-color="#efefeb"/>
@@ -29,10 +20,6 @@
       <feGaussianBlur stdDeviation="3"/>
     </filter>
   </defs>
-
-  <path d="M1 1h398v298H1z" fill="url(#blue)"/>
-  <path d="M1 1h398v298H1z" fill="url(#blueGlow)"/>
-  <path d="M1 1h398v298H1z" fill="none" stroke="#dfe2eb" stroke-width="1.5"/>
 
   <!-- Soft cast shadows anchor the two lightweight plastic vents to the surface. -->
   <path d="m18 69 307 168 17-11L54 49Z" fill="#263765" opacity=".22" filter="url(#softShadow)"/>

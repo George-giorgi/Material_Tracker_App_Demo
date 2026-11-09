@@ -2,10 +2,6 @@
   <title id="title">INTERVENT NVF Range 100mm (4-inch) and 150mm (6-inch)</title>
   <desc id="desc">Three-quarter product illustration of a white square axial extractor fan with a central motor hub, horizontal protective louvres, and a short round rear spigot.</desc>
   <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
-      <stop stop-color="#fff"/>
-      <stop offset="1" stop-color="#f8f8f7"/>
-    </linearGradient>
     <linearGradient id="plasticFront" x1=".08" y1="0" x2=".92" y2="1">
       <stop stop-color="#fffef9"/>
       <stop offset=".48" stop-color="#f3f1e9"/>
@@ -49,8 +45,6 @@
     </clipPath>
   </defs>
 
-  <path d="M1 1h358v318H1z" fill="url(#background)"/>
-  <path d="M20 20h320v280H20z" fill="none" stroke="#8c8d8a" stroke-width="1.5"/>
   <ellipse cx="176" cy="271" rx="94" ry="15" fill="#6d6c66" opacity=".18" filter="url(#shadow)"/>
 
   <!-- Hollow rear spigot projects from behind the fan casing. -->

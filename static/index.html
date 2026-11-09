@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261106-vent-combined-pdfs">
+    <link rel="stylesheet" href="/app.css?v=20261109-ewi-house-card-9">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -145,6 +145,113 @@
               <button type="button" class="dashboard-stat-link" data-house-view="closed"><strong id="stat-closed">0</strong><span id="stat-closed-label">Closed</span></button>
               <button type="button" class="dashboard-stat-link" data-house-view="not_started"><strong id="stat-not-started">0</strong><span id="stat-not-started-label">Not started</span></button>
             </div>
+          </section>
+          <section id="teamlead-ewi-workload" class="teamlead-ewi-workload hidden" aria-labelledby="teamlead-ewi-title">
+            <div class="plumbing-coordinator-greeting teamlead-ewi-greeting">
+              <span class="plumbing-coordinator-greeting-icon" aria-hidden="true">⌂</span>
+              <div>
+                <span class="plumbing-coordinator-greeting-eyebrow">EWI TEAMLEAD WORKSPACE</span>
+                <h2 id="teamlead-ewi-greeting-title">Your EWI team</h2>
+                <p>Your crew, assigned houses, and work progress in one place.</p>
+              </div>
+            </div>
+            <div class="ventilation-workload-heading teamlead-ewi-heading">
+              <div>
+                <span class="teamlead-ewi-eyebrow">YOUR ASSIGNED WORK</span>
+                <h2 id="teamlead-ewi-title">EWI work queue</h2>
+                <p>Houses assigned to you by your Supervisor.</p>
+              </div>
+              <div class="ventilation-workload-actions">
+                <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="teamlead-ewi-search" type="search" placeholder="Search your EWI houses" aria-label="Search your assigned EWI houses"></label>
+                <button class="ventilation-refresh-button" id="refresh-teamlead-ewi-houses" type="button" aria-label="Refresh your EWI houses">
+                  <svg class="ventilation-refresh-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.8 8A7 7 0 0 0 4.9 4.7L3.2 6.4M3.2 6.4V2.8M3.2 6.4h3.6M3.2 12a7 7 0 0 0 11.9 3.3l1.7-1.7m0 0v3.6m0-3.6h-3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+            <details id="teamlead-ewi-crew" class="plumbing-supervisor-crew hidden">
+              <summary class="plumbing-supervisor-crew-heading">
+                <span class="plumbing-supervisor-crew-mark" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M16 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20m6.5-9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm6-6.7a3.5 3.5 0 0 1 0 6.8m2 4.1h.1a3.4 3.4 0 0 1 3.4 3.4V20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+                <div>
+                  <h2 id="teamlead-ewi-crew-title">Your EWI crew</h2>
+                  <p>Your team roster and assigned crew members.</p>
+                </div>
+                <span id="teamlead-ewi-crew-count" class="plumbing-supervisor-crew-count" aria-live="polite"></span>
+              </summary>
+              <div id="teamlead-ewi-crew-list" class="plumbing-supervisor-crew-list"></div>
+              <p id="teamlead-ewi-crew-empty" class="plumbing-supervisor-crew-empty hidden">No crew members have been added to your roster yet.</p>
+            </details>
+            <div id="teamlead-ewi-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter your EWI houses">
+              <button type="button" class="ventilation-house-filter active" data-teamlead-ewi-filter="all" aria-pressed="true">All houses <span id="teamlead-ewi-all-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-teamlead-ewi-filter="open" aria-pressed="false">To do <span id="teamlead-ewi-open-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-teamlead-ewi-filter="completed" aria-pressed="false">Completed <span id="teamlead-ewi-completed-count">0</span></button>
+            </div>
+            <div id="teamlead-ewi-work-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No EWI houses assigned yet</strong><p>Houses assigned to you by your Supervisor will appear here.</p></div>
+            <div id="teamlead-ewi-work-list" class="teamlead-ewi-work-list"></div>
+          </section>
+          <section id="supervisor-workload" class="plumbing-coordinator-workload hidden" aria-label="Supervisor workload">
+            <div class="plumbing-coordinator-greeting">
+              <span class="plumbing-coordinator-greeting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M16 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20m15-9.2a3.2 3.2 0 0 1 3 3.2V16m-7.5-9a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0Zm6 1.2a3.2 3.2 0 0 1-2.4 3.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <div class="plumbing-coordinator-greeting-copy">
+                <span id="supervisor-workload-eyebrow" class="plumbing-coordinator-greeting-eyebrow">SUPERVISOR WORKSPACE</span>
+                <h2 id="supervisor-workload-greeting">Welcome</h2>
+                <p>Your team, assigned houses, and delivery progress in one place.</p>
+              </div>
+              <span class="plumbing-coordinator-greeting-tag"><span aria-hidden="true"></span> WORKSPACE</span>
+            </div>
+            <div class="ventilation-workload-heading">
+              <div><p id="supervisor-workload-intro" class="plumbing-workload-intro">Review houses assigned to you, coordinate deliveries, and keep your Teamleads informed.</p></div>
+              <div class="ventilation-workload-actions">
+                <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="supervisor-house-search" type="search" placeholder="Search your houses" aria-label="Search assigned houses"></label>
+                <button class="ventilation-refresh-button" id="refresh-supervisor-houses" type="button" aria-label="Refresh assigned houses">
+                  <svg class="ventilation-refresh-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.8 8A7 7 0 0 0 4.9 4.7L3.2 6.4M3.2 6.4V2.8M3.2 6.4h3.6M3.2 12a7 7 0 0 0 11.9 3.3l1.7-1.7m0 0v3.6m0-3.6h-3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+            <section id="supervisor-dashboard-summary" class="surveyor-dashboard-summary hidden" aria-label="Your supervision workload">
+              <div class="surveyor-dashboard-stats supervisor-workload-stats" aria-live="polite" aria-atomic="true">
+                <div><strong id="supervisor-stat-assigned">0</strong><span>Assigned houses</span></div>
+                <div><strong id="supervisor-stat-unassigned">0</strong><span>Need delivery details</span></div>
+              </div>
+            </section>
+            <section id="supervisor-assignment-summary" class="supervisor-assignment-summary hidden" aria-label="House assignments by delivery person and Teamlead">
+              <article class="card supervisor-assignment-summary-group">
+                <div class="supervisor-assignment-summary-heading"><span class="supervisor-summary-icon" aria-hidden="true">↗</span><div><h2>Delivery people</h2><p>Houses assigned to each delivery person</p></div></div>
+                <div id="supervisor-delivery-summary" class="supervisor-assignment-summary-list"></div>
+              </article>
+              <article class="card supervisor-assignment-summary-group">
+                <div class="supervisor-assignment-summary-heading"><span class="supervisor-summary-icon" aria-hidden="true">⌂</span><div><h2>Assigned teams</h2><p>Houses assigned to each Teamlead</p></div></div>
+                <div id="supervisor-team-summary" class="supervisor-assignment-summary-list"></div>
+              </article>
+            </section>
+            <details id="supervisor-team-rosters" class="supervisor-team-rosters">
+              <summary class="supervisor-team-rosters-heading">
+                <span class="supervisor-team-rosters-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M16 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20m15-9.2a3.2 3.2 0 0 1 3 3.2V16m-7.5-9a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0Zm6 1.2a3.2 3.2 0 0 1-2.4 3.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="supervisor-team-rosters-copy"><strong id="supervisor-team-rosters-title">Teamleads &amp; rosters</strong><small>Your reporting Teamleads and their roster members.</small></span>
+                <span class="supervisor-team-rosters-totals" aria-live="polite" aria-atomic="true">
+                  <span><strong id="supervisor-teamlead-count">0</strong> <span id="supervisor-teamlead-label">Teamleads</span></span>
+                  <span><strong id="supervisor-roster-member-count">0</strong> <span id="supervisor-roster-member-label">roster members</span></span>
+                </span>
+              </summary>
+              <div id="supervisor-team-roster-list" class="supervisor-team-roster-list"></div>
+            </details>
+            <div id="supervisor-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter assigned houses">
+              <button type="button" class="ventilation-house-filter active" data-supervisor-filter="all" aria-pressed="true">All houses <span id="supervisor-filter-all-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-supervisor-filter="needs_assignment" aria-pressed="false">Needs delivery details <span id="supervisor-filter-needs-assignment-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-supervisor-filter="active" aria-pressed="false">Active <span id="supervisor-filter-active-count">0</span></button>
+              <button type="button" class="ventilation-house-filter" data-supervisor-filter="closed" aria-pressed="false">Closed <span id="supervisor-filter-closed-count">0</span></button>
+            </div>
+            <div id="supervisor-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No assigned houses yet</strong><p>Houses assigned to your account will appear here.</p></div>
+            <div id="supervisor-house-list" class="house-grid"></div>
           </section>
           <section id="plumbing-supervisor-workload" class="plumbing-coordinator-workload hidden" aria-label="Plumbing team supervisor work">
             <div class="plumbing-coordinator-greeting">
@@ -348,26 +455,6 @@
                 <div><strong id="surveyor-stat-needed">0</strong><span>Need a survey</span></div>
                 <div><strong id="surveyor-stat-complete">0</strong><span>Surveyed</span></div>
               </div>
-            </section>
-            <section id="supervisor-dashboard-summary" class="surveyor-dashboard-summary hidden" aria-label="Your supervision workload">
-              <div class="surveyor-dashboard-message">
-                <span class="surveyor-dashboard-icon" aria-hidden="true">⌂</span>
-                <div><strong id="supervisor-dashboard-greeting">Your assigned houses</strong><p id="supervisor-dashboard-description">Only houses assigned to your account appear here. Choose a delivery person and an active Teamlead for each house.</p></div>
-              </div>
-              <div class="surveyor-dashboard-stats" aria-live="polite" aria-atomic="true">
-                <div><strong id="supervisor-stat-assigned">0</strong><span>Assigned houses</span></div>
-                <div><strong id="supervisor-stat-unassigned">0</strong><span>Need delivery details</span></div>
-              </div>
-            </section>
-            <section id="supervisor-assignment-summary" class="supervisor-assignment-summary hidden" aria-label="House assignments by delivery person and Teamlead">
-              <article class="card supervisor-assignment-summary-group">
-                <div class="supervisor-assignment-summary-heading"><span class="supervisor-summary-icon" aria-hidden="true">↗</span><div><h2>Delivery people</h2><p>Houses assigned to each delivery person</p></div></div>
-                <div id="supervisor-delivery-summary" class="supervisor-assignment-summary-list"></div>
-              </article>
-              <article class="card supervisor-assignment-summary-group">
-                <div class="supervisor-assignment-summary-heading"><span class="supervisor-summary-icon" aria-hidden="true">⌂</span><div><h2>Assigned teams</h2><p>Houses assigned to each Teamlead</p></div></div>
-                <div id="supervisor-team-summary" class="supervisor-assignment-summary-list"></div>
-              </article>
             </section>
             <div id="assign-houses-dashboard" class="kpi-row assign-house-kpis hidden" aria-label="House status dashboard">
               <button type="button" class="kpi seai" data-assign-house-filter="seai" aria-pressed="false"><span class="kpi-label"><svg class="assign-map-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 3v15m6-12v15" stroke="currentColor" stroke-width="1.5"/><path d="M12 7.2a2.1 2.1 0 0 0-2.1 2.1c0 1.5 2.1 3.8 2.1 3.8s2.1-2.3 2.1-3.8A2.1 2.1 0 0 0 12 7.2Z" fill="currentColor" stroke="white" stroke-width=".8"/></svg>From SEAI</span><span class="kpi-value" id="assign-stat-seai">0</span></button>
@@ -731,14 +818,10 @@
     <dialog id="vent-survey-pdfs-dialog" class="dialog vent-survey-pdfs-dialog" aria-labelledby="vent-survey-pdfs-title">
       <div class="dialog-content">
         <div class="dialog-heading">
-          <div><div class="eyebrow">SURVEYOR SELECTION</div><h2 id="vent-survey-pdfs-title">Combined PDFs by Surveyor</h2><p id="vent-survey-pdfs-description" class="page-subtitle"></p></div>
+          <div><div class="eyebrow">HOUSE DOCUMENTS</div><h2 id="vent-survey-pdfs-title">House PDFs</h2><p id="vent-survey-pdfs-description" class="page-subtitle"></p></div>
           <button class="icon-button close-dialog" type="button" aria-label="Close attached PDFs">&times;</button>
         </div>
         <div id="vent-survey-pdfs-list" class="vent-survey-pdfs-list"></div>
-        <section id="vent-survey-pdfs-viewer" class="vent-survey-pdfs-viewer" aria-label="PDF preview" hidden>
-          <div class="vent-survey-pdfs-viewer-heading"><strong id="vent-survey-pdfs-viewer-title">PDF preview</strong><button id="vent-survey-pdfs-viewer-close" class="button button-secondary" type="button">Close preview</button></div>
-          <iframe id="vent-survey-pdfs-frame" title="Attached survey PDF preview"></iframe>
-        </section>
         <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Close</button></div>
       </div>
     </dialog>
@@ -807,12 +890,36 @@
         </div>
         <p class="pdf-annotator-help" id="pdf-annotator-help">Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.</p>
         <div class="pdf-annotator-error hidden" id="pdf-annotator-error" role="alert"></div>
-        <main class="pdf-annotator-viewport" id="pdf-annotator-viewport" aria-label="PDF page annotation area">
-          <div class="pdf-page-surface" id="pdf-page-surface">
-            <img id="pdf-annotator-image" alt="Current survey PDF page">
-            <canvas id="pdf-annotator-canvas" aria-label="Draw or place notes on this PDF page"></canvas>
-          </div>
-        </main>
+        <div class="pdf-annotator-workspace" id="pdf-annotator-workspace">
+          <main class="pdf-annotator-viewport" id="pdf-annotator-viewport" aria-label="PDF page annotation area">
+            <div class="pdf-page-surface" id="pdf-page-surface">
+              <img id="pdf-annotator-image" alt="Current survey PDF page">
+              <canvas id="pdf-annotator-canvas" aria-label="Draw, place, or adjust annotations on this PDF page"></canvas>
+            </div>
+          </main>
+          <aside class="pdf-annotator-icon-palette" id="pdf-annotator-icon-palette" aria-labelledby="pdf-annotator-icon-title" hidden>
+            <div class="pdf-annotator-icon-heading">
+              <div>
+                <span class="pdf-annotator-page-caption">VENTILATION PRODUCTS</span>
+                <h3 id="pdf-annotator-icon-title">Add a product icon</h3>
+                <p>Drag an icon onto the plan or select it and tap the page.</p>
+              </div>
+              <span class="pdf-annotator-ventilation-icons-count" id="pdf-annotator-icon-count">9 icons</span>
+            </div>
+            <div class="pdf-annotator-icon-list" id="pdf-annotator-icon-list" aria-label="Ventilation product icons"></div>
+            <div class="pdf-annotator-icon-edit" id="pdf-annotator-icon-edit" hidden>
+              <strong id="pdf-annotator-selected-icon-name">Select a placed icon</strong>
+              <div class="pdf-annotator-icon-edit-actions" aria-label="Selected icon controls">
+                <button class="button button-secondary" id="pdf-annotator-icon-rotate-left" type="button" aria-label="Rotate icon left">Rotate left</button>
+                <button class="button button-secondary" id="pdf-annotator-icon-rotate-right" type="button" aria-label="Rotate icon right">Rotate right</button>
+                <button class="button button-secondary" id="pdf-annotator-icon-smaller" type="button" aria-label="Make icon smaller">Smaller</button>
+                <button class="button button-secondary" id="pdf-annotator-icon-larger" type="button" aria-label="Make icon larger">Larger</button>
+                <button class="button button-secondary" id="pdf-annotator-icon-delete" type="button">Remove</button>
+              </div>
+              <span>Drag to move · Drag a corner to resize · Drag the top handle to rotate</span>
+            </div>
+          </aside>
+        </div>
       </div>
     </dialog>
 
@@ -1070,6 +1177,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261106-vent-combined-pdfs" defer></script>
+    <script src="/app.js?v=20261109-ewi-house-card-10" defer></script>
   </body>
 </html>

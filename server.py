@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from io import BytesIO, StringIO
-from xml.etree.ElementTree import ParseError, fromstring
+from xml.etree.ElementTree import ParseError, fromstring, tostring
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.sax.saxutils import escape
@@ -49,6 +49,10 @@ HOST = os.environ.get("EWI_HOST", "127.0.0.1")
 TLS_CERT = os.environ.get("EWI_TLS_CERT", "")
 TLS_KEY = os.environ.get("EWI_TLS_KEY", "")
 COOKIE_SECURE = bool(TLS_CERT and TLS_KEY)
+TRUST_CLOUDFLARE_PROXY = (
+    os.environ.get("EWI_TRUST_CLOUDFLARE_PROXY", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 SESSION_MAX_AGE = 12 * 60 * 60
 CREDENTIAL_ITERATIONS = 310_000
 HOUSE_DOCUMENT_MAX_BYTES = 8_000_000
@@ -56,6 +60,17 @@ HOUSE_DOCUMENT_MAX_COUNT = 25
 HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
+VENT_ANNOTATION_ICON_FILES = {
+    "trickle-vent": "Rytons Window Trickle Ventilators.svg",
+    "controllable-panel": "Rytons controllable LookRyt panel.svg",
+    "terracotta-grille": "Rytons Controllable LookRyt AirCore Terracotta external grille.svg",
+    "high-rise-grille": "Rytons Controllable High Rise LookRyt AirCore Buff-sand external grille.svg",
+    "wall-ventilator": "INTERVENT NVF Range 100mm 4in and 150mm 6in.svg",
+    "humidity-ventilator": "HUMIDITY-controlled ventilation SYSTEMS.svg",
+    "roof-ventilator": "G RANGE TILE & SLATE VENTILATORS roof.svg",
+    "axial-fan": "D Series Axial Fan.svg",
+    "core-drill": "5” Core Drill Ventilator.svg",
+}
 SEAI_DOCUMENT_MAX_BYTES = 20_000_000
 MOVEMENT_TYPES = {"collection", "pickup", "delivery", "use", "return", "transfer"}
 LOCATION_TYPES = {"warehouse", "team", "house"}
@@ -81,7 +96,7 @@ def _record_change(path):
         "/api/seai-documents",
         "/api/seai-documents/save-selected",
     } or re.fullmatch(
-        r"/api/(?:house|seai)-documents/\d+/(?:annotations|delete-selected)", path
+        r"/api/(?:house|seai)-documents/\d+/(?:annotations|vent-annotations|delete-selected)", path
     ):
         domain = "documents"
     elif path in {"/api/seai-documents/share"} or re.fullmatch(
@@ -254,9 +269,81 @@ def _render_pdf_page(content, page_number):
         document.close()
 
 
-def _annotate_pdf_document(content, annotations):
+def _render_ventilation_icon(icon_key, rotation, base_width, base_height):
+    filename = VENT_ANNOTATION_ICON_FILES.get(icon_key)
+    if not filename:
+        raise ApiError(400, "A ventilation icon is not recognized.")
+    icon_path = STATIC_DIR / "ventilation-icons" / filename
+    try:
+        root = fromstring(icon_path.read_bytes())
+        view_box = [
+            float(value)
+            for value in re.split(r"[\s,]+", root.attrib["viewBox"].strip())
+        ]
+        if len(view_box) != 4 or view_box[2] <= 0 or view_box[3] <= 0:
+            raise ValueError("Invalid SVG viewBox.")
+        origin_x, origin_y, original_width, original_height = view_box
+        radians = math.radians(rotation)
+        cosine = abs(math.cos(radians))
+        sine = abs(math.sin(radians))
+        rotated_width = base_width * cosine + base_height * sine
+        rotated_height = base_height * cosine + base_width * sine
+        padding_x = (rotated_width - base_width) / 2
+        padding_y = (rotated_height - base_height) / 2
+        center_x = base_width / 2
+        center_y = base_height / 2
+        scale_x = base_width / original_width
+        scale_y = base_height / original_height
+        group = fromstring(
+            f'<g xmlns="http://www.w3.org/2000/svg" transform="translate({padding_x} {padding_y}) translate({center_x} {center_y}) rotate({rotation}) translate({-center_x} {-center_y}) scale({scale_x} {scale_y}) translate({-origin_x} {-origin_y})">'
+            "</g>"
+        )
+        for child in list(root):
+            root.remove(child)
+            group.append(child)
+        root.append(group)
+        root.set("viewBox", f"0 0 {rotated_width} {rotated_height}")
+        root.set("width", f"{rotated_width}px")
+        root.set("height", f"{rotated_height}px")
+        svg_document = fitz.open(
+            stream=tostring(root, encoding="utf-8"),
+            filetype="svg",
+        )
+        try:
+            pixmap = svg_document[0].get_pixmap(
+                matrix=fitz.Matrix(3, 3),
+                alpha=True,
+            )
+            return pixmap.tobytes("png"), rotated_width, rotated_height
+        finally:
+            svg_document.close()
+    except ApiError:
+        raise
+    except (OSError, KeyError, ParseError, ValueError, fitz.FileDataError, RuntimeError) as exc:
+        raise ApiError(422, "A ventilation product icon could not be rendered.") from exc
+
+
+def _pdf_annotation_metadata_json(annotations):
+    stored_annotations = []
+    for annotation in annotations:
+        tool = annotation["tool"]
+        keys = {
+            "pen": ("page", "tool", "color", "width", "points"),
+            "highlighter": ("page", "tool", "color", "width", "points"),
+            "text": ("page", "tool", "color", "point", "text", "font_size", "wrap"),
+            "ventilation_icon": (
+                "page", "tool", "color", "point", "icon", "width", "height", "rotation",
+            ),
+        }[tool]
+        stored_annotations.append(
+            {key: annotation[key] for key in keys if key in annotation}
+        )
+    return json.dumps(stored_annotations, separators=(",", ":"), allow_nan=False)
+
+
+def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
     if not isinstance(annotations, list) or not annotations:
-        raise ApiError(400, "Add at least one pen stroke or text note before saving.")
+        raise ApiError(400, "Add at least one mark, product icon, or text note before saving.")
     if len(annotations) > HOUSE_DOCUMENT_MAX_ANNOTATIONS:
         raise ApiError(400, "This PDF has too many annotations to save at once.")
     document = _open_pdf_document(content)
@@ -271,7 +358,7 @@ def _annotate_pdf_document(content, annotations):
                 isinstance(page_number, bool)
                 or not isinstance(page_number, int)
                 or not 1 <= page_number <= document.page_count
-                or tool not in {"pen", "highlighter", "text"}
+                or tool not in {"pen", "highlighter", "text", "ventilation_icon"}
                 or not isinstance(color_value, str)
                 or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_value)
             ):
@@ -282,6 +369,62 @@ def _annotate_pdf_document(content, annotations):
                 int(color_value[index:index + 2], 16) / 255
                 for index in (1, 3, 5)
             )
+            if tool == "ventilation_icon":
+                if not allow_ventilation_icons:
+                    raise ApiError(400, "Ventilation product icons can only be added to Vent PDFs.")
+                icon_key = annotation.get("icon")
+                point = annotation.get("point")
+                width_ratio = annotation.get("width")
+                height_ratio = annotation.get("height")
+                rotation = annotation.get("rotation")
+                if (
+                    not isinstance(icon_key, str)
+                    or icon_key not in VENT_ANNOTATION_ICON_FILES
+                    or not isinstance(point, list)
+                    or len(point) != 2
+                    or not all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and math.isfinite(value)
+                        and 0 <= value <= 1
+                        for value in point
+                    )
+                    or not isinstance(width_ratio, (int, float))
+                    or isinstance(width_ratio, bool)
+                    or not math.isfinite(width_ratio)
+                    or not 0.02 <= width_ratio <= 0.7
+                    or not isinstance(height_ratio, (int, float))
+                    or isinstance(height_ratio, bool)
+                    or not math.isfinite(height_ratio)
+                    or not 0.02 <= height_ratio <= 0.7
+                    or not isinstance(rotation, (int, float))
+                    or isinstance(rotation, bool)
+                    or not math.isfinite(rotation)
+                    or not -3600 <= rotation <= 3600
+                ):
+                    raise ApiError(400, "A ventilation icon annotation is invalid.")
+                base_width = rect.width * width_ratio
+                base_height = rect.height * height_ratio
+                image, image_width, image_height = _render_ventilation_icon(
+                    icon_key,
+                    rotation % 360,
+                    base_width,
+                    base_height,
+                )
+                center_x = point[0] * rect.width
+                center_y = point[1] * rect.height
+                page.insert_image(
+                    fitz.Rect(
+                        center_x - image_width / 2,
+                        center_y - image_height / 2,
+                        center_x + image_width / 2,
+                        center_y + image_height / 2,
+                    ),
+                    stream=image,
+                    keep_proportion=False,
+                    overlay=True,
+                )
+                continue
             if tool == "text":
                 text = annotation.get("text")
                 point = annotation.get("point")
@@ -1204,6 +1347,19 @@ def initialize_db():
         )
         db.execute(
             """
+            CREATE TABLE IF NOT EXISTS house_ewi_assignments (
+                house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
+                teamlead_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                supervisor_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                assigned_by TEXT NOT NULL DEFAULT '',
+                assigned_at TEXT NOT NULL,
+                completed_by TEXT NOT NULL DEFAULT '',
+                completed_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        db.execute(
+            """
             CREATE TABLE IF NOT EXISTS house_snags (
                 id INTEGER PRIMARY KEY,
                 house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
@@ -1297,6 +1453,31 @@ def initialize_db():
             )
             """
         )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_vent_document_annotations (
+                annotated_document_id INTEGER PRIMARY KEY
+                    REFERENCES house_vent_documents(id) ON DELETE CASCADE,
+                source_document_id INTEGER
+                    REFERENCES house_vent_documents(id) ON DELETE SET NULL,
+                annotations_json TEXT NOT NULL,
+                saved_at TEXT NOT NULL
+            )
+            """
+        )
+        annotation_columns = {
+            row["name"]
+            for row in db.execute(
+                "PRAGMA table_info(house_vent_document_annotations)"
+            )
+        }
+        if "source_seai_document_id" not in annotation_columns:
+            db.execute(
+                """
+                ALTER TABLE house_vent_document_annotations
+                ADD COLUMN source_seai_document_id INTEGER
+                """
+            )
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS house_vent_assignments (
@@ -1790,6 +1971,77 @@ def _in_department(db, user, department_name):
     ).fetchone() is not None
 
 
+def _is_plumbing_supervisor(db, user):
+    return _has_access_profile(user, "supervisor") and (
+        (user["supervisor_specialty"] or "").strip().casefold() == "plumbing"
+        or db.execute(
+            """
+            SELECT 1 FROM user_departments memberships
+            JOIN departments ON departments.id = memberships.department_id
+            WHERE memberships.user_id = ?
+              AND departments.name = 'Plumbing' COLLATE NOCASE
+              AND departments.is_active = 1
+            """,
+            (user["id"],),
+        ).fetchone()
+        is not None
+    )
+
+
+def _is_ewi_supervisor(db, user):
+    return _has_access_profile(user, "supervisor") and (
+        (
+            user["supervisor_specialty"]
+            if "supervisor_specialty" in user.keys()
+            else ""
+        )
+        .strip()
+        .casefold()
+        == "external wall insulation".casefold()
+        or db.execute(
+            """
+            SELECT 1 FROM user_departments memberships
+            JOIN departments ON departments.id = memberships.department_id
+            WHERE memberships.user_id = ?
+              AND departments.name = 'External Wall Insulation' COLLATE NOCASE
+              AND departments.is_active = 1
+            """,
+            (user["id"],),
+        ).fetchone()
+        is not None
+    )
+
+
+def _teamlead_ewi_houses(db, teamlead_user_id):
+    return [
+        dict(row)
+        for row in db.execute(
+            """
+            SELECT assignment.house_id AS id, p.postcode, p.address, p.owner_name,
+                   h.is_finished, assignment.assigned_by, assignment.assigned_at,
+                   assignment.completed_by, assignment.completed_at,
+                   supervisor.display_name AS supervisor_name
+            FROM house_ewi_assignments assignment
+            JOIN provided_houses p ON p.id = assignment.house_id
+            LEFT JOIN houses h ON h.id = assignment.house_id
+            LEFT JOIN house_role_assignments supervisor_assignment
+              ON supervisor_assignment.house_id = assignment.house_id
+             AND supervisor_assignment.role = 'supervisor'
+            LEFT JOIN app_users supervisor
+              ON supervisor.id = supervisor_assignment.user_id
+            JOIN user_reporting_lines reports
+              ON reports.manager_user_id = assignment.supervisor_user_id
+             AND reports.report_user_id = assignment.teamlead_user_id
+            WHERE assignment.teamlead_user_id = ?
+              AND supervisor_assignment.user_id = assignment.supervisor_user_id
+            ORDER BY (assignment.completed_at != ''), assignment.assigned_at DESC,
+                     assignment.house_id COLLATE NOCASE
+            """,
+            (teamlead_user_id,),
+        )
+    ]
+
+
 def _external_insulation_supervisors(db):
     return db.execute(
         """
@@ -2276,6 +2528,66 @@ def _find_seai_application_id(value, depth=0):
         if found:
             return found
     return ""
+
+
+def _seai_application_ids_by_house(db, house_ids):
+    if not house_ids or not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'seai_applications'"
+    ).fetchone():
+        return {}
+    placeholders = ",".join("?" for _ in house_ids)
+    application_ids = {}
+    for row in db.execute(
+        "SELECT application_id, detail_data_json FROM seai_applications "
+        f"WHERE application_id IN ({placeholders})",
+        house_ids,
+    ):
+        try:
+            details = json.loads(row["detail_data_json"])
+        except (TypeError, ValueError):
+            continue
+        application_id = _find_seai_application_id(details)
+        if application_id:
+            application_ids[row["application_id"]] = application_id
+    return application_ids
+
+
+def _attach_seai_application_ids(db, houses):
+    application_ids = _seai_application_ids_by_house(
+        db, [house["id"] for house in houses]
+    )
+    for house in houses:
+        house["seai_application_id"] = application_ids.get(house["id"], "")
+    return houses
+
+
+def _attach_seai_application_summaries(db, houses):
+    if not houses:
+        return houses
+    has_seai_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'seai_applications'"
+    ).fetchone()
+    if not has_seai_table:
+        return houses
+    house_ids = [house["id"] for house in houses]
+    placeholders = ",".join("?" for _ in house_ids)
+    summaries = {}
+    for row in db.execute(
+        "SELECT application_id, detail_data_json FROM seai_applications "
+        f"WHERE application_id IN ({placeholders})",
+        house_ids,
+    ):
+        try:
+            summary = _seai_card_summary(json.loads(row["detail_data_json"]))
+        except (TypeError, ValueError):
+            summary = None
+        if summary:
+            summaries[row["application_id"]] = summary
+    for house in houses:
+        house["seai_summary"] = summaries.get(house["id"])
+    return houses
 
 
 def _seai_card_summary(details):
@@ -3045,7 +3357,7 @@ def _dashboard(db):
             key=str.casefold,
         ),
         "team_house_counts": team_house_counts,
-        "house_list": [
+        "house_list": _attach_seai_application_ids(db, [
             {
                 **dict(row),
                 "esb_unclipped": _esb_unclipped_status(row["esb_unclipped"]),
@@ -3059,6 +3371,12 @@ def _dashboard(db):
                 SELECT h.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
                        COALESCE(NULLIF(p.owner_name, ''), h.owner_name) AS owner_name,
                        h.employee_name, h.delivery_person, h.delivery_team,
+                       ewi_assignment.teamlead_user_id AS ewi_teamlead_user_id,
+                       COALESCE(ewi_teamlead.display_name, '') AS ewi_teamlead_name,
+                       COALESCE(ewi_assignment.assigned_by, '') AS ewi_assigned_by,
+                       COALESCE(ewi_assignment.assigned_at, '') AS ewi_assigned_at,
+                       COALESCE(ewi_assignment.completed_by, '') AS ewi_completed_by,
+                       COALESCE(ewi_assignment.completed_at, '') AS ewi_completed_at,
                        p.address, p.source, p.area_m2, p.perimeter_m,
                        p.latitude, p.longitude, h.is_finished,
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
@@ -3079,10 +3397,14 @@ def _dashboard(db):
                 LEFT JOIN house_checklists c ON c.house_id = h.id
                 LEFT JOIN provided_houses p ON p.id = h.id
                 LEFT JOIN house_surveys hs ON hs.house_id = h.id
+                LEFT JOIN house_ewi_assignments ewi_assignment
+                  ON ewi_assignment.house_id = h.id
+                LEFT JOIN app_users ewi_teamlead
+                  ON ewi_teamlead.id = ewi_assignment.teamlead_user_id
                 ORDER BY h.status_changed_at DESC, h.id COLLATE NOCASE
                 """
             )
-        ],
+        ]),
         "locations": sorted(known_locations(db)),
     }
 
@@ -3152,8 +3474,17 @@ def _ventilation_house_list(db, teamlead_user_id):
     for row in db.execute(
         """
         SELECT documents.id, documents.house_id, documents.filename,
-               documents.size_bytes, documents.shared_by, documents.shared_at
+               documents.size_bytes, documents.shared_by, documents.shared_at,
+               (
+                   (
+                       annotations.source_document_id IS NOT NULL
+                       OR annotations.source_seai_document_id IS NOT NULL
+                   )
+                   AND annotations.annotations_json IS NOT NULL
+               ) AS annotations_editable
         FROM house_vent_documents documents
+        LEFT JOIN house_vent_document_annotations annotations
+          ON annotations.annotated_document_id = documents.id
         JOIN provided_houses houses ON houses.id = documents.house_id
         JOIN house_vent_assignments assignment
           ON assignment.house_id = houses.id
@@ -3179,7 +3510,17 @@ def _ventilation_house_list(db, teamlead_user_id):
         (teamlead_user_id,),
     ):
         documents_by_house.setdefault(row["house_id"], []).append(
-            {key: row[key] for key in ("id", "filename", "size_bytes", "shared_by", "shared_at")}
+            {
+                key: row[key]
+                for key in (
+                    "id",
+                    "filename",
+                    "size_bytes",
+                    "shared_by",
+                    "shared_at",
+                    "annotations_editable",
+                )
+            }
         )
     for house in houses:
         house["documents"] = documents_by_house.get(house["id"], [])
@@ -3225,7 +3566,7 @@ def _ventilation_house_list(db, teamlead_user_id):
                     )
     for house in houses:
         house["survey_documents"] = survey_documents_by_house.get(house["id"], [])
-    return houses
+    return _attach_seai_application_ids(db, houses)
 
 
 def _ventilation_house_is_visible(db, house_id, teamlead_user_id):
@@ -3325,7 +3666,10 @@ def _plumbing_coordinator_dashboard(db):
             """
         )
     ]
-    return {"plumbing_houses": houses, "plumbing_supervisors": supervisors}
+    return {
+        "plumbing_houses": _attach_seai_application_ids(db, houses),
+        "plumbing_supervisors": supervisors,
+    }
 
 
 def _ventilation_coordinator_dashboard(db):
@@ -3390,7 +3734,7 @@ def _ventilation_coordinator_dashboard(db):
         )
     ]
     return {
-        "ventilation_coordinator_houses": houses,
+        "ventilation_coordinator_houses": _attach_seai_application_ids(db, houses),
         "ventilation_teamleads": teamleads,
     }
 
@@ -4099,7 +4443,10 @@ class LegacyRouteHandlers:
         if max_age > 0:
             expires = datetime.now(timezone.utc) + timedelta(seconds=max_age)
             attributes.append(f"Expires={expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
-        if COOKIE_SECURE:
+        forwarded_proto = str(self.headers.get("x-forwarded-proto", "")).strip().lower()
+        if COOKIE_SECURE or (
+            TRUST_CLOUDFLARE_PROXY and forwarded_proto == "https"
+        ):
             attributes.append("Secure")
         return [("Set-Cookie", "; ".join(attributes))]
 
@@ -4195,6 +4542,21 @@ class LegacyRouteHandlers:
             self._send_file(STATIC_DIR / "app.css", "text/css; charset=utf-8")
         elif path == "/app.js":
             self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
+        elif path.startswith("/ventilation-icons/"):
+            icon_directory = (STATIC_DIR / "ventilation-icons").resolve()
+            icon_name = unquote(path[len("/ventilation-icons/"):])
+            icon_name = {
+                "core-drill-ventilator.svg": "5” Core Drill Ventilator.svg",
+            }.get(icon_name, icon_name)
+            icon_path = (icon_directory / icon_name).resolve()
+            if (
+                icon_path.parent != icon_directory
+                or icon_path.suffix.lower() != ".svg"
+                or not icon_path.is_file()
+            ):
+                self._send_json(404, {"error": "Ventilation icon not found."})
+                return
+            self._send_file(icon_path, "image/svg+xml")
         elif path == "/brusna-curious-cat-logo.png":
             self._send_file(STATIC_DIR / "brusna-curious-cat-logo.png", "image/png")
         elif path == "/favicon.svg":
@@ -4403,9 +4765,15 @@ class LegacyRouteHandlers:
                     trade: _can_complete_work_plan_trade(db, user, trade)
                     for trade in WORK_PLAN_TRADES
                 }
+                seai_application_ids = _seai_application_ids_by_house(
+                    db, [row["id"] for row in rows]
+                )
             houses = []
             for row in rows:
                 house = dict(row)
+                house["seai_application_id"] = seai_application_ids.get(
+                    row["id"], ""
+                )
                 if (
                     _has_access_profile(user, "admin")
                     or _has_access_profile(user, "surveyor")
@@ -4557,13 +4925,18 @@ class LegacyRouteHandlers:
             if user is None:
                 return
             is_assign = _has_access_profile(user, "assign")
+            with connect_db() as db:
+                is_plumbing_supervisor = _is_plumbing_supervisor(db, user)
+                is_ewi_supervisor = _is_ewi_supervisor(db, user)
             has_house_document_access = (
                 _has_access_profile(user, "admin")
                 or _has_access_profile(user, "surveyor")
                 or is_assign
+                or is_plumbing_supervisor
+                or is_ewi_supervisor
             )
             if not has_house_document_access:
-                self._send_json(403, {"error": "Administrator, Surveyor, or Assign access is required to view house documents."})
+                self._send_json(403, {"error": "Administrator, Surveyor, Assign, or assigned Supervisor access is required to view house documents."})
                 return
             house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
             if not house_id:
@@ -4573,9 +4946,27 @@ class LegacyRouteHandlers:
                 available = db.execute(
                     """
                     SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                    WHERE p.id = ? AND (? = 1 OR h.id IS NULL)
+                    WHERE p.id = ?
+                      AND (? = 1 OR h.id IS NULL)
+                      AND (
+                          ? = 0 OR EXISTS (
+                              SELECT 1 FROM house_role_assignments assignment
+                              WHERE assignment.house_id = p.id
+                                AND assignment.role = 'supervisor'
+                                AND assignment.user_id = ?
+                          )
+                      )
                     """,
-                    (house_id, int(is_assign)),
+                    (
+                        house_id,
+                        int(
+                            is_assign
+                            or is_plumbing_supervisor
+                            or is_ewi_supervisor
+                        ),
+                        int(is_plumbing_supervisor or is_ewi_supervisor),
+                        user["id"],
+                    ),
                 ).fetchone()
                 if not available:
                     self._send_json(404, {"error": "House was not found."})
@@ -4593,7 +4984,21 @@ class LegacyRouteHandlers:
                         row for row in rows
                         if not _is_annotated_pdf_filename(row["filename"])
                     ]
-            self._send_json(200, {"house_id": house_id, "documents": [dict(row) for row in rows]})
+            self._send_json(
+                200,
+                {
+                    "house_id": house_id,
+                    "documents": [
+                        {
+                            **dict(row),
+                            "is_annotated": _is_annotated_pdf_filename(
+                                row["filename"]
+                            ),
+                        }
+                        for row in rows
+                    ],
+                },
+            )
         elif path == "/api/supervisor/shared-seai-documents" or path.startswith(
             "/api/supervisor/shared-seai-documents/"
         ):
@@ -4720,16 +5125,25 @@ class LegacyRouteHandlers:
                 or _has_access_profile(user, "assign")
             )
             with connect_db() as db:
+                is_plumbing_supervisor = (
+                    not has_seai_document_access
+                    and _is_plumbing_supervisor(db, user)
+                )
                 is_vent_dashboard_user = (
                     not has_seai_document_access
+                    and not is_plumbing_supervisor
                     and not _has_access_profile(user, "ventilation_coordinator")
                     and not _has_access_profile(user, "plumbing_coordinator")
                     and _in_department(db, user, "Ventilation")
                 )
-            if not (has_seai_document_access or is_vent_dashboard_user):
+            if not (
+                has_seai_document_access
+                or is_vent_dashboard_user
+                or is_plumbing_supervisor
+            ):
                 self._send_json(
                     403,
-                    {"error": "SEAI PDFs are available to Administrators, Surveyors, Assign, and assigned Vent team leads."},
+                    {"error": "SEAI PDFs are available to Administrators, Surveyors, Assign, and assigned Vent team leads or Plumbing Supervisors."},
                 )
                 return
             house_id = parse_qs(urlparse(self.path).query).get("house_id", [""])[0].strip()
@@ -4737,6 +5151,15 @@ class LegacyRouteHandlers:
                 self._send_json(400, {"error": "A house ID is required."})
                 return
             with connect_db() as db:
+                if is_plumbing_supervisor and not db.execute(
+                    """
+                    SELECT 1 FROM house_role_assignments
+                    WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                    """,
+                    (house_id, user["id"]),
+                ).fetchone():
+                    self._send_json(404, {"error": "House was not found."})
+                    return
                 if is_vent_dashboard_user and not _ventilation_house_is_visible(
                     db, house_id, user["id"]
                 ):
@@ -4793,6 +5216,11 @@ class LegacyRouteHandlers:
                         row for row in rows
                         if row["is_selected_pdf"]
                     ]
+                if is_plumbing_supervisor:
+                    rows = [
+                        row for row in rows
+                        if row["is_selected_pdf"]
+                    ]
             self._send_json(
                 200,
                 {
@@ -4817,16 +5245,25 @@ class LegacyRouteHandlers:
                 or _has_access_profile(user, "assign")
             )
             with connect_db() as db:
+                is_plumbing_supervisor = (
+                    not has_seai_document_access
+                    and _is_plumbing_supervisor(db, user)
+                )
                 is_vent_dashboard_user = (
                     not has_seai_document_access
+                    and not is_plumbing_supervisor
                     and not _has_access_profile(user, "ventilation_coordinator")
                     and not _has_access_profile(user, "plumbing_coordinator")
                     and _in_department(db, user, "Ventilation")
                 )
-            if not (has_seai_document_access or is_vent_dashboard_user):
+            if not (
+                has_seai_document_access
+                or is_vent_dashboard_user
+                or is_plumbing_supervisor
+            ):
                 self._send_json(
                     403,
-                    {"error": "SEAI PDFs are available to Administrators, Surveyors, Assign, and assigned Vent team leads."},
+                    {"error": "SEAI PDFs are available to Administrators, Surveyors, Assign, and assigned Vent team leads or Plumbing Supervisors."},
                 )
                 return
             document_path = path[len("/api/seai-documents/"):].split("/")
@@ -4851,12 +5288,35 @@ class LegacyRouteHandlers:
                     return
                 row = db.execute(
                     """
-                    SELECT application_id, filename, content FROM seai_documents
-                    WHERE id = ? AND lower(filename) LIKE '%.pdf'
-                        AND content IS NOT NULL
+                    SELECT documents.application_id, documents.filename,
+                           documents.content,
+                           CASE WHEN selected.document_id IS NULL THEN 0 ELSE 1 END
+                               AS is_selected_pdf
+                    FROM seai_documents documents
+                    LEFT JOIN selected_seai_documents selected
+                      ON selected.document_id = documents.id
+                     AND selected.house_id = documents.application_id
+                    WHERE documents.id = ?
+                      AND lower(documents.filename) LIKE '%.pdf'
+                      AND documents.content IS NOT NULL
                     """,
                     (int(document_path[0]),),
                 ).fetchone()
+                if (
+                    is_plumbing_supervisor
+                    and (
+                        row is None
+                        or not row["is_selected_pdf"]
+                        or not db.execute(
+                            """
+                            SELECT 1 FROM house_role_assignments
+                            WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                            """,
+                            (row["application_id"], user["id"]),
+                        ).fetchone()
+                    )
+                ):
+                    row = None
                 if (
                     row is not None
                     and _is_not_started_house(db, row["application_id"])
@@ -4907,9 +5367,15 @@ class LegacyRouteHandlers:
                 or _has_access_profile(user, "assign")
             )
             is_ventilation_user = False
+            is_ewi_supervisor = False
             with connect_db() as db:
                 is_ventilation_user = _in_department(db, user, "Ventilation")
-                if not can_view_all_shared_documents and not is_ventilation_user:
+                is_ewi_supervisor = _is_ewi_supervisor(db, user)
+                if (
+                    not can_view_all_shared_documents
+                    and not is_ventilation_user
+                    and not is_ewi_supervisor
+                ):
                     self._send_json(403, {"error": "You cannot view documents shared with the Vent team."})
                     return
                 if path == "/api/house-vent-documents":
@@ -4925,17 +5391,39 @@ class LegacyRouteHandlers:
                         if eligible is None:
                             self._send_json(404, {"error": "House was not found."})
                             return
+                    if is_ewi_supervisor and not can_view_all_shared_documents:
+                        assigned = db.execute(
+                            """
+                            SELECT 1 FROM house_role_assignments
+                            WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                            """,
+                            (house_id, user["id"]),
+                        ).fetchone()
+                        if assigned is None:
+                            self._send_json(404, {"error": "House was not found."})
+                            return
                     rows = db.execute(
                         """
-                        SELECT id, filename, size_bytes, shared_by, shared_at
-                        FROM house_vent_documents WHERE house_id = ? ORDER BY id DESC
+                        SELECT documents.id, documents.filename, documents.size_bytes,
+                               documents.shared_by, documents.shared_at,
+                               (
+                                   (
+                                       annotations.source_document_id IS NOT NULL
+                                       OR annotations.source_seai_document_id IS NOT NULL
+                                   )
+                                   AND annotations.annotations_json IS NOT NULL
+                               ) AS annotations_editable
+                        FROM house_vent_documents documents
+                        LEFT JOIN house_vent_document_annotations annotations
+                            ON annotations.annotated_document_id = documents.id
+                        WHERE documents.house_id = ? ORDER BY documents.id DESC
                         """,
                         (house_id,),
                     ).fetchall()
                     self._send_json(200, {"house_id": house_id, "documents": [dict(row) for row in rows]})
                     return
                 document_id = path[len("/api/house-vent-documents/"):]
-                document_match = re.fullmatch(r"(\d+)/(file|preview)", document_id)
+                document_match = re.fullmatch(r"(\d+)/(file|preview|annotations)", document_id)
                 if document_match is None:
                     self._send_json(404, {"error": "Document was not found."})
                     return
@@ -4959,6 +5447,83 @@ class LegacyRouteHandlers:
                 ):
                     self._send_json(404, {"error": "Document was not found."})
                     return
+                if is_ewi_supervisor and not can_view_all_shared_documents:
+                    assigned = db.execute(
+                        """
+                        SELECT 1 FROM house_role_assignments
+                        WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                        """,
+                        (row["house_id"], user["id"]),
+                    ).fetchone()
+                    if assigned is None:
+                        self._send_json(404, {"error": "Document was not found."})
+                        return
+                if document_match.group(2) == "annotations":
+                    if not is_ventilation_user:
+                        self._send_json(
+                            403,
+                            {"error": "Ventilation department access is required to edit annotated PDFs."},
+                        )
+                        return
+                    has_seai_document_table = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'seai_documents'"
+                    ).fetchone()
+                    if has_seai_document_table:
+                        edit_record = db.execute(
+                            """
+                            SELECT edits.source_document_id, edits.annotations_json,
+                                   edits.source_seai_document_id
+                            FROM house_vent_document_annotations edits
+                            LEFT JOIN house_vent_documents source
+                                ON source.id = edits.source_document_id
+                            LEFT JOIN seai_documents seai_source
+                                ON seai_source.id = edits.source_seai_document_id
+                            WHERE edits.annotated_document_id = ?
+                              AND (
+                                  source.house_id = ?
+                                  OR seai_source.application_id = ?
+                              )
+                            """,
+                            (
+                                int(document_match.group(1)),
+                                row["house_id"],
+                                row["house_id"],
+                            ),
+                        ).fetchone()
+                    else:
+                        edit_record = db.execute(
+                            """
+                            SELECT edits.source_document_id, edits.annotations_json,
+                                   edits.source_seai_document_id
+                            FROM house_vent_document_annotations edits
+                            JOIN house_vent_documents source
+                                ON source.id = edits.source_document_id
+                            WHERE edits.annotated_document_id = ?
+                              AND source.house_id = ?
+                            """,
+                            (int(document_match.group(1)), row["house_id"]),
+                        ).fetchone()
+                    if edit_record is None:
+                        self._send_json(404, {"error": "Editable annotations were not found."})
+                        return
+                    self._send_json(
+                        200,
+                        {
+                            "source_document_id": (
+                                edit_record["source_seai_document_id"]
+                                if edit_record["source_seai_document_id"] is not None
+                                else edit_record["source_document_id"]
+                            ),
+                            "source_type": (
+                                "seai"
+                                if edit_record["source_seai_document_id"] is not None
+                                else "vent"
+                            ),
+                            "annotations": json.loads(edit_record["annotations_json"]),
+                        },
+                    )
+                    return
             if document_match.group(2) == "preview":
                 page_values = parse_qs(urlparse(self.path).query).get("page", ["1"])
                 try:
@@ -4975,19 +5540,26 @@ class LegacyRouteHandlers:
             if user is None:
                 return
             is_assign = _has_access_profile(user, "assign")
+            is_plumbing_supervisor = False
+            is_ewi_supervisor = False
+            with connect_db() as db:
+                is_plumbing_supervisor = _is_plumbing_supervisor(db, user)
+                is_ewi_supervisor = _is_ewi_supervisor(db, user)
             has_house_document_access = (
                 _has_access_profile(user, "admin")
                 or _has_access_profile(user, "surveyor")
                 or is_assign
+                or is_plumbing_supervisor
+                or is_ewi_supervisor
             )
             if not has_house_document_access:
-                self._send_json(403, {"error": "Administrator, Surveyor, or Assign access is required to view house documents."})
+                self._send_json(403, {"error": "Administrator, Surveyor, Assign, or assigned Supervisor access is required to view house documents."})
                 return
             document_path = path[len("/api/house-documents/"):].split("/")
             is_share_pdf = len(document_path) == 2 and document_path[1] == "share"
             is_preview_page = len(document_path) == 2 and document_path[1] == "preview"
-            if is_assign and is_share_pdf:
-                self._send_json(403, {"error": "Assign accounts can view but cannot share house PDFs."})
+            if (is_assign or is_plumbing_supervisor or is_ewi_supervisor) and is_share_pdf:
+                self._send_json(403, {"error": "This account can view but cannot share house PDFs."})
                 return
             if len(document_path) not in {1, 2} or (
                 len(document_path) == 2 and not (is_share_pdf or is_preview_page)
@@ -5006,9 +5578,27 @@ class LegacyRouteHandlers:
                     JOIN provided_houses p ON p.id = d.house_id
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
-                    WHERE d.id = ? AND (? = 1 OR h.id IS NULL)
+                    WHERE d.id = ?
+                      AND (? = 1 OR h.id IS NULL)
+                      AND (
+                          ? = 0 OR EXISTS (
+                              SELECT 1 FROM house_role_assignments assignment
+                              WHERE assignment.house_id = d.house_id
+                                AND assignment.role = 'supervisor'
+                                AND assignment.user_id = ?
+                          )
+                      )
                     """,
-                    (int(raw_document_id), int(is_assign)),
+                    (
+                        int(raw_document_id),
+                        int(
+                            is_assign
+                            or is_plumbing_supervisor
+                            or is_ewi_supervisor
+                        ),
+                        int(is_plumbing_supervisor or is_ewi_supervisor),
+                        user["id"],
+                    ),
                 ).fetchone()
                 not_started = (
                     row is not None and _is_not_started_house(db, row["house_id"])
@@ -5260,6 +5850,33 @@ class LegacyRouteHandlers:
                             (user["id"],),
                         )
                     ]
+                    ewi_teamleads = [
+                        {"id": row["id"], "name": row["display_name"]}
+                        for row in db.execute(
+                            """
+                            SELECT users.id, users.display_name
+                            FROM app_users users
+                            JOIN user_reporting_lines reports
+                              ON reports.report_user_id = users.id
+                            JOIN user_departments memberships
+                              ON memberships.user_id = users.id
+                            JOIN departments
+                              ON departments.id = memberships.department_id
+                            WHERE users.is_active = 1
+                              AND reports.manager_user_id = ?
+                              AND departments.name = 'External Wall Insulation' COLLATE NOCASE
+                              AND departments.is_active = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = users.role
+                                    AND access.permission_key = 'access.teamlead'
+                                    AND access.is_allowed = 1
+                              )
+                            ORDER BY users.display_name COLLATE NOCASE
+                            """,
+                            (user["id"],),
+                        )
+                    ]
                     managed_teamlead_ids = {
                         row["report_user_id"]
                         for row in db.execute(
@@ -5278,24 +5895,8 @@ class LegacyRouteHandlers:
                         )
                     }
                     plumbing_team_members = {}
-                    is_plumbing_supervisor = (
-                        (user["supervisor_specialty"] or "").strip().casefold()
-                        == "plumbing"
-                        or db.execute(
-                            """
-                            SELECT 1
-                            FROM user_departments memberships
-                            JOIN departments
-                              ON departments.id = memberships.department_id
-                            WHERE memberships.user_id = ?
-                              AND departments.name = 'Plumbing' COLLATE NOCASE
-                              AND departments.is_active = 1
-                            LIMIT 1
-                            """,
-                            (user["id"],),
-                        ).fetchone()
-                        is not None
-                    )
+                    is_plumbing_supervisor = _is_plumbing_supervisor(db, user)
+                    is_ewi_supervisor = _is_ewi_supervisor(db, user)
                     if is_plumbing_supervisor and managed_teamlead_ids:
                         teamlead_placeholders = ",".join(
                             "?" for _ in managed_teamlead_ids
@@ -5345,6 +5946,11 @@ class LegacyRouteHandlers:
                     for house in dashboard["house_list"]
                     if house["id"] in assigned_house_ids
                 ]
+                if is_ewi_supervisor:
+                    with connect_db() as ewi_db:
+                        _attach_seai_application_summaries(
+                            ewi_db, dashboard["house_list"]
+                        )
                 if is_plumbing_supervisor:
                     with connect_db() as plumbing_db:
                         assigned_before_activation = plumbing_db.execute(
@@ -5419,6 +6025,97 @@ class LegacyRouteHandlers:
                                 "plumbing_assignment_pending_activation": True,
                             }
                         )
+                    if dashboard["house_list"]:
+                        with connect_db() as plumbing_db:
+                            _attach_seai_application_ids(
+                                plumbing_db, dashboard["house_list"]
+                            )
+                            house_placeholders = ",".join(
+                                "?" for _ in dashboard["house_list"]
+                            )
+                            documents_by_house = {}
+                            for document in plumbing_db.execute(
+                                f"""
+                                SELECT id, house_id, filename, size_bytes,
+                                       uploaded_by, uploaded_at
+                                FROM house_documents
+                                WHERE house_id IN ({house_placeholders})
+                                ORDER BY uploaded_at DESC, id DESC
+                                """,
+                                [house["id"] for house in dashboard["house_list"]],
+                            ):
+                                if (
+                                    _is_not_started_house(
+                                        plumbing_db, document["house_id"]
+                                    )
+                                    and _is_annotated_pdf_filename(
+                                        document["filename"]
+                                    )
+                                ):
+                                    continue
+                                documents_by_house.setdefault(
+                                    document["house_id"], []
+                                ).append({**dict(document), "source": "house"})
+                            seai_document_table = plumbing_db.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                                "AND name = 'seai_documents'"
+                            ).fetchone()
+                            if seai_document_table:
+                                seai_columns = {
+                                    row["name"]
+                                    for row in plumbing_db.execute(
+                                        "PRAGMA table_info(seai_documents)"
+                                    )
+                                }
+                                if "content" in seai_columns:
+                                    for document in plumbing_db.execute(
+                                        f"""
+                                        SELECT documents.id,
+                                               documents.application_id AS house_id,
+                                               documents.filename,
+                                               length(documents.content) AS size_bytes,
+                                               selected.created_by AS uploaded_by,
+                                               selected.created_at AS uploaded_at
+                                        FROM seai_documents documents
+                                        JOIN selected_seai_documents selected
+                                          ON selected.document_id = documents.id
+                                         AND selected.house_id = documents.application_id
+                                        WHERE documents.application_id IN ({house_placeholders})
+                                          AND lower(documents.filename) LIKE '%.pdf'
+                                          AND documents.content IS NOT NULL
+                                        ORDER BY selected.created_at DESC, documents.id DESC
+                                        """,
+                                        [
+                                            house["id"]
+                                            for house in dashboard["house_list"]
+                                        ],
+                                    ):
+                                        if (
+                                            _is_not_started_house(
+                                                plumbing_db, document["house_id"]
+                                            )
+                                            and _is_annotated_pdf_filename(
+                                                document["filename"]
+                                            )
+                                        ):
+                                            continue
+                                        documents_by_house.setdefault(
+                                            document["house_id"], []
+                                        ).append(
+                                            {**dict(document), "source": "seai"}
+                                        )
+                            for documents in documents_by_house.values():
+                                documents.sort(
+                                    key=lambda document: (
+                                        document["uploaded_at"] or "",
+                                        document["id"],
+                                    ),
+                                    reverse=True,
+                                )
+                            for house in dashboard["house_list"]:
+                                house["survey_documents"] = documents_by_house.get(
+                                    house["id"], []
+                                )
                 active_houses = sum(
                     not house["is_finished"]
                     and not house.get("plumbing_assignment_pending_activation")
@@ -5443,10 +6140,16 @@ class LegacyRouteHandlers:
                 dashboard["locations"] = []
                 dashboard["supervisor_assignment_options"] = {
                     "delivery_people": sorted(
-                        {"Karol", "Gary Lowther", *teamlead_names},
+                        {
+                            "Karol",
+                            "Gary Lowther",
+                            *teamlead_names,
+                            *(teamlead["name"] for teamlead in ewi_teamleads),
+                        },
                         key=str.casefold,
                     ),
                     "teams": teamlead_names,
+                    "ewi_teamleads": ewi_teamleads,
                 }
                 dashboard["team_rosters"] = [
                     roster
@@ -5489,6 +6192,10 @@ class LegacyRouteHandlers:
                     for roster in dashboard["team_rosters"]
                     if roster["teamlead_id"] == user["id"]
                 ]
+                with connect_db() as db:
+                    dashboard["teamlead_ewi_houses"] = _teamlead_ewi_houses(
+                        db, user["id"]
+                    )
             self._send_json(200, dashboard)
         elif path == "/api/weather":
             user = self._login_required()
@@ -5642,7 +6349,9 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not self._admin_required(user):
+            is_admin = _has_access_profile(user, "admin")
+            if not is_admin and not _has_access_profile(user, "supervisor"):
+                self._send_json(403, {"error": "Administrator or assigned Supervisor access is required."})
                 return
             raw_house_id = path[len("/api/houses/"):]
             if not raw_house_id or "/" in raw_house_id:
@@ -5653,6 +6362,15 @@ class LegacyRouteHandlers:
                 self._send_json(404, {"error": "House was not found."})
                 return
             with connect_db() as db:
+                if not is_admin and not db.execute(
+                    """
+                    SELECT 1 FROM house_role_assignments
+                    WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                    """,
+                    (house_id, user["id"]),
+                ).fetchone():
+                    self._send_json(404, {"error": "House was not found."})
+                    return
                 house = db.execute(
                     """
                     SELECT p.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
@@ -6486,6 +7204,129 @@ class LegacyRouteHandlers:
                 share_filename = f"{house_id}-selected-seai-pages{suffix}.pdf"
                 self._send_pdf(share_filename, shared_pdf, attachment=True)
                 return
+            seai_vent_annotation_match = re.fullmatch(
+                r"/api/seai-documents/(\d+)/vent-annotations", path
+            )
+            if seai_vent_annotation_match:
+                with connect_db() as db:
+                    if not _in_department(db, user, "Ventilation"):
+                        raise ApiError(
+                            403,
+                            "Ventilation department access is required to annotate Surveyor PDFs.",
+                        )
+                    source = db.execute(
+                        """
+                        SELECT documents.id, documents.application_id, documents.filename,
+                               documents.content
+                        FROM seai_documents documents
+                        JOIN selected_seai_documents selected
+                          ON selected.document_id = documents.id
+                         AND selected.house_id = documents.application_id
+                        JOIN provided_houses houses
+                          ON houses.id = selected.house_id
+                        WHERE documents.id = ?
+                          AND selected.created_by != ''
+                          AND houses.plan_vent_required = 1
+                          AND lower(documents.filename) LIKE '%.pdf'
+                          AND documents.content IS NOT NULL
+                        """,
+                        (int(seai_vent_annotation_match.group(1)),),
+                    ).fetchone()
+                    if source is not None and not _ventilation_house_is_visible(
+                        db, source["application_id"], user["id"]
+                    ):
+                        source = None
+                if source is None:
+                    raise ApiError(404, "Selected Surveyor PDF was not found.")
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PDF annotations must be a JSON object.")
+                annotations = payload.get("annotations")
+                annotated_pdf = _annotate_pdf_document(
+                    source["content"],
+                    annotations,
+                    allow_ventilation_icons=True,
+                )
+                if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
+                    raise ApiError(413, "The annotated PDF exceeds the 8 MB Vent document limit.")
+                annotated_stem = f"{Path(source['filename']).stem}-vent-annotated"
+                annotated_filename = f"{annotated_stem}.pdf"
+                shared_at = datetime.now().isoformat(timespec="seconds")
+                shared_by = f"Vent annotated by {user['display_name']}"
+                with connect_db() as db:
+                    with db:
+                        eligible = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses
+                            WHERE id = ? AND plan_vent_required = 1
+                            """,
+                            (source["application_id"],),
+                        ).fetchone()
+                        if eligible is None:
+                            raise ApiError(
+                                409, "Vent PDFs can only be annotated while Vent work is required."
+                            )
+                        document_count = db.execute(
+                            "SELECT COUNT(*) FROM house_vent_documents WHERE house_id = ?",
+                            (source["application_id"],),
+                        ).fetchone()[0]
+                        if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
+                            raise ApiError(
+                                409, "This house already has the maximum of 25 Vent team PDFs."
+                            )
+                        suffix = 2
+                        while db.execute(
+                            """
+                            SELECT 1 FROM house_vent_documents
+                            WHERE house_id = ? AND filename = ?
+                            """,
+                            (source["application_id"], annotated_filename),
+                        ).fetchone():
+                            annotated_filename = f"{annotated_stem}-{suffix}.pdf"
+                            suffix += 1
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_vent_documents
+                                (house_id, filename, content, size_bytes, shared_by, shared_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                source["application_id"],
+                                annotated_filename,
+                                annotated_pdf,
+                                len(annotated_pdf),
+                                shared_by,
+                                shared_at,
+                            ),
+                        )
+                        db.execute(
+                            """
+                            INSERT INTO house_vent_document_annotations
+                                (annotated_document_id, source_document_id,
+                                 annotations_json, saved_at, source_seai_document_id)
+                            VALUES (?, NULL, ?, ?, ?)
+                            """,
+                            (
+                                cursor.lastrowid,
+                                _pdf_annotation_metadata_json(annotations),
+                                shared_at,
+                                source["id"],
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": source["application_id"],
+                        "source_id": source["id"],
+                        "filename": annotated_filename,
+                        "size_bytes": len(annotated_pdf),
+                        "shared_by": shared_by,
+                        "shared_at": shared_at,
+                        "updated": False,
+                    },
+                )
+                return
             seai_annotation_match = re.fullmatch(
                 r"/api/seai-documents/(\d+)/annotations", path
             )
@@ -6518,7 +7359,8 @@ class LegacyRouteHandlers:
                 with connect_db() as db:
                     _require_pdf_editable(db, source["application_id"])
                 annotated_pdf = _annotate_pdf_document(
-                    source["content"], payload.get("annotations")
+                    source["content"],
+                    payload.get("annotations"),
                 )
                 if len(annotated_pdf) > SEAI_DOCUMENT_MAX_BYTES:
                     raise ApiError(413, "The annotated SEAI PDF exceeds the 20 MB document limit.")
@@ -6598,7 +7440,8 @@ class LegacyRouteHandlers:
                 if source is None:
                     raise ApiError(404, "Document was not found.")
                 annotated_pdf = _annotate_pdf_document(
-                    source["content"], payload.get("annotations")
+                    source["content"],
+                    payload.get("annotations"),
                 )
                 if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
                     raise ApiError(413, "The annotated PDF exceeds the 8 MB document limit.")
@@ -6667,25 +7510,77 @@ class LegacyRouteHandlers:
                 with connect_db() as db:
                     source = db.execute(
                         """
-                        SELECT documents.house_id, documents.filename, documents.content
+                        SELECT documents.id, documents.house_id, documents.filename,
+                               documents.content,
+                               annotations.source_document_id AS annotation_source_id,
+                               annotations.source_seai_document_id AS annotation_seai_source_id
                         FROM house_vent_documents documents
                         JOIN provided_houses houses ON houses.id = documents.house_id
+                        LEFT JOIN house_vent_document_annotations annotations
+                            ON annotations.annotated_document_id = documents.id
                         WHERE documents.id = ? AND houses.plan_vent_required = 1
                         """,
                         (document_id,),
                     ).fetchone()
+                    if source is not None and source["annotation_source_id"] is not None:
+                        editable_source = db.execute(
+                            """
+                            SELECT content FROM house_vent_documents
+                            WHERE id = ? AND house_id = ?
+                            """,
+                            (source["annotation_source_id"], source["house_id"]),
+                        ).fetchone()
+                        if editable_source is None:
+                            raise ApiError(
+                                409, "The original Vent PDF is no longer available for editing."
+                            )
+                        source_content = editable_source["content"]
+                        source_document_id = source["annotation_source_id"]
+                        source_seai_document_id = None
+                    elif source is not None and source["annotation_seai_source_id"] is not None:
+                        editable_source = db.execute(
+                            """
+                            SELECT content FROM seai_documents
+                            WHERE id = ? AND application_id = ?
+                            """,
+                            (source["annotation_seai_source_id"], source["house_id"]),
+                        ).fetchone()
+                        if editable_source is None:
+                            raise ApiError(
+                                409, "The original Surveyor PDF is no longer available for editing."
+                            )
+                        source_content = editable_source["content"]
+                        source_document_id = None
+                        source_seai_document_id = source["annotation_seai_source_id"]
+                    elif source is not None:
+                        source_content = source["content"]
+                        source_document_id = document_id
+                        source_seai_document_id = None
                 if source is None:
                     raise ApiError(404, "Document was not found.")
                 annotated_pdf = _annotate_pdf_document(
-                    source["content"], payload.get("annotations")
+                    source_content,
+                    payload.get("annotations"),
+                    allow_ventilation_icons=True,
                 )
                 if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
                     raise ApiError(413, "The annotated PDF exceeds the 8 MB document limit.")
-                annotated_filename = (
+                edit_target_id = (
+                    document_id
+                    if (
+                        source["annotation_source_id"] is not None
+                        or source["annotation_seai_source_id"] is not None
+                    )
+                    else None
+                )
+                annotated_filename = source["filename"] if edit_target_id else (
                     f"{Path(source['filename']).stem}-vent-annotated.pdf"
                 )
                 shared_at = datetime.now().isoformat(timespec="seconds")
                 shared_by = f"Vent annotated by {user['display_name']}"
+                annotations_json = _pdf_annotation_metadata_json(
+                    payload.get("annotations")
+                )
                 with connect_db() as db:
                     with db:
                         eligible = db.execute(
@@ -6699,51 +7594,86 @@ class LegacyRouteHandlers:
                             raise ApiError(
                                 409, "Vent PDFs can only be annotated while Vent work is required."
                             )
-                        document_count = db.execute(
-                            "SELECT COUNT(*) FROM house_vent_documents WHERE house_id = ?",
-                            (source["house_id"],),
-                        ).fetchone()[0]
-                        if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
-                            raise ApiError(
-                                409, "This house already has the maximum of 25 Vent team PDFs."
+                        if edit_target_id:
+                            db.execute(
+                                """
+                                UPDATE house_vent_documents
+                                SET content = ?, size_bytes = ?, shared_by = ?, shared_at = ?
+                                WHERE id = ? AND house_id = ?
+                                """,
+                                (
+                                    annotated_pdf,
+                                    len(annotated_pdf),
+                                    shared_by,
+                                    shared_at,
+                                    edit_target_id,
+                                    source["house_id"],
+                                ),
                             )
-                        suffix = 2
-                        while db.execute(
-                            """
-                            SELECT 1 FROM house_vent_documents
-                            WHERE house_id = ? AND filename = ?
-                            """,
-                            (source["house_id"], annotated_filename),
-                        ).fetchone():
-                            annotated_filename = (
-                                f"{Path(source['filename']).stem}-vent-annotated-{suffix}.pdf"
+                            annotated_document_id = edit_target_id
+                        else:
+                            document_count = db.execute(
+                                "SELECT COUNT(*) FROM house_vent_documents WHERE house_id = ?",
+                                (source["house_id"],),
+                            ).fetchone()[0]
+                            if document_count >= HOUSE_DOCUMENT_MAX_COUNT:
+                                raise ApiError(
+                                    409, "This house already has the maximum of 25 Vent team PDFs."
+                                )
+                            suffix = 2
+                            while db.execute(
+                                """
+                                SELECT 1 FROM house_vent_documents
+                                WHERE house_id = ? AND filename = ?
+                                """,
+                                (source["house_id"], annotated_filename),
+                            ).fetchone():
+                                annotated_filename = (
+                                    f"{Path(source['filename']).stem}-vent-annotated-{suffix}.pdf"
+                                )
+                                suffix += 1
+                            cursor = db.execute(
+                                """
+                                INSERT INTO house_vent_documents
+                                    (house_id, filename, content, size_bytes, shared_by, shared_at)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    source["house_id"],
+                                    annotated_filename,
+                                    annotated_pdf,
+                                    len(annotated_pdf),
+                                    shared_by,
+                                    shared_at,
+                                ),
                             )
-                            suffix += 1
-                        cursor = db.execute(
+                            annotated_document_id = cursor.lastrowid
+                        db.execute(
                             """
-                            INSERT INTO house_vent_documents
-                                (house_id, filename, content, size_bytes, shared_by, shared_at)
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            INSERT OR REPLACE INTO house_vent_document_annotations
+                                (annotated_document_id, source_document_id,
+                                 annotations_json, saved_at, source_seai_document_id)
+                            VALUES (?, ?, ?, ?, ?)
                             """,
                             (
-                                source["house_id"],
-                                annotated_filename,
-                                annotated_pdf,
-                                len(annotated_pdf),
-                                shared_by,
+                                annotated_document_id,
+                                source_document_id,
+                                annotations_json,
                                 shared_at,
+                                source_seai_document_id,
                             ),
                         )
                 self._send_json(
-                    201,
+                    200 if edit_target_id else 201,
                     {
-                        "id": cursor.lastrowid,
+                        "id": annotated_document_id,
                         "house_id": source["house_id"],
-                        "source_id": document_id,
+                        "source_id": source_document_id,
                         "filename": annotated_filename,
                         "size_bytes": len(annotated_pdf),
                         "shared_by": shared_by,
                         "shared_at": shared_at,
+                        "updated": bool(edit_target_id),
                     },
                 )
                 return
@@ -7201,6 +8131,18 @@ class LegacyRouteHandlers:
                         403,
                         "Supervisor access is required to assign a delivery person and team.",
                     )
+            elif path == "/api/supervisor/ewi-assignment":
+                if not _has_access_profile(user, "supervisor"):
+                    raise ApiError(
+                        403,
+                        "Supervisor access is required to assign EWI work.",
+                    )
+            elif path == "/api/teamlead/ewi-work/complete":
+                if not _has_access_profile(user, "teamlead"):
+                    raise ApiError(
+                        403,
+                        "Teamlead access is required to complete assigned EWI work.",
+                    )
             elif path == "/api/house-assignments":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "assign")):
                     raise ApiError(
@@ -7234,6 +8176,7 @@ class LegacyRouteHandlers:
                 "/api/house-work-plan",
                 "/api/house-work-plan/complete",
                 "/api/seai-measure-variation",
+                "/api/teamlead/ewi-work/complete",
             }:
                 if not self._admin_required(user):
                     return
@@ -7789,6 +8732,185 @@ class LegacyRouteHandlers:
                         )
                     rosters = _visible_team_rosters(db, user)
                 self._send_json(200, {"ok": True, "team_rosters": rosters})
+            elif path == "/api/supervisor/ewi-assignment":
+                    payload = self._json_body()
+                    if not isinstance(payload, dict) or set(payload) != {
+                        "house_id",
+                        "teamlead_user_id",
+                    }:
+                        raise ApiError(
+                            400,
+                            "Choose a house and an EWI Teamlead.",
+                        )
+                    if not isinstance(payload["house_id"], str):
+                        raise ApiError(400, "Enter a valid house ID.")
+                    house_id = payload["house_id"].strip()
+                    if not house_id or len(house_id) > 120:
+                        raise ApiError(400, "Enter a valid house ID.")
+                    raw_teamlead_id = payload["teamlead_user_id"]
+                    if raw_teamlead_id in ("", None):
+                        teamlead_user_id = None
+                    elif isinstance(raw_teamlead_id, bool):
+                        raise ApiError(400, "Choose an active EWI Teamlead.")
+                    else:
+                        try:
+                            teamlead_user_id = int(raw_teamlead_id)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise ApiError(
+                                400, "Choose an active EWI Teamlead."
+                            ) from exc
+                    now = datetime.now().isoformat(timespec="seconds")
+                    with connect_db() as db:
+                        with db:
+                            if not _is_ewi_supervisor(db, user):
+                                raise ApiError(
+                                    403,
+                                    "External Wall Insulation Supervisor access is required to assign EWI work.",
+                                )
+                            assigned = db.execute(
+                                """
+                                SELECT 1
+                                FROM house_role_assignments assignment
+                                JOIN houses house ON house.id = assignment.house_id
+                                WHERE assignment.house_id = ?
+                                  AND assignment.role = 'supervisor'
+                                  AND assignment.user_id = ?
+                                  AND house.is_finished = 0
+                                """,
+                                (house_id, user["id"]),
+                            ).fetchone()
+                            if not assigned:
+                                raise ApiError(
+                                    404,
+                                    "That active house is not assigned to your Supervisor account.",
+                                )
+                            teamlead = None
+                            if teamlead_user_id is not None:
+                                teamlead = db.execute(
+                                    """
+                                    SELECT users.id, users.display_name
+                                    FROM app_users users
+                                    JOIN user_reporting_lines reports
+                                      ON reports.report_user_id = users.id
+                                    JOIN user_departments memberships
+                                      ON memberships.user_id = users.id
+                                    JOIN departments
+                                      ON departments.id = memberships.department_id
+                                    WHERE users.id = ?
+                                      AND users.is_active = 1
+                                      AND reports.manager_user_id = ?
+                                      AND departments.name = 'External Wall Insulation' COLLATE NOCASE
+                                      AND departments.is_active = 1
+                                      AND EXISTS (
+                                          SELECT 1 FROM app_role_permissions access
+                                          WHERE access.role_key = users.role
+                                            AND access.permission_key = 'access.teamlead'
+                                            AND access.is_allowed = 1
+                                      )
+                                    """,
+                                    (teamlead_user_id, user["id"]),
+                                ).fetchone()
+                                if teamlead is None:
+                                    raise ApiError(
+                                        400,
+                                        "Choose an active External Wall Insulation Teamlead who reports to you.",
+                                    )
+                                db.execute(
+                                    """
+                                    INSERT INTO house_ewi_assignments
+                                        (house_id, teamlead_user_id, supervisor_user_id,
+                                         assigned_by, assigned_at)
+                                    VALUES (?, ?, ?, ?, ?)
+                                    ON CONFLICT(house_id) DO UPDATE SET
+                                        teamlead_user_id = excluded.teamlead_user_id,
+                                        supervisor_user_id = excluded.supervisor_user_id,
+                                        assigned_by = excluded.assigned_by,
+                                        assigned_at = excluded.assigned_at,
+                                        completed_by = '',
+                                        completed_at = ''
+                                    """,
+                                    (
+                                        house_id,
+                                        teamlead_user_id,
+                                        user["id"],
+                                        user["display_name"],
+                                        now,
+                                    ),
+                                )
+                            else:
+                                db.execute(
+                                    "DELETE FROM house_ewi_assignments WHERE house_id = ?",
+                                    (house_id,),
+                                )
+                    self._send_json(
+                        200,
+                        {
+                            "house_id": house_id,
+                            "teamlead_user_id": teamlead_user_id,
+                            "teamlead_name": teamlead["display_name"] if teamlead else "",
+                            "assigned_by": user["display_name"] if teamlead else "",
+                            "assigned_at": now if teamlead else "",
+                            "completed_by": "",
+                            "completed_at": "",
+                        },
+                    )
+            elif path == "/api/teamlead/ewi-work/complete":
+                    payload = self._json_body()
+                    if not isinstance(payload, dict) or set(payload) != {"house_id"}:
+                        raise ApiError(400, "A house ID is required.")
+                    if not isinstance(payload["house_id"], str):
+                        raise ApiError(400, "Enter a valid house ID.")
+                    house_id = payload["house_id"].strip()
+                    if not house_id or len(house_id) > 120:
+                        raise ApiError(400, "Enter a valid house ID.")
+                    completed_at = datetime.now().isoformat(timespec="seconds")
+                    with connect_db() as db:
+                        with db:
+                            assignment = db.execute(
+                                """
+                                SELECT assignment.completed_at, house.is_finished
+                                FROM house_ewi_assignments assignment
+                                JOIN houses house ON house.id = assignment.house_id
+                                JOIN house_role_assignments supervisor_assignment
+                                  ON supervisor_assignment.house_id = assignment.house_id
+                                 AND supervisor_assignment.role = 'supervisor'
+                                 AND supervisor_assignment.user_id =
+                                     assignment.supervisor_user_id
+                                JOIN user_reporting_lines reports
+                                  ON reports.manager_user_id = assignment.supervisor_user_id
+                                 AND reports.report_user_id = assignment.teamlead_user_id
+                                WHERE assignment.house_id = ?
+                                  AND assignment.teamlead_user_id = ?
+                                """,
+                                (house_id, user["id"]),
+                            ).fetchone()
+                            if assignment is None:
+                                raise ApiError(
+                                    404,
+                                    "That house is not assigned to your EWI work queue.",
+                                )
+                            if assignment["is_finished"]:
+                                raise ApiError(
+                                    409,
+                                    "This house is already closed and cannot be updated in your EWI work queue.",
+                                )
+                            if not assignment["completed_at"]:
+                                db.execute(
+                                    """
+                                    UPDATE house_ewi_assignments
+                                    SET completed_by = ?, completed_at = ?
+                                    WHERE house_id = ? AND teamlead_user_id = ?
+                                    """,
+                                    (user["display_name"], completed_at, house_id, user["id"]),
+                                )
+                    self._send_json(
+                        200,
+                        {
+                            "house_id": house_id,
+                            "completed_by": user["display_name"],
+                            "completed_at": assignment["completed_at"] or completed_at,
+                        },
+                    )
             elif path == "/api/supervisor/house-assignment":
                 payload = self._json_body()
                 if not isinstance(payload, dict) or set(payload) != {

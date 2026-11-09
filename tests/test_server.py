@@ -27,6 +27,23 @@ class TrackerTests(unittest.TestCase):
         server.DB_PATH = self.original_db_path
         self.temp_dir.cleanup()
 
+    def test_cloudflare_https_forwarding_marks_session_cookie_secure_only_when_enabled(self):
+        context = server.FastAPIRequestContext(
+            "POST", "/", {"x-forwarded-proto": "https"}, b"", None
+        )
+        cookie = dict(context._session_headers("token"))["Set-Cookie"]
+        self.assertNotIn("Secure", cookie)
+
+        with patch.object(server, "TRUST_CLOUDFLARE_PROXY", True):
+            cookie = dict(context._session_headers("token"))["Set-Cookie"]
+            self.assertIn("Secure", cookie)
+
+            local_context = server.FastAPIRequestContext(
+                "POST", "/", {"x-forwarded-proto": "http"}, b"", None
+            )
+            cookie = dict(local_context._session_headers("token"))["Set-Cookie"]
+            self.assertNotIn("Secure", cookie)
+
     def test_vent_team_does_not_see_assignment_from_before_reset(self):
         with server.connect_db() as db:
             teamlead_id = server._insert_user(
@@ -838,6 +855,225 @@ class TrackerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=5)
 
+    def test_ewi_assignment_queue_is_scoped_and_teamlead_can_complete_work(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "ewi-queue-admin",
+                    "display_name": "EWI Queue Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            status, accounts, _ = self.http_request(
+                httpd, "GET", "/api/users", cookie=admin_cookie
+            )
+            self.assertEqual(status, 200)
+            ewi_id = next(
+                department["id"]
+                for department in accounts["departments"]
+                if department["name"] == "External Wall Insulation"
+            )
+
+            def create_user(username, name, pin, role, manager_id=None):
+                payload = {
+                    "username": username,
+                    "display_name": name,
+                    "pin": pin,
+                    "role": role,
+                    "department_ids": [ewi_id],
+                }
+                if role == "supervisor":
+                    payload["supervisor_specialty"] = "External Wall Insulation"
+                if manager_id is not None:
+                    payload["manager_user_id"] = manager_id
+                status, result, _ = self.http_request(
+                    httpd, "POST", "/api/users", payload, admin_cookie
+                )
+                self.assertEqual(status, 201)
+                return result["user"]["id"]
+
+            supervisor_id = create_user(
+                "ewi-queue-supervisor",
+                "EWI Queue Supervisor",
+                "234567",
+                "supervisor",
+            )
+            own_teamlead_id = create_user(
+                "ewi-queue-lead",
+                "EWI Queue Lead",
+                "345678",
+                "teamlead",
+                supervisor_id,
+            )
+            other_supervisor_id = create_user(
+                "ewi-queue-other-supervisor",
+                "Other EWI Supervisor",
+                "456789",
+                "supervisor",
+            )
+            other_teamlead_id = create_user(
+                "ewi-queue-other-lead",
+                "Other EWI Lead",
+                "567890",
+                "teamlead",
+                other_supervisor_id,
+            )
+
+            with server.connect_db() as db:
+                with db:
+                    for house_id, owner in (
+                        ("EWI-QUEUE-OWN", supervisor_id),
+                        ("EWI-QUEUE-OTHER", other_supervisor_id),
+                    ):
+                        db.execute(
+                            """
+                            INSERT INTO provided_houses(id, owner_name, source)
+                            VALUES (?, ?, 'government')
+                            """,
+                            (house_id, house_id),
+                        )
+                        server._upsert_house(db, house_id, owner_name=house_id)
+                        db.execute(
+                            """
+                            INSERT INTO house_role_assignments
+                                (house_id, role, user_id, assigned_by, assigned_at)
+                            VALUES (?, 'supervisor', ?, 'Cathy', '2026-11-09T09:00:00')
+                            """,
+                            (house_id, owner),
+                        )
+                    db.execute(
+                        """
+                        INSERT INTO house_ewi_assignments
+                            (house_id, teamlead_user_id, supervisor_user_id,
+                             assigned_by, assigned_at)
+                        VALUES (?, ?, ?, 'Other EWI Supervisor', '2026-11-09T09:01:00')
+                        """,
+                        ("EWI-QUEUE-OTHER", other_teamlead_id, other_supervisor_id),
+                    )
+
+            status, _, supervisor_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "ewi-queue-supervisor", "pin": "234567"},
+            )
+            self.assertEqual(status, 200)
+            status, assignment, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/supervisor/ewi-assignment",
+                {
+                    "house_id": "EWI-QUEUE-OWN",
+                    "teamlead_user_id": own_teamlead_id,
+                },
+                supervisor_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(assignment["teamlead_name"], "EWI Queue Lead")
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/supervisor/ewi-assignment",
+                {
+                    "house_id": "EWI-QUEUE-OWN",
+                    "teamlead_user_id": other_teamlead_id,
+                },
+                supervisor_cookie,
+            )
+            self.assertEqual(status, 400)
+
+            status, error, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/supervisor/ewi-assignment",
+                {
+                    "house_id": "EWI-QUEUE-OTHER",
+                    "teamlead_user_id": own_teamlead_id,
+                },
+                supervisor_cookie,
+            )
+            self.assertEqual(status, 404)
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=supervisor_cookie
+            )
+            self.assertEqual(status, 200)
+            own_house = next(
+                house for house in dashboard["house_list"]
+                if house["id"] == "EWI-QUEUE-OWN"
+            )
+            self.assertEqual(own_house["ewi_teamlead_user_id"], own_teamlead_id)
+            self.assertEqual(dashboard["supervisor_assignment_options"]["ewi_teamleads"], [
+                {"id": own_teamlead_id, "name": "EWI Queue Lead"}
+            ])
+            self.assertIn(
+                "EWI Queue Lead",
+                dashboard["supervisor_assignment_options"]["delivery_people"],
+            )
+
+            status, _, lead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "ewi-queue-lead", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=lead_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [house["id"] for house in dashboard["teamlead_ewi_houses"]],
+                ["EWI-QUEUE-OWN"],
+            )
+            status, completed, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/teamlead/ewi-work/complete",
+                {"house_id": "EWI-QUEUE-OWN"},
+                lead_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(completed["completed_by"], "EWI Queue Lead")
+            with server.connect_db() as db:
+                self.assertEqual(
+                    db.execute(
+                        "SELECT is_finished FROM houses WHERE id = 'EWI-QUEUE-OWN'"
+                    ).fetchone()["is_finished"],
+                    0,
+                )
+                self.assertEqual(
+                    db.execute(
+                        "SELECT completed_by FROM house_ewi_assignments "
+                        "WHERE house_id = 'EWI-QUEUE-OWN'"
+                    ).fetchone()["completed_by"],
+                    "EWI Queue Lead",
+                )
+
+            status, _, other_lead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "ewi-queue-other-lead", "pin": "567890"},
+            )
+            self.assertEqual(status, 200)
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/teamlead/ewi-work/complete",
+                {"house_id": "EWI-QUEUE-OWN"},
+                other_lead_cookie,
+            )
+            self.assertEqual(status, 404)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
     def test_admin_manages_non_login_team_rosters_and_teamlead_sees_own(self):
         httpd, thread = self.start_test_server()
         try:
@@ -1243,6 +1479,32 @@ class TrackerTests(unittest.TestCase):
                 finally:
                     connection.close()
         finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_ventilation_product_icons_are_served_safely(self):
+        httpd, thread = self.start_test_server()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", httpd.server_address[1], timeout=5
+        )
+        try:
+            connection.request(
+                "GET",
+                "/ventilation-icons/core-drill-ventilator.svg",
+            )
+            response = connection.getresponse()
+            image = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "image/svg+xml")
+            self.assertIn(b"<svg", image)
+            self.assertIn(b"5\xe2\x80\x9d Core Drill Ventilator", image)
+
+            connection.request("GET", "/ventilation-icons/..%2Fapp.js")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 404)
+        finally:
+            connection.close()
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=5)

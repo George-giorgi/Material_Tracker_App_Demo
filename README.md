@@ -37,7 +37,17 @@ Vent Coordinators see houses marked as requiring Vent work and can assign them
 to active Teamleads in the Ventilation department. Coordinators only receive
 access to this work queue and its team assignments.
 Supervisors see only houses assigned to their account and can set each house's
-delivery person and team from their dashboard.
+delivery person and team from their dashboard. The dashboard includes search
+and filters for active, closed, and unassigned houses, along with a collapsible
+view of active Teamleads who report to that Supervisor and their non-login
+roster members. Houses assigned to an EWI Supervisor through the Assign
+workflow can be assigned to one of their reporting EWI Teamleads for EWI work.
+Active EWI Teamleads are also selectable as delivery people for the EWI
+Supervisor's assigned houses; this does not grant Teamleads delivery-account
+permissions.
+The Teamlead sees those houses in an EWI work queue and can mark the assigned
+EWI work complete without closing the house. Teamlead cards summarize open and
+completed EWI assignments.
 Supervisor specialties are stored on supervisor accounts and can be maintained
 in **Account → Manage accounts**. This describes the supervisor's trade; house
 assignment access continues to follow the existing supervisor permissions.
@@ -132,6 +142,38 @@ Open [http://127.0.0.1:8011](http://127.0.0.1:8011). It uses the copied
 database's existing user accounts. The SEAI records contain sensitive
 applicant, property, contact, and notes data; keep this database on a trusted
 machine and share it only with authorized people.
+
+## Remote access with Cloudflare Quick Tunnel
+
+The SEAI Red setup uses port `8011` and listens on `127.0.0.1`. Cloudflare
+Tunnel can publish it without opening a port on the router or making the app
+listen on the local network. The host PC must stay on, with both the app and
+the tunnel running.
+
+Install `cloudflared` on Windows (for example, from PowerShell with
+`winget install --id Cloudflare.cloudflared -e`). Start the app using the
+Quick Start command above. In a second PowerShell window, from the project
+folder, run:
+
+```powershell
+cloudflared tunnel --url http://127.0.0.1:8011
+```
+
+Cloudflare prints a temporary `https://…trycloudflare.com` address. Share that
+HTTPS address with the intended users; keep the `cloudflared` window open.
+You can also run the app and tunnel from VS Code using the **Run SEAI Red app
+(port 8011)** and **Run Cloudflare Quick Tunnel (port 8011)** tasks. Local use
+continues at [http://127.0.0.1:8011](http://127.0.0.1:8011). A Quick Tunnel
+address changes when the tunnel restarts and is for testing, not a permanent
+service.
+
+The Quick Tunnel address is reachable from the public internet by anyone who
+knows it. The app login remains required, but this setup does not add
+Cloudflare Access. Use individual accounts and unique PINs, and share the URL
+only with authorized users. Because this database contains sensitive
+applicant, property, contact, and notes data, configure Cloudflare Access and
+a named Cloudflare Tunnel before using it for routine work. Do not use a
+Quick Tunnel for sensitive production data.
 
 Employees can view tracker records and record material movements against
 existing houses. They cannot add materials, count or adjust stock, import
@@ -234,11 +276,17 @@ These exercise the real navigation routing logic and check that menu and
 shortcut destinations match the app's pages. Run the full application tests
 with `py -m unittest discover -s tests`.
 
-For the end-to-end browser test, install the test dependencies and Chromium
-once, then run:
+For an individual pytest test, install the test dependencies and run, for
+example:
 
 ```powershell
 py -m pip install -r requirements-test.txt
+py -m pytest tests/test_server.py -k ewi_assignment
+```
+
+For the end-to-end browser test, install Chromium once, then run:
+
+```powershell
 py -m playwright install chromium
 py -m unittest tests.test_navigation_browser
 ```

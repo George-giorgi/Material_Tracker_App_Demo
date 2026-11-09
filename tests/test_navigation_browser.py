@@ -11,7 +11,7 @@ from pathlib import Path
 import server
 from tests.support import UvicornTestServer
 from pypdf import PdfReader
-from reportlab.pdfgen import canvas
+from reportlab.pdfgen import canvas as pdf_canvas
 
 try:
     from playwright.sync_api import sync_playwright
@@ -201,6 +201,21 @@ class NavigationBrowserTests(unittest.TestCase):
             },
         )
         self.assertEqual(teamlead_created.status, 201, teamlead_created.text())
+        other_supervisor_created = self.page.request.post(
+            f"{self.base_url}/api/users",
+            data={
+                "username": "other-plumbing-supervisor",
+                "display_name": "Other Plumbing Supervisor",
+                "pin": "456782",
+                "role": "supervisor",
+                "supervisor_specialty": "Plumbing",
+            },
+        )
+        self.assertEqual(
+            other_supervisor_created.status,
+            201,
+            other_supervisor_created.text(),
+        )
         supervisor_id = created.json()["user"]["id"]
         teamlead_id = teamlead_created.json()["user"]["id"]
         with server.connect_db() as db:
@@ -230,6 +245,30 @@ class NavigationBrowserTests(unittest.TestCase):
                 VALUES ('PLUMBING-SUPERVISOR-PENDING', 'Pending Plumbing House',
                         'government', 1)
                 """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_applications (
+                    application_id TEXT PRIMARY KEY,
+                    detail_data_json TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO seai_applications (application_id, detail_data_json)
+                VALUES (?, ?)
+                """,
+                (
+                    "PLUMBING-SUPERVISOR-PENDING",
+                    json.dumps(
+                        {
+                            "Application Details": {
+                                "Application ID": "SEAI-PENDING-001"
+                            }
+                        }
+                    ),
+                ),
             )
             server._upsert_house(
                 db,
@@ -274,6 +313,48 @@ class NavigationBrowserTests(unittest.TestCase):
                 INSERT INTO house_checklists (house_id, plumber_status)
                 VALUES ('PLUMBING-SUPERVISOR-COMPLETE', 'done')
                 """
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
+            pdf_content = b"%PDF-1.4\nSurvey PDF for pending house\n%%EOF"
+            db.execute(
+                """
+                INSERT INTO house_documents
+                    (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                VALUES ('PLUMBING-SUPERVISOR-PENDING', 'survey-plan.pdf', ?, ?,
+                        'Surveyor Example', '2026-11-04T10:00:00')
+                """,
+                (pdf_content, len(pdf_content)),
+            )
+            seai_pdf_content = b"%PDF-1.4\nSelected survey PDF\n%%EOF"
+            seai_pdf_id = db.execute(
+                """
+                INSERT INTO seai_documents
+                    (application_id, category, filename, extension, downloaded, content)
+                VALUES ('PLUMBING-SUPERVISOR-PENDING', 'Survey',
+                        'selected-survey.pdf', '.pdf', 1, ?)
+                """,
+                (seai_pdf_content,),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO selected_seai_documents
+                    (document_id, house_id, created_by, created_at)
+                VALUES (?, 'PLUMBING-SUPERVISOR-PENDING', 'Surveyor Example',
+                        '2026-11-04T10:01:00')
+                """,
+                (seai_pdf_id,),
             )
             db.execute(
                 """
@@ -419,6 +500,7 @@ class NavigationBrowserTests(unittest.TestCase):
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
         )
         card.wait_for()
+        self.assertTrue(card.locator(".plumbing-trade-icon svg").is_visible())
         self.assertIn(
             "Assigned to you by Dashboard Test",
             card.locator(".supervisor-house-assignment-credit").inner_text(),
@@ -426,10 +508,55 @@ class NavigationBrowserTests(unittest.TestCase):
         pending_card = self.page.locator(
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-PENDING"]'
         )
+        self.assertEqual(
+            pending_card.locator(".house-meta h2").inner_text(),
+            "SEAI-PENDING-001",
+        )
         self.assertIn(
             "Assigned to you by Dashboard Test",
             pending_card.locator(".supervisor-house-assignment-credit").inner_text(),
         )
+        pending_pdfs = pending_card.locator(".plumbing-survey-pdfs")
+        self.assertEqual(
+            pending_pdfs.locator(".plumbing-survey-pdf-count").inner_text(), "2"
+        )
+        pending_pdfs.locator("summary").click()
+        self.assertIn("survey-plan.pdf", pending_pdfs.inner_text())
+        self.assertIn("selected-survey.pdf", pending_pdfs.inner_text())
+        self.assertIn("Saved by Surveyor Example", pending_pdfs.inner_text())
+        for pdf_name, expected_content in (
+            ("survey-plan.pdf", pdf_content),
+            ("selected-survey.pdf", seai_pdf_content),
+        ):
+            pdf_link = pending_pdfs.locator("li").filter(
+                has_text=pdf_name
+            ).get_by_role("link", name="View")
+            pdf_url = f"{self.base_url}{pdf_link.get_attribute('href')}"
+            pdf_response = self.page.request.get(pdf_url)
+            self.assertEqual(pdf_response.status, 200, pdf_response.text())
+            self.assertEqual(pdf_response.headers["content-type"], "application/pdf")
+            self.assertIn(expected_content, pdf_response.body())
+        other_supervisor_context = self.playwright.request.new_context(
+            base_url=self.base_url
+        )
+        try:
+            other_login = other_supervisor_context.post(
+                "/api/auth/login",
+                data={
+                    "username": "other-plumbing-supervisor",
+                    "pin": "456782",
+                },
+            )
+            self.assertEqual(other_login.status, 200, other_login.text())
+            for pdf_name in ("survey-plan.pdf", "selected-survey.pdf"):
+                pdf_link = pending_pdfs.locator("li").filter(
+                    has_text=pdf_name
+                ).get_by_role("link", name="View")
+                pdf_url = pdf_link.get_attribute("href")
+                denied_pdf = other_supervisor_context.get(pdf_url)
+                self.assertEqual(denied_pdf.status, 404, denied_pdf.text())
+        finally:
+            other_supervisor_context.dispose()
         self.assertFalse(
             pending_card.get_by_text("Awaiting activation", exact=True).count()
         )
@@ -694,6 +821,19 @@ class NavigationBrowserTests(unittest.TestCase):
                 """,
                 (surveyor_created.json()["user"]["id"],),
             )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
 
         login = self.page.request.post(
             f"{self.base_url}/api/auth/login",
@@ -765,6 +905,11 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(
             self.page.locator("#plumbing-house-list").get_by_text(
                 "PLUMBING-DASHBOARD", exact=True
+            ).is_visible()
+        )
+        self.assertTrue(
+            self.page.locator(
+                "#plumbing-house-list .plumbing-trade-icon svg"
             ).is_visible()
         )
         self.assertEqual(
@@ -983,7 +1128,7 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.page.set_viewport_size({"width": 390, "height": 844})
         self.assertEqual(
-            self.page.locator("#plumbing-house-list .plumbing-house-card").evaluate(
+            self.page.locator("#plumbing-house-list").evaluate(
                 "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
             ),
             1,
@@ -1043,6 +1188,20 @@ class NavigationBrowserTests(unittest.TestCase):
         pdf_document.new_page().insert_text((72, 72), "Annotatable survey")
         annotatable_pdf = pdf_document.tobytes()
         pdf_document.close()
+        selected_seai_pdf_buffer = BytesIO()
+        selected_seai_pdf = pdf_canvas.Canvas(
+            selected_seai_pdf_buffer, pageCompression=0
+        )
+        selected_seai_pdf.drawString(72, 720, "selected SEAI pages")
+        selected_seai_pdf.save()
+        selected_seai_pdf_content = selected_seai_pdf_buffer.getvalue()
+        annotated_seai_pdf_buffer = BytesIO()
+        annotated_seai_pdf = pdf_canvas.Canvas(
+            annotated_seai_pdf_buffer, pageCompression=0
+        )
+        annotated_seai_pdf.drawString(72, 720, "annotated SEAI source")
+        annotated_seai_pdf.save()
+        annotated_seai_pdf_content = annotated_seai_pdf_buffer.getvalue()
         with server.connect_db() as db:
             ventilation_id = db.execute(
                 "SELECT id FROM departments WHERE name = 'Ventilation'"
@@ -1151,7 +1310,7 @@ class NavigationBrowserTests(unittest.TestCase):
                     'VENT-DASHBOARD-selected-seai-pages.pdf', ?
                 )
                 """,
-                (b"%PDF-1.4\nselected SEAI pages\n",),
+                (selected_seai_pdf_content,),
             ).lastrowid
             db.execute(
                 """
@@ -1170,7 +1329,7 @@ class NavigationBrowserTests(unittest.TestCase):
                     'VENT-DASHBOARD-survey-annotated.pdf', ?
                 )
                 """,
-                (b"%PDF-1.4\nannotated SEAI source\n",),
+                (annotated_seai_pdf_content,),
             )
         created = self.page.request.post(
             f"{self.base_url}/api/users",
@@ -1345,20 +1504,10 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Combined PDFs by Surveyor", attached_pdfs_dialog.locator("h2").inner_text())
         self.assertEqual(attached_pdfs_button.locator(".vent-survey-pdfs-count").inner_text(), "1")
         attached_pdf = attached_pdfs_dialog.locator(
-            '.vent-survey-pdf-entry button[aria-label="View VENT-DASHBOARD-selected-seai-pages.pdf"]'
+            ".vent-survey-pdf-entry [data-vent-survey-pdf-view]"
         )
-        self.assertTrue(attached_pdf.is_visible())
+        attached_pdf.wait_for(state="visible")
         self.assertIn("Combined PDF by Surveyor Teammate", attached_pdfs_dialog.inner_text())
-        attached_pdf.click()
-        self.assertIn(
-            "/api/seai-documents/",
-            attached_pdfs_dialog.locator("#vent-survey-pdfs-frame").get_attribute("src"),
-        )
-        self.assertFalse(attached_pdfs_dialog.locator("#vent-survey-pdfs-viewer").is_hidden())
-        self.assertEqual(
-            attached_pdfs_dialog.locator("#vent-survey-pdfs-viewer-title").inner_text(),
-            "VENT-DASHBOARD-selected-seai-pages.pdf",
-        )
         attached_pdf_response = self.page.evaluate(
             """async url => {
               const response = await fetch(url);
@@ -1368,17 +1517,84 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(attached_pdf_response["status"], 200)
         self.assertIn("selected SEAI pages", attached_pdf_response["content"])
+        attached_pdf.click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        self.assertEqual(
+            self.page.locator("#pdf-annotator-icon-list .pdf-annotator-icon-card").count(),
+            9,
+        )
+        self.assertIn(
+            "VENT-DASHBOARD-selected-seai-pages.pdf",
+            self.page.locator("#pdf-annotator-title").inner_text(),
+        )
+        icon_palette = self.page.locator("#pdf-annotator-icon-list")
+        icon_palette.locator(".pdf-annotator-icon-card").first.click()
+        annotation_canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_bounds = annotation_canvas.bounding_box()
+        self.page.mouse.click(
+            canvas_bounds["x"] + canvas_bounds["width"] / 2,
+            canvas_bounds["y"] + canvas_bounds["height"] / 2,
+        )
+        save_copy = self.page.get_by_role("button", name="Save annotated copy")
+        self.assertTrue(save_copy.is_enabled())
+        self.page.locator("#pdf-annotator-undo").click()
+        self.assertFalse(save_copy.is_enabled())
+        self.page.evaluate(
+            """() => {
+              const card = document.querySelector(
+                '#pdf-annotator-icon-list .pdf-annotator-icon-card'
+              );
+              const canvas = document.querySelector('#pdf-annotator-canvas');
+              const transfer = new DataTransfer();
+              card.dispatchEvent(new DragEvent('dragstart', {
+                bubbles: true,
+                dataTransfer: transfer
+              }));
+              const bounds = canvas.getBoundingClientRect();
+              canvas.dispatchEvent(new DragEvent('dragover', {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: transfer,
+                clientX: bounds.left + bounds.width * 0.65,
+                clientY: bounds.top + bounds.height * 0.65
+              }));
+              canvas.dispatchEvent(new DragEvent('drop', {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: transfer,
+                clientX: bounds.left + bounds.width * 0.65,
+                clientY: bounds.top + bounds.height * 0.65
+              }));
+            }"""
+        )
+        self.assertTrue(save_copy.is_enabled())
+        self.page.keyboard.press("Escape")
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         annotated_seai_pdf = attached_pdfs_dialog.locator(
-            '.vent-survey-pdf-entry button[aria-label="View VENT-DASHBOARD-survey-annotated.pdf"]'
+            '.vent-survey-pdf-entry [data-vent-survey-pdf-view][aria-label="Open and annotate VENT-DASHBOARD-survey-annotated.pdf"]'
         )
         self.assertFalse(annotated_seai_pdf.count())
         self.assertFalse(attached_pdfs_dialog.locator(".vent-survey-pdf-entry").filter(has_text="saved-house-survey").count())
-        attached_pdfs_dialog.get_by_role("button", name="Close attached PDFs").click()
         self.assertFalse(attached_pdfs_dialog.evaluate("element => element.open"))
         self.assertNotIn("annotated-survey.pdf", complete_card.inner_text())
-        pdf_url = pending_card.locator(
-            'a[aria-label="View annotated-survey.pdf"]'
-        ).get_attribute("href")
+        pdf_view = pending_card.locator(
+            '[data-vent-pdf-preview][aria-label="Open and annotate annotated-survey.pdf"]'
+        )
+        self.assertTrue(pdf_view.is_visible())
+        pdf_view.click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.assertIn(
+            "annotated-survey.pdf",
+            self.page.locator("#pdf-annotator-title").inner_text(),
+        )
+        self.assertEqual(
+            self.page.locator("#pdf-annotator-icon-list .pdf-annotator-icon-card").count(),
+            9,
+        )
+        pdf_url = pdf_view.get_attribute("data-pdf-url")
         pdf_response = self.page.evaluate(
             """async url => {
               const response = await fetch(url);
@@ -1393,6 +1609,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(pdf_response["status"], 200)
         self.assertTrue(pdf_response["contentType"].startswith("application/pdf"))
         self.assertIn("annotated survey", pdf_response["content"])
+        self.page.keyboard.press("Escape")
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         self.page.set_viewport_size({"width": 390, "height": 844})
         annotate_button = pending_card.get_by_role(
             "button", name="Annotate survey-plan.pdf"
@@ -1423,6 +1641,24 @@ class NavigationBrowserTests(unittest.TestCase):
             "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
         )
         canvas = self.page.locator("#pdf-annotator-canvas")
+        self.page.evaluate(
+            """() => {
+              const card = document.querySelector('#pdf-annotator-icon-list .pdf-annotator-icon-card');
+              const canvas = document.querySelector('#pdf-annotator-canvas');
+              const transfer = new DataTransfer();
+              card.dispatchEvent(new DragEvent('dragstart', {
+                bubbles: true,
+                dataTransfer: transfer
+              }));
+              const rect = canvas.getBoundingClientRect();
+              canvas.dispatchEvent(new DragEvent('drop', {
+                bubbles: true,
+                dataTransfer: transfer,
+                clientX: rect.left + rect.width / 2,
+                clientY: rect.top + rect.height / 2
+              }));
+            }"""
+        )
         canvas_box = canvas.bounding_box()
         self.page.mouse.move(canvas_box["x"] + 30, canvas_box["y"] + 30)
         self.page.mouse.down()
@@ -1441,7 +1677,30 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertFalse(shared_pdf.evaluate("element => element.open"))
         shared_pdf.locator("summary").click()
-        self.page.get_by_text("survey-plan-vent-annotated.pdf", exact=True).wait_for()
+        saved_annotation = pending_card.locator(
+            ".ventilation-pdf-card.is-annotated"
+        ).filter(has_text="survey-plan-vent-annotated.pdf")
+        saved_annotation.wait_for()
+        self.assertIn("Annotated by", saved_annotation.inner_text())
+        self.assertIn("Ventilation Dashboard", saved_annotation.inner_text())
+        self.assertIn("Open & annotate", saved_annotation.inner_text())
+        self.assertIn("2026", saved_annotation.inner_text())
+        annotated_pdf_preview = saved_annotation.locator("[data-vent-pdf-preview]")
+        annotated_pdf_preview.click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.assertIn(
+            "survey-plan-vent-annotated.pdf",
+            self.page.locator("#pdf-annotator-title").inner_text(),
+        )
+        self.assertTrue(
+            self.page.locator("#pdf-annotator-icon-palette").is_visible()
+        )
+        self.page.locator("#pdf-annotator-close").click()
+        self.assertFalse(
+            self.page.locator("#pdf-annotator-dialog").evaluate(
+                "element => element.open"
+            )
+        )
         with server.connect_db() as db:
             original = db.execute(
                 """
@@ -1459,6 +1718,45 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(original["content"], annotatable_pdf)
         self.assertNotEqual(annotated["content"], annotatable_pdf)
         self.assertEqual(annotated["shared_by"], "Vent annotated by Ventilation Dashboard")
+        annotated_row = shared_pdf.locator("li").filter(
+            has_text="survey-plan-vent-annotated.pdf"
+        )
+        edit_saved_pdf = annotated_row.locator("[data-vent-pdf-preview]")
+        edit_saved_pdf.click()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_box = canvas.bounding_box()
+        self.page.mouse.click(
+            canvas_box["x"] + canvas_box["width"] / 2,
+            canvas_box["y"] + canvas_box["height"] / 2,
+        )
+        self.assertTrue(self.page.locator("#pdf-annotator-icon-edit").is_visible())
+        self.assertEqual(
+            self.page.locator("#pdf-annotator-selected-icon-name").inner_text(),
+            "Window trickle vent",
+        )
+        self.page.locator("#pdf-annotator-icon-rotate-right").click()
+        self.page.get_by_role("button", name="Save changes").click()
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
+        with server.connect_db() as db:
+            updated_count = db.execute(
+                """
+                SELECT COUNT(*) FROM house_vent_documents
+                WHERE house_id = 'VENT-DASHBOARD-PENDING'
+                  AND filename = 'survey-plan-vent-annotated.pdf'
+                """
+            ).fetchone()[0]
+            updated_record = db.execute(
+                """
+                SELECT content FROM house_vent_documents
+                WHERE house_id = 'VENT-DASHBOARD-PENDING'
+                  AND filename = 'survey-plan-vent-annotated.pdf'
+                """
+            ).fetchone()
+        self.assertEqual(updated_count, 1)
+        self.assertNotEqual(updated_record["content"], annotated["content"])
         self.assertEqual(
             len(
                 self.page.locator("#ventilation-house-list").evaluate(
@@ -1534,13 +1832,13 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotEqual(dark_card_style["pdfBackground"], "rgb(255, 255, 255)")
         if not shared_pdf.evaluate("element => element.open"):
             shared_pdf.locator("summary").click()
-        self.assertIn("Shared survey PDFs", shared_pdf.inner_text())
+        self.assertIn("Vent team PDFs", shared_pdf.inner_text())
         pdf_actions = shared_pdf.locator(".ventilation-pdf-actions").first
         self.assertEqual(
             pdf_actions.evaluate("element => getComputedStyle(element).display"),
             "grid",
         )
-        self.assertTrue(pdf_actions.locator("[data-vent-pdf-annotate]").is_visible())
+        self.assertTrue(pdf_actions.locator("[data-vent-pdf-preview]").is_visible())
         dark_pdf_style = shared_pdf.locator(".ventilation-shared-pdf-list li").first.evaluate(
             """row => ({
               background: getComputedStyle(row).backgroundColor,
@@ -1552,6 +1850,26 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotEqual(dark_pdf_style["background"], "rgb(255, 255, 255)")
         self.assertNotEqual(dark_pdf_style["filename"], dark_pdf_style["background"])
         self.assertNotEqual(dark_pdf_style["metadata"], dark_pdf_style["background"])
+        attached_pdfs_button.click()
+        attached_pdf = self.page.locator(
+            "#vent-survey-pdfs-dialog [data-vent-survey-pdf-view]"
+        )
+        attached_pdf.click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        dark_icon_style = self.page.locator(".pdf-annotator-icon-palette").evaluate(
+            """panel => ({
+              background: getComputedStyle(panel).backgroundColor,
+              title: getComputedStyle(panel.querySelector('h3')).color,
+              caption: getComputedStyle(panel.querySelector('.pdf-annotator-icon-card span')).color,
+              imageCount: panel.querySelectorAll('img').length
+            })"""
+        )
+        self.assertNotEqual(dark_icon_style["background"], "rgb(255, 255, 255)")
+        self.assertNotEqual(dark_icon_style["title"], dark_icon_style["background"])
+        self.assertNotEqual(dark_icon_style["caption"], dark_icon_style["background"])
+        self.assertEqual(dark_icon_style["imageCount"], 9)
+        self.page.keyboard.press("Escape")
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         pending_card.get_by_role(
             "button", name="Annotate survey-plan.pdf"
         ).click()
@@ -1576,6 +1894,73 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotEqual(annotator_dark_style["viewport"], "rgb(255, 255, 255)")
         self.assertEqual(annotator_dark_style["pdfPage"], "rgb(255, 255, 255)")
         self.assertNotEqual(annotator_dark_style["activeTool"], "rgba(0, 0, 0, 0)")
+        icon_palette = self.page.locator("#pdf-annotator-icon-palette")
+        self.assertTrue(icon_palette.is_visible())
+        icon_cards = icon_palette.locator(".pdf-annotator-icon-card")
+        self.assertEqual(icon_cards.count(), 9)
+        first_icon = icon_cards.first
+        self.assertIn("Window trickle vent", first_icon.inner_text())
+        first_icon.click()
+        canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_box = canvas.bounding_box()
+        self.page.mouse.click(
+            canvas_box["x"] + canvas_box["width"] / 2,
+            canvas_box["y"] + canvas_box["height"] / 2,
+        )
+        self.assertTrue(self.page.locator("#pdf-annotator-icon-edit").is_visible())
+        self.assertEqual(
+            self.page.locator("#pdf-annotator-selected-icon-name").inner_text(),
+            "Window trickle vent",
+        )
+        self.assertTrue(self.page.locator("#pdf-annotator-save").is_enabled())
+        self.page.locator("#pdf-annotator-icon-rotate-right").click()
+        self.page.locator("#pdf-annotator-icon-larger").click()
+        center_x = canvas_box["x"] + canvas_box["width"] / 2
+        center_y = canvas_box["y"] + canvas_box["height"] / 2
+        self.page.mouse.move(center_x, center_y)
+        self.page.mouse.down()
+        self.page.mouse.move(center_x + 45, center_y + 20)
+        self.page.mouse.up()
+        handle_start = self.page.evaluate(
+            """canvas => {
+              const rect = canvas.getBoundingClientRect();
+              const width = rect.width * 0.20;
+              const height = rect.height * 0.14;
+              const angle = 15 * Math.PI / 180;
+              const cx = rect.left + rect.width / 2 + 45;
+              const cy = rect.top + rect.height / 2 + 20;
+              return {
+                x: cx + width / 2 * Math.cos(angle) + height / 2 * Math.sin(angle),
+                y: cy + width / 2 * Math.sin(angle) - height / 2 * Math.cos(angle)
+              };
+            }""",
+            canvas.element_handle(),
+        )
+        self.page.mouse.move(handle_start["x"], handle_start["y"])
+        self.page.mouse.down()
+        self.page.mouse.move(handle_start["x"] + 20, handle_start["y"] - 10)
+        self.page.mouse.up()
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        icon_palette.wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => {
+              const rect = document.querySelector(
+                '#pdf-annotator-icon-palette'
+              ).getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0;
+            }"""
+        )
+        palette_bounds = icon_palette.evaluate(
+            """element => {
+              const rect = element.getBoundingClientRect();
+              return {left: rect.left, right: rect.right};
+            }"""
+        )
+        self.assertGreaterEqual(palette_bounds["left"], 0)
+        self.assertLessEqual(palette_bounds["right"], 390)
+        self.assertTrue(icon_cards.first.is_visible())
+        self.page.set_viewport_size({"width": 1280, "height": 720})
         self.page.locator("#pdf-annotator-close").click()
         self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
         pending_card.get_by_role(
@@ -2337,7 +2722,10 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("selected-survey-pages.pdf", house_pdfs.inner_text())
         self.assertIn("Saved by Surveyor Browser", house_pdfs.inner_text())
         self.assertEqual(house_pdfs.locator(".saved-pdf-entry").count(), 2)
-        self.assertTrue(house_pdfs.locator(".saved-pdf-view").is_visible())
+        pdf_view_links = house_pdfs.locator(".saved-pdf-view")
+        self.assertEqual(pdf_view_links.count(), 2)
+        self.assertTrue(pdf_view_links.first.is_visible())
+        self.assertTrue(pdf_view_links.nth(1).is_visible())
         self.assertEqual(house_pdfs.locator("a[download]").count(), 2)
         history = self.page.locator(".assign-seai-variation-history")
         self.assertTrue(history.is_visible())
@@ -2696,8 +3084,9 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.mouse.move(0, 0)
         self.page.evaluate("document.documentElement.dataset.theme = 'light'")
         pending_card.locator(".assign-seai-details").click()
-        self.page.locator("#assign-seai-house-empty").wait_for(state="visible")
+        self.page.locator("#assign-seai-house-detail").wait_for(state="visible")
         ready_button = self.page.locator("#assign-seai-house-ready")
+        ready_button.wait_for(state="visible")
         self.assertTrue(ready_button.is_visible())
         ready_button.click()
         self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
@@ -3304,7 +3693,11 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertNotEqual(change_button_color, assign_button_color)
         self.page.evaluate("document.documentElement.dataset.theme = 'dark'")
-        self.page.wait_for_timeout(150)
+        self.page.wait_for_function(
+            """() => getComputedStyle(document.querySelector(
+              '#house-map-selection .assign-house-team'
+            )).backgroundColor === 'rgb(53, 42, 67)'"""
+        )
         dark_change_button_color = change_button.evaluate(
             "button => getComputedStyle(button).backgroundColor"
         )
@@ -3339,17 +3732,21 @@ class NavigationBrowserTests(unittest.TestCase):
                 """
             ).fetchone()
         self.assertEqual(assignment["user_id"], alternate_surveyor_id)
+        self.page.once("dialog", lambda dialog: dialog.accept())
         self.page.locator(
             "#house-map-selection .plan-ready-toggle[data-ready='false']"
         ).click()
-        self.page.locator("#houses-list article[data-house-id='MAP-READY-ASSIGN']").wait_for()
+        not_started_card = self.page.locator("#houses-list .house-card").filter(
+            has_text="MAP-READY-ASSIGN"
+        )
+        not_started_card.wait_for()
         self.assertEqual(
             self.page.locator("#houses-list-heading").get_attribute("data-status"),
             "not_started",
         )
         self.assertTrue(
-            self.page.locator(
-                "#houses-list article[data-house-id='MAP-READY-ASSIGN'] .plan-ready-toggle[data-ready='true']"
+            not_started_card.locator(
+                ".plan-ready-toggle[data-ready='true']"
             ).is_visible()
         )
         with server.connect_db() as db:
@@ -6912,6 +7309,71 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotIn("Not recorded", audit_text)
         self.assertEqual(self.browser_errors, [])
 
+    def test_ewi_supervisor_uses_team_dashboard_layout(self):
+        created = self.page.request.post(
+            f"{self.base_url}/api/users",
+            data={
+                "username": "ewi-team-supervisor",
+                "display_name": "EWI Team Supervisor",
+                "pin": "456789",
+                "role": "supervisor",
+                "supervisor_specialty": "External Wall Insulation",
+            },
+        )
+        self.assertEqual(created.status, 201, created.text())
+
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("ewi-team-supervisor")
+        self.page.locator("#auth-pin").fill("456789")
+        self.page.locator("#auth-submit").click()
+
+        self.page.get_by_role("heading", name="My EWI dashboard").wait_for()
+        self.assertIn(
+            "supervisor-workspace-mode",
+            self.page.locator("body").get_attribute("class"),
+        )
+        self.assertTrue(self.page.locator("#supervisor-workload").is_visible())
+        self.assertTrue(
+            self.page.locator("#supervisor-dashboard-summary").is_hidden()
+        )
+        self.assertEqual(
+            self.page.locator(".workspace-nav").evaluate(
+                "element => getComputedStyle(element).display"
+            ),
+            "none",
+        )
+        self.assertIn(
+            "EWI houses",
+            self.page.locator("#supervisor-workload-intro").inner_text(),
+        )
+        if self.page.locator("html").get_attribute("data-theme") != "dark":
+            self.page.locator("#theme-toggle").click()
+        greeting = self.page.locator(
+            "#supervisor-workload .plumbing-coordinator-greeting"
+        )
+        self.assertNotIn(
+            "rgb(255, 255, 255)",
+            greeting.evaluate("(element) => getComputedStyle(element).backgroundImage"),
+        )
+        self.page.wait_for_function(
+            """() => getComputedStyle(
+              document.querySelector("#refresh-supervisor-houses")
+            ).backgroundColor === "rgb(32, 55, 42)" """
+        )
+        self.assertEqual(
+            self.page.locator(
+                "#supervisor-workload .ventilation-refresh-button"
+            ).evaluate("(element) => getComputedStyle(element).backgroundColor"),
+            "rgb(32, 55, 42)",
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list .supervisor-shared-seai").count(),
+            0,
+        )
+        self.assertEqual(self.browser_errors, [])
+
     def test_supervisor_sees_only_assigned_houses_and_saves_delivery_assignments(self):
         with server.connect_db() as db:
             with db:
@@ -6931,18 +7393,30 @@ class NavigationBrowserTests(unittest.TestCase):
                     "789012",
                     "teamlead",
                 )
-                supervisor_department_id = db.execute(
+                ewi_department_id = db.execute(
                     """
-                    SELECT department_id FROM user_departments
-                    WHERE user_id = ? ORDER BY is_primary DESC LIMIT 1
-                    """,
+                    SELECT id FROM departments
+                    WHERE name = 'External Wall Insulation' COLLATE NOCASE
+                    """
+                ).fetchone()["id"]
+                db.execute(
+                    "UPDATE app_users SET supervisor_specialty = "
+                    "'External Wall Insulation' WHERE id = ?",
                     (supervisor_id,),
-                ).fetchone()["department_id"]
+                )
+                server._set_user_organization(
+                    db, supervisor_id, [ewi_department_id]
+                )
                 server._set_user_organization(
                     db,
                     teamlead_id,
-                    [supervisor_department_id],
+                    [ewi_department_id],
                     supervisor_id,
+                )
+                db.execute(
+                    "INSERT INTO team_roster_members (teamlead_user_id, member_name) "
+                    "VALUES (?, 'Roster Worker One')",
+                    (teamlead_id,),
                 )
                 for house_id, owner in (
                     ("SUPERVISOR-OWN", "Own House"),
@@ -6957,6 +7431,66 @@ class NavigationBrowserTests(unittest.TestCase):
                         (house_id, owner),
                     )
                     server._upsert_house(db, house_id, owner_name=owner)
+                db.execute(
+                    "CREATE TABLE IF NOT EXISTS seai_applications "
+                    "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+                )
+                db.execute(
+                    """
+                    INSERT OR REPLACE INTO seai_applications
+                        (application_id, detail_data_json)
+                    VALUES (?, ?)
+                    """,
+                    (
+                        "SUPERVISOR-OWN",
+                        json.dumps(
+                            {
+                                "Application Details": {
+                                    "Application ID": "SEAI-OWN-01",
+                                    "Applicant Name": "Own House Applicant",
+                                },
+                                "Property Details": {"Eircode": "D01 TEST"},
+                                "Measures": [
+                                    {
+                                        "Name": "External Wall Insulation",
+                                        "Survey Quantity": "98",
+                                        "Survey Qty including Variation": "108",
+                                    }
+                                ],
+                            }
+                        ),
+                    ),
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_documents
+                        (house_id, filename, content, size_bytes, uploaded_by, uploaded_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "SUPERVISOR-OWN",
+                        "surveyor-annotated.pdf",
+                        b"%PDF-1.4\n",
+                        9,
+                        "Surveyor One",
+                        "2026-10-30T10:00:00",
+                    ),
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_vent_documents
+                        (house_id, filename, content, size_bytes, shared_by, shared_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "SUPERVISOR-OWN",
+                        "vent-annotated.pdf",
+                        b"%PDF-1.4\n",
+                        9,
+                        "Vent annotated by Vent One",
+                        "2026-10-30T11:00:00",
+                    ),
+                )
                 db.executemany(
                     """
                     INSERT INTO house_role_assignments
@@ -6970,12 +7504,50 @@ class NavigationBrowserTests(unittest.TestCase):
                     ),
                 )
                 db.execute(
+                    "UPDATE houses SET delivery_team = 'Team Lead One' "
+                    "WHERE id = 'SUPERVISOR-OTHER'"
+                )
+                db.execute(
                     """
                     UPDATE houses
                     SET delivery_person = 'Gary Lowther',
                         delivery_team = 'Team Lead One'
                     WHERE id = 'SUPERVISOR-OWN-2'
                     """
+                )
+                db.execute(
+                    """
+                    UPDATE houses
+                    SET delivery_team = 'Team Lead One'
+                    WHERE id = 'SUPERVISOR-OWN'
+                    """
+                )
+                db.execute(
+                    "UPDATE houses SET is_finished = 1 WHERE id = 'SUPERVISOR-OWN-2'"
+                )
+                db.executemany(
+                    """
+                    INSERT INTO house_ewi_assignments
+                        (house_id, teamlead_user_id, supervisor_user_id,
+                         assigned_by, assigned_at, completed_by, completed_at)
+                    VALUES (?, ?, ?, 'Supervisor One', '2026-10-29T10:00:00', ?, ?)
+                    """,
+                    (
+                        (
+                            "SUPERVISOR-OWN",
+                            teamlead_id,
+                            supervisor_id,
+                            "",
+                            "",
+                        ),
+                        (
+                            "SUPERVISOR-OWN-2",
+                            teamlead_id,
+                            supervisor_id,
+                            "Team Lead One",
+                            "2026-10-30T10:00:00",
+                        ),
+                    ),
                 )
                 db.execute(
                     "UPDATE app_users SET is_active = 0 WHERE id = ?",
@@ -6988,71 +7560,236 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator("#auth-username").fill("supervisor-one")
         self.page.locator("#auth-pin").fill("456789")
         self.page.locator("#auth-submit").click()
-        self.page.get_by_role("heading", name="My assigned houses").wait_for()
+        self.page.get_by_role("heading", name="My EWI dashboard").wait_for()
+        self.assertTrue(self.page.locator("#supervisor-workload").is_visible())
+        self.assertEqual(
+            self.page.locator("#supervisor-filter-all-count").inner_text(),
+            "2",
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-filter-needs-assignment-count").inner_text(),
+            "0",
+        )
+        self.assertEqual(
+            self.page.locator(
+                '#supervisor-house-filters [data-supervisor-filter="active"]'
+            ).evaluate(
+                "element => element.textContent.replace(/\\s+/g, ' ').trim()"
+            ),
+            "Assigned 1",
+        )
+        self.assertEqual(
+            self.page.locator(
+                '#supervisor-house-filters [data-supervisor-filter="closed"]'
+            ).evaluate(
+                "element => element.textContent.replace(/\\s+/g, ' ').trim()"
+            ),
+            "Completed 1",
+        )
+        self.assertEqual(
+            self.page.locator(
+                '#supervisor-house-filters [data-supervisor-filter="needs_assignment"]'
+            ).evaluate(
+                "element => element.textContent.replace(/\\s+/g, ' ').trim()"
+            ),
+            "Needs assignment 0",
+        )
+        self.assertEqual(
+            self.page.locator(
+                "#supervisor-house-filters [data-supervisor-filter]"
+            ).evaluate_all(
+                "elements => elements.map(element => "
+                "element.textContent.replace(/\\s+/g, ' ').trim())"
+            ),
+            ["All houses 2", "Assigned 1", "Needs assignment 0", "Completed 1"],
+        )
+        self.page.locator(
+            '#supervisor-house-filters [data-supervisor-filter="closed"]'
+        ).click()
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list article[data-house-id]").count(),
+            1,
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list article[data-house-id]").get_attribute(
+                "data-house-id"
+            ),
+            "SUPERVISOR-OWN-2",
+        )
+        self.page.locator(
+            '#supervisor-house-filters [data-supervisor-filter="active"]'
+        ).click()
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list article[data-house-id]").count(),
+            1,
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list article[data-house-id]").get_attribute(
+                "data-house-id"
+            ),
+            "SUPERVISOR-OWN",
+        )
+        self.page.locator(
+            '#supervisor-house-filters [data-supervisor-filter="all"]'
+        ).click()
+        self.page.locator("#supervisor-team-rosters > summary").click()
+        roster_card = self.page.locator(
+            "#supervisor-team-roster-list .supervisor-team-roster-card"
+        )
+        self.assertEqual(roster_card.count(), 1)
+        self.assertIn("Team Lead One", roster_card.inner_text())
+        self.assertIn("Roster Worker One", roster_card.inner_text())
+        self.assertEqual(
+            roster_card.locator(".supervisor-team-workload-active-count").inner_text(),
+            "1",
+        )
+        self.assertEqual(
+            roster_card.locator(".supervisor-team-workload-closed-count").inner_text(),
+            "1",
+        )
+        self.assertTrue(
+            self.page.locator(
+                '#supervisor-house-list [aria-label="EWI work assignment for SUPERVISOR-OWN"]'
+            ).is_visible()
+        )
+        self.assertNotIn("Inactive Team Lead", self.page.locator(
+            "#supervisor-team-roster-list"
+        ).inner_text())
+
+        ewi_assignment = self.page.locator(
+            '#supervisor-house-list [aria-label="EWI work assignment for SUPERVISOR-OWN"]'
+        )
+        ewi_assignment.locator('select[name="teamlead_user_id"]').select_option("")
+        ewi_assignment.get_by_role("button", name="Save EWI assignment").click()
+        self.page.get_by_text(
+            "EWI work assignment removed from SUPERVISOR-OWN."
+        ).wait_for()
+        self.assertEqual(
+            self.page.locator("#supervisor-filter-needs-assignment-count").inner_text(),
+            "1",
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-filter-active-count").inner_text(),
+            "0",
+        )
+        self.page.locator(
+            '#supervisor-house-filters [data-supervisor-filter="needs_assignment"]'
+        ).click()
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list article[data-house-id]").count(),
+            1,
+        )
+        self.assertEqual(
+            self.page.locator("#supervisor-house-list article[data-house-id]").get_attribute(
+                "data-house-id"
+            ),
+            "SUPERVISOR-OWN",
+        )
+        self.page.locator(
+            '#supervisor-house-filters [data-supervisor-filter="all"]'
+        ).click()
 
         own_house = self.page.locator(
-            '#houses-list article[data-house-id="SUPERVISOR-OWN"]'
+            '#supervisor-house-list article[data-house-id="SUPERVISOR-OWN"]'
         )
         own_house.wait_for()
         self.assertEqual(
             self.page.locator(
-                '#houses-list article[data-house-id="SUPERVISOR-OTHER"]'
+                '#supervisor-house-list article[data-house-id="SUPERVISOR-OTHER"]'
             ).count(),
             0,
         )
         self.assertFalse(self.page.locator('.nav-item[data-tab="inventory"]').is_visible())
-        self.assertEqual(
-            own_house.locator('select[name="delivery_person"] option').evaluate_all(
-                "(options) => options.map((option) => option.value).filter(Boolean)"
-            ),
-            ["Gary Lowther", "Karol", "Team Lead One"],
+        self.assertIn("ewi-supervisor-house-card", own_house.get_attribute("class"))
+        self.assertIn("108 m²", own_house.inner_text())
+        self.assertTrue(
+            own_house.get_by_role("button", name="View house details").is_visible()
+        )
+        self.assertTrue(
+            own_house.get_by_role("button", name="Annotated PDFs").is_visible()
         )
         self.assertEqual(
-            own_house.locator('select[name="delivery_team"] option').evaluate_all(
-                "(options) => options.map((option) => option.value).filter(Boolean)"
-            ),
-            ["Team Lead One"],
+            own_house.locator(
+                ".supervisor-house-assignment:not(.supervisor-ewi-delivery-assignment)"
+            ).count(),
+            0,
         )
-        own_house.locator('select[name="delivery_person"]').select_option("Karol")
-        own_house.locator('select[name="delivery_team"]').select_option("Team Lead One")
-        own_house.get_by_role("button", name="Save assignments").click()
-        self.page.get_by_text(
-            "Delivery assignments saved for SUPERVISOR-OWN."
+        own_house.get_by_role("button", name="Annotated PDFs").click()
+        self.page.get_by_role(
+            "heading", name="Surveyor PDFs shared with EWI"
         ).wait_for()
         self.assertEqual(
-            own_house.locator(".supervisor-assignment-status").inner_text(),
-            "Assigned",
+            self.page.locator("#vent-survey-pdfs-list .ewi-house-pdf-group").count(),
+            3,
+        )
+        self.assertIn("surveyor-annotated.pdf", self.page.locator("#vent-survey-pdfs-list").inner_text())
+        self.assertIn("vent-annotated.pdf", self.page.locator("#vent-survey-pdfs-list").inner_text())
+        self.page.locator(
+            "#vent-survey-pdfs-dialog .close-dialog"
+        ).last.click()
+        own_house.get_by_role("button", name="View house details").click()
+        self.page.locator("#house-detail-title").wait_for()
+        self.assertTrue(self.page.locator("#page-houses").is_visible())
+        self.assertTrue(self.page.locator("#house-detail").is_visible())
+        self.assertEqual(
+            self.page.locator("#house-detail-title").inner_text(),
+            "SUPERVISOR-OWN",
+        )
+        self.assertIn("108 m²", self.page.locator("#house-detail-facts").inner_text())
+        self.page.locator("#back-to-houses").click()
+        self.page.locator("#page-overview.active").wait_for()
+        own_house.wait_for()
+        self.assertIn("Own House Applicant", own_house.inner_text())
+        self.assertIn("108 m²", own_house.inner_text())
+        self.assertIn("D01 TEST", own_house.inner_text())
+        delivery_assignment = own_house.locator(".supervisor-ewi-delivery-assignment")
+        delivery_assignment.locator('select[name="delivery_person"]').select_option(
+            label="Karol"
+        )
+        delivery_assignment.get_by_role(
+            "button", name="Save delivery person"
+        ).click()
+        self.page.get_by_text("Delivery person saved for SUPERVISOR-OWN.").wait_for()
+        with server.connect_db() as db:
+            saved_delivery = db.execute(
+                "SELECT delivery_person, delivery_team FROM houses WHERE id = ?",
+                ("SUPERVISOR-OWN",),
+            ).fetchone()
+        self.assertEqual(saved_delivery["delivery_person"], "Karol")
+        self.assertEqual(saved_delivery["delivery_team"], "Team Lead One")
+        ewi_assignment = own_house.locator(".supervisor-ewi-assignment")
+        ewi_assignment.locator('select[name="teamlead_user_id"]').select_option(
+            str(teamlead_id)
+        )
+        ewi_assignment.get_by_role("button", name="Save EWI assignment").click()
+        self.page.get_by_text(
+            "SUPERVISOR-OWN assigned to Team Lead One for EWI work."
+        ).wait_for()
+        if self.page.locator("html").get_attribute("data-theme") != "dark":
+            self.page.locator("#theme-toggle").click()
+        self.page.wait_for_function(
+            """() => getComputedStyle(document.querySelector(
+              '#supervisor-house-list article[data-house-id="SUPERVISOR-OWN"] ' +
+              '.supervisor-ewi-assignment button'
+            )).backgroundColor === 'rgb(38, 58, 48)'"""
         )
         self.assertEqual(
-            own_house.get_by_role("button", name="Saved").count(),
-            1,
+            own_house.locator(".supervisor-ewi-assignment select").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(23, 35, 30)",
         )
         self.assertEqual(
-            self.page.locator("#supervisor-stat-unassigned").inner_text(),
-            "0",
+            own_house.locator(".supervisor-ewi-assignment button").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(38, 58, 48)",
         )
-        delivery_summary = self.page.locator("#supervisor-delivery-summary")
-        karol_summary = delivery_summary.locator(
-            ".supervisor-assignment-summary-row",
-            has_text="Karol",
-        )
-        self.assertIn("1 house", karol_summary.inner_text())
-        self.assertIn("SUPERVISOR-OWN", karol_summary.inner_text())
-        gary_summary = delivery_summary.locator(
-            ".supervisor-assignment-summary-row",
-            has_text="Gary Lowther",
-        )
-        self.assertIn("1 house", gary_summary.inner_text())
-        team_summary = self.page.locator("#supervisor-team-summary")
-        teamlead_summary = team_summary.locator(
-            ".supervisor-assignment-summary-row",
-            has_text="Team Lead One",
-        )
-        self.assertIn("2 houses", teamlead_summary.inner_text())
-        self.assertIn("SUPERVISOR-OWN-2", teamlead_summary.inner_text())
-        self.assertEqual(
-            team_summary.locator(".supervisor-assignment-summary-row").count(),
-            1,
+        self.assertLessEqual(
+            own_house.locator(".supervisor-ewi-assignment").evaluate(
+                "(element) => element.getBoundingClientRect().right"
+            ),
+            own_house.evaluate("(element) => element.getBoundingClientRect().right"),
         )
         self.page.set_viewport_size({"width": 390, "height": 844})
         self.assertLessEqual(
@@ -7066,13 +7803,75 @@ class NavigationBrowserTests(unittest.TestCase):
             0,
         )
 
-        with server.connect_db() as db:
-            saved = db.execute(
-                "SELECT delivery_person, delivery_team FROM houses "
-                "WHERE id = 'SUPERVISOR-OWN'"
-            ).fetchone()
-        self.assertEqual(saved["delivery_person"], "Karol")
-        self.assertEqual(saved["delivery_team"], "Team Lead One")
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        self.page.locator("#auth-username").fill("teamlead-one")
+        self.page.locator("#auth-pin").fill("678901")
+        self.page.locator("#auth-submit").click()
+        self.page.get_by_role("heading", name="Your EWI work").wait_for()
+        self.assertIn(
+            "teamlead-workspace-mode",
+            self.page.locator("body").get_attribute("class"),
+        )
+        self.assertTrue(self.page.locator("#teamlead-ewi-house-filters").is_visible())
+        self.assertEqual(
+            self.page.locator("#teamlead-ewi-all-count").inner_text(),
+            "2",
+        )
+        self.page.locator("#teamlead-ewi-crew > summary").click()
+        self.assertIn(
+            "Roster Worker One",
+            self.page.locator("#teamlead-ewi-crew-list").inner_text(),
+        )
+        self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
+        self.assertEqual(
+            self.page.locator("#teamlead-ewi-open-count").inner_text(),
+            "1",
+        )
+        self.page.locator("#teamlead-ewi-search").fill("SUPERVISOR-OWN")
+        self.page.wait_for_function(
+            "document.querySelectorAll('#teamlead-ewi-work-list article[data-house-id]').length === 2"
+        )
+        self.assertEqual(
+            self.page.locator("#teamlead-ewi-work-list article[data-house-id]").count(),
+            2,
+        )
+        self.page.locator("#teamlead-ewi-search").fill("")
+        teamlead_work_card = self.page.locator(
+            '#teamlead-ewi-work-list article[data-house-id="SUPERVISOR-OWN"]'
+        )
+        self.assertEqual(
+            teamlead_work_card.evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(32, 44, 41)",
+        )
+        self.assertEqual(
+            teamlead_work_card.locator(".teamlead-ewi-complete-button").evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(35, 133, 91)",
+        )
+        self.assertEqual(
+            self.page.locator("#teamlead-ewi-completed-count").inner_text(),
+            "1",
+        )
+        self.page.locator(
+            '#teamlead-ewi-work-list article[data-house-id="SUPERVISOR-OWN"] '
+            '[data-teamlead-ewi-complete]'
+        ).click()
+        self.page.get_by_text(
+            "EWI work for SUPERVISOR-OWN marked complete."
+        ).wait_for()
+        self.assertEqual(
+            self.page.locator("#teamlead-ewi-open-count").inner_text(),
+            "0",
+        )
+        self.assertEqual(
+            self.page.locator("#teamlead-ewi-completed-count").inner_text(),
+            "2",
+        )
         self.assertEqual(self.browser_errors, [])
 
 

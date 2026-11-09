@@ -577,18 +577,27 @@ body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-
 .plumbing-completion-meta small { color: #6b7b70; font-size: 9px; }
 .plumbing-completion-meta b,
 .plumbing-completion-meta time { color: #29483a; font-size: 11px; font-weight: 700; }
-body.plumbing-coordinator-mode { background: var(--canvas); }
-body.plumbing-supervisor-mode { background: var(--canvas); }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .sidebar { display: none; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .main-content { width: min(100%, 1240px); margin: 0 auto; padding: 0 34px 48px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .topbar { height: 74px; padding-top: 10px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .mobile-brand { display: none; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .page { padding-top: 30px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .page-heading { margin-bottom: 20px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .page-heading h1 { font-size: clamp(28px, 3.5vw, 36px); }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .page-subtitle { font-size: 13px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .overview-dashboard-summary { margin: 0 0 30px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(button, input, select):focus-visible { outline: 3px solid #77aa8b; outline-offset: 3px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) { background: var(--canvas); }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) :is(.sidebar, .workspace-nav) { display: none; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .main-content { width: min(100%, 1240px); margin: 0 auto; padding: 0 34px 48px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .topbar { height: 74px; padding-top: 10px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .mobile-brand { display: none; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .page { padding-top: 30px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .page-heading { margin-bottom: 20px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .page-heading h1 { font-size: clamp(28px, 3.5vw, 36px); }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .page-subtitle { font-size: 13px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .overview-dashboard-summary { margin: 0 0 30px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) :is(button, input, select):focus-visible { outline: 3px solid #77aa8b; outline-offset: 3px; }
+body.teamlead-workspace-mode #overview-work-summary { display: none; }
+body.teamlead-workspace-mode #teamlead-ewi-workload { gap: 16px; border: 0; margin: 0; padding: 0; background: transparent; }
+body.teamlead-workspace-mode .teamlead-ewi-greeting { margin-bottom: 0; }
+body.teamlead-workspace-mode .teamlead-ewi-heading { margin: 0; }
+body.teamlead-workspace-mode .teamlead-ewi-house-card { min-height: 112px; grid-template-columns: minmax(0, 1fr) minmax(180px, .7fr) minmax(185px, .7fr); gap: 18px; border-color: #e0e9e3; border-top: 3px solid #55a47a; border-radius: 14px; padding: 18px; box-shadow: 0 4px 16px #203a2b0a; }
+body.teamlead-workspace-mode .teamlead-ewi-house-card.is-complete { border-top-color: #55a47a; }
+body.teamlead-workspace-mode .teamlead-ewi-house-identity h3 { font-size: 14px; }
+body.teamlead-workspace-mode .teamlead-ewi-house-meta { align-content: center; }
+body.teamlead-workspace-mode .teamlead-ewi-complete-button { min-height: 44px; border-radius: 10px; font-size: 12px; }
+body.teamlead-workspace-mode .teamlead-ewi-complete-mark { justify-self: center; }
 @media (max-width: 520px) {
   .plumbing-supervisor-options { grid-template-columns: minmax(0, 1fr); }
   .plumbing-house-assignment .button:not(:disabled) { width: 100%; }
@@ -2287,10 +2296,30 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
 .pdf-annotator-text-panel .pdf-annotator-text-hint { flex: 1 1 100%; color: #718394; }
 .pdf-annotator-help { flex: 0 0 auto; margin: 0; padding: 7px 16px; color: #64746c; font-size: 11px; text-align: center; }
 .pdf-annotator-error { flex: 0 0 auto; margin: 0 14px 8px; border: 1px solid #f0c8c3; border-radius: 8px; padding: 8px 11px; background: #fff4f2; color: #9d3f36; font-size: 12px; }
-.pdf-annotator-viewport { display: flex; flex: 1 1 auto; min-height: 0; align-items: flex-start; justify-content: flex-start; overflow: auto; overscroll-behavior: contain; padding: 14px; background: #e9eef0; touch-action: pan-x pan-y; }
+.pdf-annotator-workspace { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.pdf-annotator-viewport { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; align-items: flex-start; justify-content: flex-start; overflow: auto; overscroll-behavior: contain; padding: 14px; background: #e9eef0; touch-action: pan-x pan-y; }
 .pdf-page-surface { position: relative; flex: 0 0 auto; margin: auto; background: #fff; box-shadow: 0 4px 18px #172d3a24; }
 .pdf-page-surface img { display: block; max-width: none; max-height: none; object-fit: contain; }
 #pdf-annotator-canvas { position: absolute; inset: 0 auto auto 0; display: block; touch-action: none; }
+.pdf-annotator-icon-palette { display: flex; flex: 0 0 280px; min-width: 0; flex-direction: column; gap: 12px; overflow: auto; border-left: 1px solid #e1e9e4; padding: 16px; background: #f7faf8; }
+.pdf-annotator-icon-palette[hidden] { display: none; }
+.pdf-annotator-icon-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.pdf-annotator-icon-heading h3 { margin: 3px 0 5px; color: #233e30; font-size: 15px; }
+.pdf-annotator-icon-heading p { margin: 0; color: #66776e; font-size: 11px; line-height: 1.45; }
+.pdf-annotator-ventilation-icons-count { flex: 0 0 auto; border-radius: 999px; padding: 5px 8px; background: #e8f4ec; color: #26734d; font-size: 10px; font-weight: 700; }
+.pdf-annotator-icon-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; }
+.pdf-annotator-icon-card { display: grid; min-width: 0; min-height: 104px; grid-template-rows: 64px auto; justify-items: center; gap: 5px; border: 1px solid #dfe8e2; border-radius: 11px; padding: 7px; background: #fff; color: #31483b; text-align: center; cursor: grab; }
+.pdf-annotator-icon-card:hover, .pdf-annotator-icon-card.active { border-color: #3a9a69; background: #eef8f1; box-shadow: 0 0 0 2px #3a9a691c; }
+.pdf-annotator-icon-card:active { cursor: grabbing; }
+.pdf-annotator-icon-card:focus-visible { outline: 3px solid #42a77f; outline-offset: 2px; }
+.pdf-annotator-icon-card img { width: 100%; height: 64px; object-fit: contain; pointer-events: none; }
+.pdf-annotator-icon-card span { align-self: center; font-size: 10px; font-weight: 650; line-height: 1.3; }
+.pdf-annotator-icon-edit { display: grid; gap: 8px; border: 1px solid #cfe2d5; border-radius: 12px; padding: 11px; background: #edf7f0; color: #345241; }
+.pdf-annotator-icon-edit[hidden] { display: none; }
+.pdf-annotator-icon-edit strong { color: #1e5838; font-size: 12px; }
+.pdf-annotator-icon-edit > span { color: #66776e; font-size: 10px; line-height: 1.45; }
+.pdf-annotator-icon-edit-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.pdf-annotator-icon-edit-actions .button { min-height: 36px; padding: 0 7px; font-size: 10px; }
 @media(max-width:700px) {
   .house-document-entry { grid-template-columns: minmax(0, 1fr) auto; }
   .house-document-link { grid-column: 1 / -1; }
@@ -2303,6 +2332,20 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
   .saved-pdf-actions { grid-column: 2; justify-content: flex-start; }
   .saved-pdf-actions .button { flex: 0 1 auto; }
   .pdf-annotator-dialog { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+  .pdf-annotator-workspace { flex-direction: column; }
+  .pdf-annotator-icon-palette { flex: 0 0 auto; max-height: 230px; gap: 8px; border-top: 1px solid #e1e9e4; border-left: 0; padding: 8px 10px; }
+  .pdf-annotator-icon-heading { align-items: center; }
+  .pdf-annotator-icon-heading h3 { display: inline; margin: 0 6px 0 0; font-size: 12px; }
+  .pdf-annotator-icon-heading p { display: inline; font-size: 10px; }
+  .pdf-annotator-icon-heading .pdf-annotator-page-caption { display: none; }
+  .pdf-annotator-icon-list { display: flex; flex: 0 0 auto; gap: 7px; overflow-x: auto; padding: 2px 2px 5px; }
+  .pdf-annotator-icon-card { flex: 0 0 92px; min-height: 78px; grid-template-rows: 43px auto; padding: 5px; }
+  .pdf-annotator-icon-card img { height: 43px; }
+  .pdf-annotator-icon-card span { font-size: 9px; }
+  .pdf-annotator-icon-edit { grid-template-columns: minmax(100px, 1fr) 2fr; align-items: center; gap: 6px; padding: 7px; }
+  .pdf-annotator-icon-edit > span { display: none; }
+  .pdf-annotator-icon-edit-actions { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .pdf-annotator-icon-edit-actions .button { min-height: 34px; font-size: 9px; }
   .pdf-annotator-header { padding: 9px 12px; }
   .pdf-annotator-toolbar { justify-content: flex-start; gap: 6px; padding: 8px; }
   .pdf-tool-button { min-height: 44px; padding: 0 9px; font-size: 11px; }
@@ -2370,6 +2413,16 @@ html[data-theme="dark"] .pdf-annotator-error { border-color: #794944; background
 html[data-theme="dark"] .pdf-annotator-viewport { background-color: #101815; background-image: radial-gradient(#34473d 0.8px, transparent 0.8px); background-size: 18px 18px; }
 html[data-theme="dark"] .pdf-page-surface { background: #fff; box-shadow: 0 8px 28px #0009, 0 0 0 1px #52675b; }
 html[data-theme="dark"] .pdf-annotator-toolbar button:focus-visible { outline-color: #8bd5a7; }
+html[data-theme="dark"] .pdf-annotator-icon-palette { border-color: #35483f; background: #1b2823; }
+html[data-theme="dark"] .pdf-annotator-icon-heading h3 { color: #eaf4ef; }
+html[data-theme="dark"] .pdf-annotator-icon-heading p,
+html[data-theme="dark"] .pdf-annotator-icon-edit > span { color: #a7b8ae; }
+html[data-theme="dark"] .pdf-annotator-ventilation-icons-count { background: #294536; color: #b7e7c7; }
+html[data-theme="dark"] .pdf-annotator-icon-card { border-color: #42584b; background: #202c27; color: #e0ebe4; }
+html[data-theme="dark"] .pdf-annotator-icon-card:hover,
+html[data-theme="dark"] .pdf-annotator-icon-card.active { border-color: #6a997a; background: #293d31; }
+html[data-theme="dark"] .pdf-annotator-icon-edit { border-color: #496555; background: #20352b; color: #d3eadb; }
+html[data-theme="dark"] .pdf-annotator-icon-edit strong { color: #b7e7c7; }
 
 .house-team-filter-label { font-weight: 700; }
 .house-team-filter-label.filter-status-active { color: #176b4a; }
@@ -3932,7 +3985,7 @@ body.ventilation-mode .page-heading h1 { font-size: clamp(28px, 3.5vw, 36px); }
 body.ventilation-mode .page-subtitle { font-size: 13px; }
 body.ventilation-mode .overview-dashboard-summary { margin: 0 0 30px; }
 body.ventilation-mode .ventilation-workload { margin: 0 0 30px; }
-body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-coordinator-workload { margin: 0 0 30px; }
+body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .plumbing-coordinator-workload { margin: 0 0 30px; }
 .ventilation-workload-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
 .ventilation-workload-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .ventilation-workload-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 9px; }
@@ -3971,6 +4024,9 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .ventilation-house-card:hover { transform: translateY(-2px); border-color: #c9ddd0; box-shadow: 0 10px 24px #203a2b12; }
 .ventilation-house-top { display: flex; min-width: 0; align-items: center; gap: 13px; }
 .ventilation-house-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #edf5ef; color: #3a7d5f; font-size: 21px; }
+.ventilation-house-icon svg { display: block; width: 25px; height: 25px; }
+.plumbing-trade-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid #dcebe0; border-radius: 12px; background: #edf5ef; color: #32734e; }
+.plumbing-trade-icon svg { display: block; width: 25px; height: 25px; }
 .ventilation-house-identity { min-width: 0; flex: 1; }
 .ventilation-house-identity h3 { overflow-wrap: anywhere; margin: 0; color: #1d3729; font: 700 17px Manrope, sans-serif; }
 .ventilation-house-identity p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -3990,10 +4046,15 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .vent-survey-pdfs-count { display: grid; min-width: 25px; height: 25px; place-items: center; border-radius: 50%; padding: 0 6px; background: #dcefe1; color: #28643c; font-size: 11px; font-weight: 800; }
 .vent-survey-pdfs-arrow { color: #63816b; font-size: 23px; line-height: 1; }
 .vent-survey-pdfs-dialog { width: min(720px, calc(100% - 28px)); }
+.vent-survey-pdfs-dialog.has-preview { width: min(1200px, calc(100vw - 28px)); height: min(900px, calc(100dvh - 32px)); overflow: hidden; }
+.vent-survey-pdfs-dialog.has-preview .dialog-content { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; padding: 18px; }
 .vent-survey-pdfs-dialog .dialog-heading { margin-bottom: 12px; }
+.vent-survey-pdfs-dialog.has-preview .dialog-heading,
+.vent-survey-pdfs-dialog.has-preview .dialog-actions { flex: 0 0 auto; }
 .vent-survey-pdfs-dialog .dialog-heading h2 { overflow-wrap: anywhere; }
 .vent-survey-pdfs-dialog .dialog-heading .page-subtitle { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
 .vent-survey-pdfs-list { display: grid; gap: 10px; }
+.vent-survey-pdfs-dialog.has-preview .vent-survey-pdfs-list { flex: 0 1 auto; max-height: 150px; overflow: auto; }
 .vent-survey-pdf-entry { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; border: 1px solid #e0e9e2; border-radius: 12px; padding: 12px; background: #fbfdfb; }
 .vent-survey-pdf-entry-icon { display: grid; width: 38px; height: 42px; place-items: center; border-radius: 9px; background: #eaf3ec; color: #447653; font-size: 9px; font-weight: 850; }
 .vent-survey-pdf-entry-copy { display: grid; min-width: 0; gap: 5px; }
@@ -4005,10 +4066,63 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .vent-survey-pdfs-error { border-radius: 10px; padding: 14px; background: #f5f8f5; color: #64746a; font-size: 12px; line-height: 1.5; }
 .vent-survey-pdfs-error { background: #fff3f1; color: #a13d31; }
 .vent-survey-pdfs-viewer { margin-top: 14px; border: 1px solid #dce7df; border-radius: 12px; overflow: hidden; background: #f2f5f3; }
+.vent-survey-pdfs-dialog.has-preview .vent-survey-pdfs-viewer { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
 .vent-survey-pdfs-viewer[hidden] { display: none; }
-.vent-survey-pdfs-viewer-heading { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 11px; background: #f8fbf8; }
+.vent-survey-pdfs-viewer-heading { display: flex; min-height: 48px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 11px; background: #f8fbf8; }
 .vent-survey-pdfs-viewer-heading strong { min-width: 0; overflow: hidden; color: #344c3b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.vent-survey-pdfs-viewer iframe { display: block; width: 100%; height: min(65vh, 680px); border: 0; background: #e8ece9; }
+.vent-survey-pdfs-viewer-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.vent-survey-pdfs-viewer-actions .button { min-height: 36px; padding: 5px 10px; font-size: 11px; }
+.vent-survey-pdfs-viewer-content { display: grid; min-height: 0; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) 300px; }
+.vent-survey-pdfs-viewer iframe { display: block; width: 100%; height: 100%; min-height: 0; border: 0; background: #e8ece9; }
+.vent-survey-pdfs-icon-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; border-left: 1px solid #dce5df; background: #f7faf8; }
+.vent-survey-pdfs-icon-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 12px 10px; }
+.vent-survey-pdfs-icon-heading h3 { margin: 3px 0 0; color: #234532; font-size: 14px; }
+.vent-survey-pdfs-icon-eyebrow { color: #718179; font-size: 9px; font-weight: 750; letter-spacing: .09em; }
+.vent-survey-pdfs-icon-count { flex: 0 0 auto; border: 1px solid #d4e5da; border-radius: 999px; padding: 4px 7px; background: #edf6f0; color: #426d51; font-size: 10px; font-weight: 700; }
+.vent-survey-pdfs-icon-list { display: grid; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 9px; overflow: auto; padding: 0 10px 12px; }
+.vent-survey-pdfs-icon-card { min-width: 0; margin: 0; overflow: hidden; border: 1px solid #e0e9e3; border-radius: 10px; background: #fff; box-shadow: 0 2px 6px #193a2b0a; }
+.vent-survey-pdfs-icon-card img { display: block; width: 100%; height: 92px; object-fit: contain; background: #fff; }
+.vent-survey-pdfs-icon-card figcaption { min-height: 35px; border-top: 1px solid #edf1ee; padding: 6px 7px; color: #354d3e; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .vent-survey-pdfs-dialog.has-preview { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
+  .vent-survey-pdfs-dialog.has-preview .dialog-content { padding: 12px; }
+  .vent-survey-pdfs-dialog.has-preview .dialog-heading { gap: 8px; margin-bottom: 8px; }
+  .vent-survey-pdfs-dialog.has-preview .dialog-heading h2 { font-size: 17px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdfs-list { max-height: min(18dvh, 120px); }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry { grid-template-columns: 32px minmax(0, 1fr); gap: 6px 9px; padding: 8px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry-icon { width: 32px; height: 36px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry-actions .button { min-height: 34px; padding: 5px 8px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdfs-viewer { margin-top: 8px; }
+  .vent-survey-pdfs-viewer-content { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(118px, min(24dvh, 156px)); }
+  .vent-survey-pdfs-viewer iframe { height: 100%; min-height: 0; }
+  .vent-survey-pdfs-icon-panel { min-height: 0; max-height: none; border-top: 1px solid #dce5df; border-left: 0; }
+  .vent-survey-pdfs-icon-heading { padding: 6px 10px 4px; }
+  .vent-survey-pdfs-icon-heading h3 { font-size: 12px; }
+  .vent-survey-pdfs-icon-list { grid-auto-columns: 124px; grid-auto-flow: column; grid-template-columns: none; grid-template-rows: 1fr; gap: 7px; overflow-x: auto; overflow-y: hidden; padding: 0 9px 7px; }
+  .vent-survey-pdfs-icon-card { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+  .vent-survey-pdfs-icon-card img { height: 100%; min-height: 0; }
+  .vent-survey-pdfs-icon-card figcaption { min-height: 28px; padding: 4px 6px; font-size: 9px; }
+  .vent-survey-pdfs-dialog.has-preview .dialog-actions { margin-top: 8px; padding-top: 8px; }
+}
+@media (max-width: 700px) and (max-height: 600px) {
+  .vent-survey-pdfs-dialog.has-preview .dialog-heading { margin-bottom: 5px; }
+  .vent-survey-pdfs-dialog.has-preview .dialog-heading h2 { font-size: 15px; }
+  .vent-survey-pdfs-dialog.has-preview .dialog-heading .page-subtitle { margin-top: 2px; font-size: 10px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdfs-list { min-height: 0; max-height: 68px; gap: 5px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry { gap: 4px 8px; padding: 6px 8px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry-copy { gap: 2px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry-copy span { font-size: 9px; }
+  .vent-survey-pdfs-dialog.has-preview .vent-survey-pdf-entry-actions .button { min-height: 30px; padding: 3px 8px; }
+  .vent-survey-pdfs-viewer-heading { min-height: 40px; padding: 5px 8px; }
+  .vent-survey-pdfs-viewer-actions .button { min-height: 30px; padding: 3px 7px; font-size: 10px; }
+  .vent-survey-pdfs-viewer-content { grid-template-rows: minmax(0, 1fr) 92px; }
+  .vent-survey-pdfs-icon-heading { padding-top: 4px; padding-bottom: 2px; }
+  .vent-survey-pdfs-icon-heading h3 { margin-top: 1px; }
+  .vent-survey-pdfs-icon-eyebrow { font-size: 8px; }
+  .vent-survey-pdfs-icon-list { gap: 5px; padding-bottom: 5px; }
+  .vent-survey-pdfs-icon-card figcaption { min-height: 24px; padding: 3px 5px; font-size: 8px; }
+  .vent-survey-pdfs-dialog.has-preview .dialog-actions { margin-top: 5px; padding-top: 5px; }
+}
 .vent-survey-pdf-empty { display: grid; justify-items: center; gap: 7px; border: 1px dashed #cbd9cf; border-radius: 12px; padding: 27px 18px; background: #f8fbf8; text-align: center; }
 .vent-survey-pdf-empty > span { display: grid; width: 42px; height: 46px; place-items: center; border-radius: 10px; background: #eaf3ec; color: #447653; font-size: 10px; font-weight: 850; }
 .vent-survey-pdf-empty strong { color: #344c3b; font-size: 12px; }
@@ -4054,6 +4168,40 @@ body.supervisor-mode .house-search-box input { height: 34px; font-size: 12px; }
 .supervisor-house-assignment button:disabled { border-color: #dce5df; background: #e9eeeb; color: #829087; cursor: not-allowed; transform: none; }
 .supervisor-house-assignment button.is-saved { border-color: #b7ddc5; background: #e7f6ec; color: #176b3a; }
 .supervisor-assignment-help { grid-column: 1 / -1; margin: 0; border-left: 3px solid #d49a46; padding: 7px 9px; background: #fff8eb; color: #765814; font-size: 10px; line-height: 1.45; }
+.supervisor-ewi-seai { display: grid; gap: 9px; border: 1px solid #dce9df; border-radius: 11px; padding: 12px; background: linear-gradient(135deg, #f8fcf8, #f0f7f1); }
+.supervisor-ewi-seai-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.supervisor-ewi-seai-heading > span { color: #688071; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
+.supervisor-ewi-seai-heading > strong { border-radius: 20px; padding: 5px 9px; background: #e1f1e5; color: #286343; font-size: 11px; }
+.supervisor-ewi-seai-facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.supervisor-ewi-seai-facts > span { display: grid; min-width: 90px; gap: 3px; }
+.supervisor-ewi-seai-facts small { color: #718078; font-size: 9px; }
+.supervisor-ewi-seai-facts strong { overflow-wrap: anywhere; color: #30493a; font-size: 11px; }
+.supervisor-ewi-seai-facts .supervisor-ewi-seai-measure { flex: 1 1 100%; }
+.supervisor-ewi-delivery-assignment { margin-top: 0; }
+.supervisor-ewi-delivery-assignment .supervisor-assignment-heading { align-items: center; }
+.supervisor-ewi-delivery-assignment button { justify-self: stretch; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions { grid-column: 1; grid-row: 3; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.supervisor-ewi-card-actions .button { min-height: 38px; border-radius: 9px; font-size: 11px; }
+.ewi-house-pdf-group { margin: 0 0 16px; }
+.ewi-house-pdf-group:last-child { margin-bottom: 0; }
+.ewi-house-pdf-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: #29483a; font-size: 12px; }
+.ewi-house-pdf-group h3 span { border-radius: 12px; padding: 2px 7px; background: #e7f5eb; color: #26734d; font-size: 10px; }
+.ewi-house-pdf-group > p { margin: 0; border: 1px dashed #dce6df; border-radius: 8px; padding: 10px; color: #75817b; font-size: 10px; }
+.ewi-house-pdf-group ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.ewi-house-pdf-group li { display: flex; align-items: center; gap: 9px; min-width: 0; border: 1px solid #e3ebe5; border-radius: 9px; padding: 9px; background: #fbfdfb; }
+.ewi-house-pdf-group .seai-document-name { flex: 1 1 auto; }
+.ewi-house-pdf-group .seai-document-name strong { overflow-wrap: anywhere; }
+.ewi-house-pdf-group .button { flex: 0 0 auto; }
+.supervisor-ewi-assignment { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; border-top: 1px solid #edf1ee; padding-top: 13px; }
+.supervisor-ewi-assignment-heading { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.supervisor-ewi-assignment-heading h3 { margin: 0; color: #29483a; font-size: 12px; }
+.supervisor-ewi-assignment-heading p { margin: 4px 0 0; color: #75817b; font-size: 10px; line-height: 1.45; }
+.supervisor-ewi-assignment-status { flex: 0 0 auto; border-radius: 20px; padding: 5px 9px; background: #fff3df; color: #91601e; font-size: 9px; font-weight: 700; }
+.supervisor-ewi-assignment-status.is-assigned { background: #e7f5eb; color: #26734d; }
+.supervisor-ewi-assignment label { display: grid; min-width: 0; gap: 6px; color: #64746a; font-size: 10px; font-weight: 650; }
+.supervisor-ewi-assignment select { width: 100%; min-width: 0; min-height: 42px; border: 1px solid #dbe4de; border-radius: 8px; padding: 0 34px 0 11px; background: #fff; color: #263c31; font-size: 11px; }
+.supervisor-ewi-assignment button { min-width: 154px; }
+.supervisor-ewi-assignment button:disabled { border-color: #dce5df; background: #e9eeeb; color: #829087; cursor: not-allowed; transform: none; }
 .supervisor-shared-seai { grid-column: 1 / -1; min-width: 0; padding: 16px; }
 .supervisor-shared-seai-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; }
 .supervisor-shared-seai-heading h2 { margin: 0; color: #29483a; font-size: 14px; }
@@ -4081,6 +4229,140 @@ body.supervisor-mode .house-search-box input { height: 34px; font-size: 12px; }
 .supervisor-assignment-summary-houses { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .supervisor-assignment-summary-houses span { border: 1px solid #e3ebe5; border-radius: 5px; padding: 3px 6px; background: #fff; color: #617168; font-size: 9px; }
 .supervisor-assignment-summary-empty { margin: 0; border: 1px dashed #dce6df; border-radius: 8px; padding: 14px; color: #75817b; font-size: 10px; text-align: center; }
+.supervisor-workspace-mode #supervisor-workload { margin-top: 4px; }
+.supervisor-workspace-mode #supervisor-workload .ventilation-workload-heading { align-items: center; margin-bottom: 18px; }
+.supervisor-workspace-mode #supervisor-workload .plumbing-workload-intro { max-width: 580px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.supervisor-workload-stats { justify-content: flex-start; gap: 10px; margin: 0 0 16px; }
+.supervisor-workload-stats > div { min-width: 140px; border: 1px solid #e1ebe4; border-radius: 11px; padding: 11px 16px; background: #fff; }
+.supervisor-workload-stats > div:first-child { border-left: 1px solid #e1ebe4; }
+.supervisor-workload-stats strong { color: #26734d; font-size: 19px; }
+.supervisor-workload-stats span { color: #75817b; font-size: 10px; }
+.supervisor-workspace-mode #supervisor-house-list { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-card { display: grid; min-height: 0; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: start; column-gap: 22px; row-gap: 12px; padding: 20px; }
+.supervisor-workspace-mode #supervisor-house-list .house-top { grid-column: 1; grid-row: 1; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment { grid-column: 2; grid-row: 1 / span 2; align-self: stretch; align-content: center; margin: 0; border-top: 0; border-left: 1px solid #e8eee9; padding: 0 0 0 22px; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment button { grid-column: 1 / -1; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-card { gap: 0; border-radius: 14px; padding: 14px 16px 16px; }
+.supervisor-workspace-mode #supervisor-house-list .house-top { align-items: center; border-bottom: 1px solid #e3eae5; padding-bottom: 10px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: center; gap: 20px; padding: 16px 18px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-top { grid-column: 1; grid-row: 1; border-bottom: 0; padding-bottom: 0; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-seai { grid-column: 1; grid-row: 2; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment { grid-column: 2; grid-row: 1; align-self: stretch; align-content: center; gap: 11px; margin: 0; border: 1px solid #dfe9e2; border-radius: 12px; padding: 13px 14px; background: #f7faf7; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment .supervisor-assignment-heading h3 { font-size: 13px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment .supervisor-assignment-heading p { font-size: 11px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment label { font-size: 11px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment select { min-height: 44px; font-size: 13px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment button { min-height: 44px; border-radius: 9px; font-size: 12px; font-weight: 700; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment { grid-column: 2; grid-row: 2; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment { grid-column: 2; grid-row: 2; align-self: stretch; align-content: center; gap: 11px; margin: 0; border: 1px solid #dfe9e2; border-radius: 12px; padding: 13px 14px; background: #f7faf7; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment-heading { align-items: center; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment-heading h3 { font-size: 13px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment-heading p { font-size: 11px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment label { font-size: 11px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment select { min-height: 44px; font-size: 13px; }
+.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment button { min-height: 44px; border-radius: 9px; font-size: 12px; font-weight: 700; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment { border: 1px solid #e3eae5; border-radius: 12px; padding: 12px; background: #f6faf7; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-assignment-heading { align-items: center; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-assignment-heading p { display: none; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-assignment-heading h3 { font-size: 13px; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment label { font-size: 11px; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment select { min-height: 44px; font-size: 13px; }
+.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment button[type="submit"] { width: 100%; justify-self: stretch; min-height: 46px; border-radius: 11px; font-size: 14px; font-weight: 750; }
+.supervisor-team-rosters { margin: 0 0 18px; border: 1px solid #dce8df; border-radius: 16px; padding: 16px; background: linear-gradient(125deg, #f8fbf8, #fff 72%); }
+.supervisor-team-rosters-heading { display: flex; min-width: 0; list-style: none; align-items: center; gap: 11px; margin: -4px; border-radius: 10px; padding: 4px; cursor: pointer; user-select: none; }
+.supervisor-team-rosters-heading::-webkit-details-marker { display: none; }
+.supervisor-team-rosters-heading::after { width: 9px; height: 9px; flex: 0 0 auto; margin-left: 4px; border-right: 2px solid #73877a; border-bottom: 2px solid #73877a; content: ""; transform: rotate(45deg) translateY(-2px); transition: transform .18s ease; }
+.supervisor-team-rosters[open] .supervisor-team-rosters-heading::after { transform: rotate(225deg) translate(-2px, -1px); }
+.supervisor-team-rosters-heading:focus-visible { outline: 2px solid #4a9b70; outline-offset: 3px; }
+.supervisor-team-rosters-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #e2f0e7; color: #28714c; }
+.supervisor-team-rosters-icon svg { width: 23px; height: 23px; }
+.supervisor-team-rosters-copy { display: grid; min-width: 0; flex: 1 1 auto; gap: 4px; }
+.supervisor-team-rosters-copy strong { color: #29483a; font-size: 14px; }
+.supervisor-team-rosters-copy small { color: #75817b; font-size: 10px; line-height: 1.5; }
+.supervisor-team-rosters-totals { display: flex; flex: 0 0 auto; gap: 7px; }
+.supervisor-team-rosters-totals > span { display: grid; min-width: 76px; gap: 2px; justify-items: center; border: 1px solid #e1ebe4; border-radius: 9px; padding: 6px 9px; background: #fff; color: #75817b; font-size: 9px; white-space: nowrap; }
+.supervisor-team-rosters-totals > span > span { color: inherit; font-size: inherit; }
+.supervisor-team-rosters-totals strong { color: #26734d; font-size: 15px; line-height: 1.1; }
+.supervisor-team-roster-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr)); gap: 12px; }
+.supervisor-team-rosters[open] .supervisor-team-roster-list { margin-top: 12px; }
+.supervisor-team-roster-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid #dfe9e2; border-top: 3px solid #55a47a; border-radius: 14px; padding: 16px; background: linear-gradient(155deg, #fff 0%, #fbfdfb 100%); box-shadow: 0 3px 12px #193b240c; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.supervisor-team-roster-card:hover { transform: translateY(-2px); border-color: #b9cfc1; border-top-color: #3d9665; box-shadow: 0 8px 20px #193b2416; }
+.supervisor-team-roster-card-heading { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.supervisor-teamlead-avatar, .supervisor-roster-member-avatar { display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #e5f1e9; color: #28714c; font-weight: 750; }
+.supervisor-teamlead-avatar { width: 46px; height: 46px; border: 1px solid #d4e7da; background: linear-gradient(145deg, #eff8f1, #dceee2); font-size: 13px; box-shadow: inset 0 1px #fff; }
+.supervisor-team-roster-identity { min-width: 0; }
+.supervisor-team-roster-card-heading h3 { margin: 4px 0 0; color: #203d2d; font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+.supervisor-team-roster-role { display: inline-flex; align-items: center; border-radius: 20px; padding: 3px 7px; background: #edf5ef; color: #39734e; font-size: 8px; font-weight: 800; letter-spacing: .09em; }
+.supervisor-team-roster-team-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; border-top: 1px solid #e8eee9; padding-top: 12px; }
+.supervisor-team-roster-team { max-width: 65%; overflow: hidden; border: 1px solid #dcebe0; border-radius: 20px; padding: 6px 10px; background: #edf6ef; color: #345f41; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.supervisor-team-roster-team.is-unspecified { background: #f3f5f3; color: #75817b; font-weight: 500; }
+.supervisor-team-roster-members-heading { flex: 0 0 auto; border: 1px solid #e1e9e3; border-radius: 20px; padding: 5px 9px; background: #f7faf7; color: #586b5e; font-size: 9px; font-weight: 700; }
+.supervisor-team-workload { display: grid; gap: 9px; margin-top: 13px; border-top: 1px solid #e8eee9; padding-top: 12px; }
+.supervisor-team-workload > strong { color: #324b3a; font-size: 11px; }
+.supervisor-team-workload-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.supervisor-team-workload-counts > span { display: flex; min-width: 0; min-height: 58px; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #e4ebe6; border-radius: 10px; padding: 9px 11px; background: #f8fbf8; color: #596c60; font-size: 10px; font-weight: 650; }
+.supervisor-team-workload-counts > span.is-open { border-color: #d7eadd; background: linear-gradient(145deg, #f3faf4, #edf6ef); }
+.supervisor-team-workload-counts > span.is-completed { border-color: #dce7ed; background: linear-gradient(145deg, #f5f9fb, #eff5f8); }
+.supervisor-team-workload-counts > span > strong { color: #26734d; font-size: 20px; line-height: 1; font-variant-numeric: tabular-nums; }
+.supervisor-team-workload-counts > span.is-completed > strong { color: #426d83; }
+.supervisor-team-workload > small { color: #66776c; font-size: 10px; line-height: 1.5; }
+.supervisor-team-roster-members { display: grid; gap: 7px; margin: 11px 0 0; padding: 0; list-style: none; }
+.supervisor-team-roster-members li { display: flex; min-width: 0; min-height: 39px; align-items: center; gap: 9px; border: 1px solid #e8eee9; border-radius: 9px; padding: 6px 9px; background: #fbfdfb; color: #344b3b; font-size: 11px; font-weight: 550; overflow-wrap: anywhere; }
+.supervisor-roster-member-avatar { width: 28px; height: 28px; border: 1px solid #e4ece6; background: #f0f5f1; color: #536b5b; font-size: 9px; }
+.supervisor-team-roster-empty { display: flex; align-items: center; gap: 9px; margin-top: 11px; border: 1px dashed #dce6df; border-radius: 10px; padding: 11px; color: #65756a; }
+.supervisor-team-roster-empty > span { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #edf5ef; color: #26734d; font-size: 15px; }
+.supervisor-team-roster-empty p { margin: 0; font-size: 10px; line-height: 1.45; }
+.supervisor-team-rosters-empty { display: flex; align-items: center; gap: 13px; margin: 0; border: 1px dashed #d3e2d7; border-radius: 12px; padding: 18px; background: #f8fbf8; }
+.supervisor-team-rosters-empty-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #e8f3eb; color: #28714c; font-size: 20px; }
+.supervisor-team-rosters-empty strong { color: #29483a; font-size: 11px; }
+.supervisor-team-rosters-empty p { margin: 4px 0 0; color: #75817b; font-size: 10px; line-height: 1.5; }
+.teamlead-ewi-workload { display: grid; gap: 14px; margin: 0 0 24px; border: 1px solid #dce8df; border-radius: 16px; padding: 18px; background: linear-gradient(125deg, #f8fbf8, #fff 72%); }
+.teamlead-ewi-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.teamlead-ewi-eyebrow { color: #668271; font-size: 9px; font-weight: 800; letter-spacing: .1em; }
+.teamlead-ewi-heading h2 { margin: 4px 0 0; color: #29483a; font: 700 18px Manrope, sans-serif; }
+.teamlead-ewi-heading p { margin: 5px 0 0; color: #75817b; font-size: 11px; }
+.teamlead-ewi-totals { display: flex; gap: 8px; }
+.teamlead-ewi-totals > span { display: grid; min-width: 84px; gap: 3px; justify-items: center; border: 1px solid #e1ebe4; border-radius: 10px; padding: 8px 11px; background: #fff; color: #75817b; font-size: 9px; }
+.teamlead-ewi-totals strong { color: #26734d; font-size: 16px; line-height: 1; }
+.teamlead-ewi-work-list { display: grid; gap: 9px; }
+.teamlead-ewi-house-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .7fr) auto; align-items: center; gap: 14px; border: 1px solid #e1e9e3; border-radius: 12px; padding: 12px 14px; background: #fff; }
+.teamlead-ewi-house-card.is-complete { border-color: #cce5d3; }
+.teamlead-ewi-house-identity { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.teamlead-ewi-house-icon { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: #edf5ef; color: #32734e; font-size: 20px; }
+.teamlead-ewi-house-identity h3 { margin: 0; color: #29483a; font-size: 12px; overflow-wrap: anywhere; }
+.teamlead-ewi-house-identity p { margin: 3px 0 0; color: #75817b; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.teamlead-ewi-house-meta { display: grid; justify-items: start; gap: 4px; }
+.teamlead-ewi-status { border-radius: 20px; padding: 5px 8px; background: #fff3df; color: #91601e; font-size: 9px; font-weight: 750; }
+.teamlead-ewi-status.is-complete { background: #e7f5eb; color: #26734d; }
+.teamlead-ewi-house-meta small { color: #75817b; font-size: 9px; }
+.teamlead-ewi-complete-button { min-height: 38px; font-size: 10px; }
+.teamlead-ewi-complete-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #e7f5eb; color: #26734d; font-size: 17px; font-weight: 800; }
+.teamlead-ewi-empty { display: grid; min-height: 145px; justify-items: center; align-content: center; border: 1px dashed #d3e2d7; border-radius: 12px; padding: 20px; background: #fbfdfb; text-align: center; }
+.teamlead-ewi-empty > span { display: grid; width: 38px; height: 38px; place-items: center; margin-bottom: 8px; border-radius: 11px; background: #e8f3eb; color: #28714c; font-size: 20px; }
+.teamlead-ewi-empty strong { color: #29483a; font-size: 12px; }
+.teamlead-ewi-empty p { margin: 5px 0 0; color: #75817b; font-size: 10px; }
+@media (max-width: 620px) {
+  .supervisor-team-rosters-heading { align-items: flex-start; flex-wrap: wrap; }
+  .supervisor-team-rosters-icon { width: 36px; height: 36px; border-radius: 10px; font-size: 20px; }
+  .supervisor-team-rosters-totals { width: 100%; padding-left: 49px; }
+  .supervisor-team-rosters-totals > span { min-width: 0; flex: 1 1 0; }
+  .supervisor-workspace-mode #supervisor-house-list .supervisor-house-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+  .supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment { width: 100%; border: 0; border-top: 1px solid #e8eee9; border-radius: 0; padding: 14px 0 0; background: transparent; }
+  .supervisor-ewi-assignment { grid-template-columns: minmax(0, 1fr); }
+  .supervisor-ewi-assignment button { width: 100%; }
+  .teamlead-ewi-heading { align-items: flex-start; flex-direction: column; }
+  .teamlead-ewi-heading .ventilation-workload-actions { width: 100%; }
+  .teamlead-ewi-heading .ventilation-house-search { width: 100%; }
+  .teamlead-ewi-totals { width: 100%; }
+  .teamlead-ewi-totals > span { min-width: 0; flex: 1; }
+  .teamlead-ewi-house-card { grid-template-columns: minmax(0, 1fr); }
+  .teamlead-ewi-complete-button { width: 100%; }
+}
+@media (max-width: 760px) {
+  body.teamlead-workspace-mode .teamlead-ewi-house-card { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  body.teamlead-workspace-mode .teamlead-ewi-house-meta { padding-left: 49px; }
+  body.teamlead-workspace-mode .teamlead-ewi-complete-button { width: 100%; }
+}
 .surveyor-dashboard-message { display: flex; align-items: center; gap: 14px; }
 .surveyor-dashboard-icon { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border-radius: 14px; background: #e7f4ec; color: #26734d; font-size: 25px; }
 .surveyor-dashboard-message strong { display: block; color: #1d3729; font: 700 15px Manrope, sans-serif; }
@@ -4161,15 +4443,15 @@ body.surveyor-mode :is(button, input, a):focus-visible { outline: 3px solid #77a
   body.surveyor-mode .surveyor-dashboard-summary { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 23px; padding: 17px; }
   body.supervisor-mode .surveyor-dashboard-summary { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 23px; padding: 17px; }
   body.ventilation-mode .ventilation-dashboard-summary { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 23px; padding: 17px; }
-  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-dashboard-summary { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 23px; padding: 17px; }
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-dashboard-summary { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 23px; padding: 17px; }
   body.ventilation-mode .ventilation-workload-heading { align-items: flex-start; flex-direction: column; }
   body.ventilation-mode .ventilation-workload-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   body.ventilation-mode .ventilation-house-search { width: auto; flex: 1; }
   body.ventilation-mode .ventilation-house-list { grid-template-columns: minmax(0, 1fr); }
-  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode) .ventilation-workload-heading { align-items: flex-start; flex-direction: column; }
-  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode) .ventilation-workload-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
-  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode) .ventilation-house-search { width: auto; flex: 1; }
-  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode) .plumbing-house-list { grid-template-columns: minmax(0, 1fr); }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-workload-heading { align-items: flex-start; flex-direction: column; }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-workload-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-house-search { width: auto; flex: 1; }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .plumbing-house-list { grid-template-columns: minmax(0, 1fr); }
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-card { min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 14px; padding: 16px; }
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-top,
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-work-detail,
@@ -4187,19 +4469,21 @@ body.surveyor-mode :is(button, input, a):focus-visible { outline: 3px solid #77a
   body.surveyor-mode .surveyor-dashboard-stats { width: 100%; }
   body.supervisor-mode .surveyor-dashboard-stats { width: 100%; }
   body.ventilation-mode .surveyor-dashboard-stats { width: 100%; }
-  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .surveyor-dashboard-stats { width: 100%; }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) .surveyor-dashboard-stats { width: 100%; }
   body.surveyor-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) { min-width: 0; flex: 1; padding: 2px 8px; }
   body.supervisor-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) { min-width: 0; flex: 1; padding: 2px 8px; }
   body.ventilation-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) { min-width: 0; flex: 1; padding: 2px 8px; }
-  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) { min-width: 0; flex: 1; padding: 2px 8px; }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) { min-width: 0; flex: 1; padding: 2px 8px; }
   body.surveyor-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link):first-child { border-left: 0; }
   body.supervisor-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link):first-child { border-left: 0; }
   body.ventilation-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link):first-child { border-left: 0; }
   body.plumbing-coordinator-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link):first-child { border-left: 0; }
+  body.supervisor-workspace-mode .surveyor-dashboard-stats > :is(div, .dashboard-stat-link):first-child { border-left: 0; }
   body.surveyor-mode .surveyor-dashboard-stats strong { font-size: 20px; }
   body.supervisor-mode .surveyor-dashboard-stats strong { font-size: 20px; }
   body.ventilation-mode .surveyor-dashboard-stats strong { font-size: 20px; }
   body.plumbing-coordinator-mode .surveyor-dashboard-stats strong { font-size: 20px; }
+  body.supervisor-workspace-mode .surveyor-dashboard-stats strong { font-size: 20px; }
   body.surveyor-mode .houses-list-toolbar { align-items: flex-start; flex-direction: column; gap: 12px; }
   body.supervisor-mode .houses-list-toolbar { align-items: flex-start; flex-direction: column; gap: 12px; }
   body.surveyor-mode .houses-list-toolbar .heading-actions { width: 100%; }
@@ -4275,6 +4559,14 @@ html[data-theme="dark"] .vent-survey-pdfs-error { background: #382522; color: #f
 html[data-theme="dark"] .vent-survey-pdfs-viewer { border-color: #35483f; background: #192622; }
 html[data-theme="dark"] .vent-survey-pdfs-viewer-heading { background: #20352b; }
 html[data-theme="dark"] .vent-survey-pdfs-viewer-heading strong { color: #e0ebe3; }
+html[data-theme="dark"] .vent-survey-pdfs-viewer-copy span { color: #a7b8ad; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-panel { border-color: #35483f; background: #1b2823; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-panel { color-scheme: dark; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-heading h3 { color: #e3f0e7; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-eyebrow { color: #a7b8ae; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-count { border-color: #496555; background: #263a30; color: #c9ded0; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-card { border-color: #405649; background: #202c27; box-shadow: 0 2px 8px #0003; }
+html[data-theme="dark"] .vent-survey-pdfs-icon-card figcaption { border-color: #35483f; color: #d3e1d8; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card,
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-empty { border-color: var(--line); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-empty { border-style: dashed; border-color: #476253; background: linear-gradient(145deg, #1d2b26, #192622); }
@@ -4289,6 +4581,7 @@ html[data-theme="dark"] body.ventilation-mode .ventilation-house-card:hover { bo
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card:hover { border-color: #527b62; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-trade-icon { border-color: #3d5949; background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
@@ -4306,7 +4599,7 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-identi
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-workload-heading h2 { color: var(--ink); }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card { border-color: #35483f; background: var(--paper); box-shadow: 0 5px 18px #0002; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card:hover { border-color: #5b816b; box-shadow: 0 10px 25px #0004; }
-html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .plumbing-trade-icon { border-color: #3d5949; background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-kicker { color: #9dcfac; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-work-detail { border-color: #344b3d; border-left-color: #5c9d70; background: #1b2c23; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-surveyor-avatar { border-color: #3d5947; background: #263b2e; color: #a9dfb9; }
@@ -4359,10 +4652,12 @@ html[data-theme="dark"] body.ventilation-mode .survey-room-seai-pdf-list .seai-d
 html[data-theme="dark"] body.ventilation-mode #ventilation-workload-count { background: #203d2a; color: #b9efc6; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-workload-actions .ventilation-refresh-button { border-color: #456b54; background: #20372a; color: #c5efd0; box-shadow: 0 2px 6px #0003; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-workload-actions .ventilation-refresh-button:hover:not(:disabled) { border-color: #6b9b78; background: #294733; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-workload-actions .ventilation-refresh-button { border-color: #456b54; background: #20372a; color: #c5efd0; box-shadow: 0 2px 6px #0003; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-workload-actions .ventilation-refresh-button:hover:not(:disabled) { border-color: #6b9b78; background: #294733; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-workload-actions .ventilation-refresh-button { border-color: #456b54; background: #20372a; color: #c5efd0; box-shadow: 0 2px 6px #0003; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode) .ventilation-workload-actions .ventilation-refresh-button:hover:not(:disabled) { border-color: #6b9b78; background: #294733; }
 html[data-theme="dark"] #refresh-surveyor-houses.ventilation-refresh-button { border-color: #456b54; background: #20372a; color: #c5efd0; box-shadow: 0 2px 6px #0003; }
 html[data-theme="dark"] #refresh-surveyor-houses.ventilation-refresh-button:hover:not(:disabled) { border-color: #6b9b78; background: #294733; }
+html[data-theme="dark"] #refresh-supervisor-houses.ventilation-refresh-button { border-color: #456b54; background: #20372a; color: #c5efd0; box-shadow: 0 2px 6px #0003; }
+html[data-theme="dark"] #refresh-supervisor-houses.ventilation-refresh-button:hover:not(:disabled) { border-color: #6b9b78; background: #294733; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-search { border-color: var(--line); background: var(--paper); }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-house-search { border-color: var(--line); background: var(--paper); }
 html[data-theme="dark"] body.plumbing-supervisor-mode .plumbing-house-card { border-color: var(--line); background: var(--paper); color: var(--ink); }
@@ -4370,39 +4665,39 @@ html[data-theme="dark"] body.plumbing-supervisor-mode .plumbing-house-card:hover
 html[data-theme="dark"] body.plumbing-supervisor-mode .plumbing-house-card .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty { border-color: #476253; background: linear-gradient(145deg, #1d2b26, #192622); color: var(--ink); }
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty-icon { background: #263d30; color: #a9e3bb; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting {
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting {
   border-color: #3a5145;
   background:
     radial-gradient(ellipse at 92% 10%, #244431 0, transparent 38%),
     linear-gradient(112deg, #1b2923 0%, #18231e 100%);
   box-shadow: 0 8px 26px #0003, inset 0 1px #ffffff0a;
 }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting::before { background: #62c486; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting-icon {
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting::before { background: #62c486; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting-icon {
   border-color: #3b5d47;
   background: linear-gradient(145deg, #294735, #20382b);
   color: #b6edc7;
   box-shadow: 0 4px 12px #0003, inset 0 1px #ffffff10;
 }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting-eyebrow { color: #9dd5ae; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting h2 { color: #f0f7f2; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting p { color: #b5c8bb; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting-tag { border-color: #3b5648; background: #ffffff08; color: #c1d5c7; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting-tag span { background: #68ce8c; box-shadow: 0 0 0 3px #68ce8c24; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting-eyebrow { color: #9dd5ae; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting h2 { color: #f0f7f2; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting p { color: #b5c8bb; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting-tag { border-color: #3b5648; background: #ffffff08; color: #c1d5c7; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting-tag span { background: #68ce8c; box-shadow: 0 0 0 3px #68ce8c24; }
 @media (max-width: 560px) {
-  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting {
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting {
     min-height: 82px;
     gap: 10px;
     padding: 12px 14px;
   }
-  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting-icon {
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting-icon {
     width: 42px;
     height: 42px;
   }
-  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting h2 {
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting h2 {
     font-size: 18px;
   }
-  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode) .plumbing-coordinator-greeting-tag {
+  body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .plumbing-coordinator-greeting-tag {
     display: none;
   }
 }
@@ -4464,6 +4759,19 @@ html[data-theme="dark"] body.supervisor-mode .supervisor-house-assignment select
 html[data-theme="dark"] body.supervisor-mode .supervisor-house-assignment button:disabled { border-color: var(--line); background: #303d37; color: #96a49b; }
 html[data-theme="dark"] body.supervisor-mode .supervisor-house-assignment button.is-saved { border-color: #39744e; background: #203d2a; color: #b9efc6; }
 html[data-theme="dark"] body.supervisor-mode .supervisor-assignment-help { border-color: #e3a65c; background: #342d1e; color: #f0d7a4; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-seai { border-color: #3a5045; background: linear-gradient(135deg, #1d3028, #192622); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-seai-heading > span,
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-seai-facts small { color: var(--muted); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-seai-heading > strong { background: #203d2a; color: #b9efc6; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-seai-facts strong { color: #e2eee6; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment { border-color: var(--line); background: #1c2924; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-card-actions .button { border-color: #496555; background: #263a30; color: #e3f1e7; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-card-actions .button:hover { border-color: #6a997a; background: #30483a; color: #fff; }
+html[data-theme="dark"] body.supervisor-mode .ewi-house-pdf-group h3 { color: #e2eee6; }
+html[data-theme="dark"] body.supervisor-mode .ewi-house-pdf-group h3 span { background: #203d2a; color: #b9efc6; }
+html[data-theme="dark"] body.supervisor-mode .ewi-house-pdf-group > p { border-color: var(--line); color: var(--muted); }
+html[data-theme="dark"] body.supervisor-mode .ewi-house-pdf-group li { border-color: var(--line); background: #192622; }
 html[data-theme="dark"] body.supervisor-mode .supervisor-shared-seai { border-color: var(--line); background: var(--paper); }
 html[data-theme="dark"] body.supervisor-mode .supervisor-shared-seai-heading h2 { color: #eaf4ef; }
 html[data-theme="dark"] body.supervisor-mode .supervisor-shared-seai-heading p,
@@ -4482,6 +4790,92 @@ html[data-theme="dark"] body.supervisor-mode .supervisor-assignment-summary-pers
 html[data-theme="dark"] body.supervisor-mode .supervisor-assignment-summary-counts span { background: #263d32; color: #c4d7cb; }
 html[data-theme="dark"] body.supervisor-mode .supervisor-assignment-summary-houses span { border-color: var(--line); background: #202c29; color: #c4d7cb; }
 html[data-theme="dark"] body.supervisor-mode .supervisor-assignment-summary-empty { border-color: var(--line); }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-team-rosters { border-color: var(--line); background: linear-gradient(125deg, #1d3028, var(--paper) 72%); }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-team-rosters-heading::after { border-color: #9aafa0; }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-team-rosters-icon,
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-rosters-empty-icon { background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-team-rosters-copy strong,
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-rosters-empty strong { color: #eaf4ef; }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-team-rosters-copy small,
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-role,
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-empty,
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-rosters-empty p { color: var(--muted); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-rosters-totals > span { border-color: var(--line); background: #192622; color: var(--muted); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-rosters-totals strong { color: #9cddb0; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-card { border-color: #3a5045; border-top-color: #58c886; background: linear-gradient(150deg, #23332c 0%, #1c2924 100%); box-shadow: 0 8px 22px #0003, inset 0 1px #ffffff08; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-card:hover { border-color: #557a62; border-top-color: #70dc99; box-shadow: 0 12px 26px #0004, inset 0 1px #ffffff0c; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-card-heading h3 { color: #f0f7f2; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-role { background: #203d2a; color: #aee4be; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-teamlead-avatar { border-color: #3b5d47; background: linear-gradient(145deg, #294735, #20382b); color: #b6edc7; box-shadow: inset 0 1px #ffffff10; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-team-row { border-color: var(--line); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-team { border-color: #3b5b45; background: #263d32; color: #d0ead7; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-team.is-unspecified { background: #26312d; color: var(--muted); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-members-heading { border-color: #3a4b41; background: #26332d; color: #c2d0c7; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload { border-color: var(--line); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload > strong { color: #e5eee8; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload-counts > span { border-color: #3a4b41; background: #192622; color: #c1cec6; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload-counts > span.is-open { border-color: #3b6248; background: linear-gradient(145deg, #20382b, #1d3127); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload-counts > span.is-completed { border-color: #3b5360; background: linear-gradient(145deg, #253640, #202f37); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload-counts > span > strong { color: #a9e3b8; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload-counts > span.is-completed > strong { color: #b2d8e8; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-workload > small { color: #b2c1b8; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-members li { border-color: #35473d; background: #192622; color: #e2eee6; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-roster-member-avatar { border-color: #3b5045; background: #263d32; color: #d0e3d6; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-empty { border-color: var(--line); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-roster-empty > span { background: #263d32; color: #9cddb0; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-team-rosters-empty { border-color: var(--line); background: #192622; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment { border-color: var(--line); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment-heading h3 { color: #e2eee6; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment-heading p,
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment label { color: var(--muted); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment-status { background: #382f20; color: #f0d397; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment-status.is-assigned { background: #1d3828; color: #b8e4c3; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment select { border-color: var(--line); background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment select:focus-visible { border-color: #74c998; box-shadow: 0 0 0 3px #74c99830; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment button:not(:disabled) { border-color: #496555; background: #263a30; color: #e3f1e7; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment button:not(:disabled):hover { border-color: #6a997a; background: #30483a; color: #fff; }
+html[data-theme="dark"] body.supervisor-mode .supervisor-ewi-assignment button:disabled { border-color: var(--line); background: #26312d; color: var(--muted); }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-workload { border-color: var(--line); background: linear-gradient(125deg, #1d3028, var(--paper) 72%); }
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-workload { background: transparent; }
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-ewi-house-card { border-color: var(--line); background: var(--paper); }
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-ewi-house-card.is-complete { border-top-color: #3b8c63; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-heading h2,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-house-identity h3,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-empty strong { color: #eaf4ef; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-eyebrow,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-heading p,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-house-identity p,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-house-meta small,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-empty p { color: var(--muted); }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-totals > span { border-color: var(--line); background: #192622; color: var(--muted); }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-totals strong { color: #9cddb0; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-house-card { border-color: var(--line); background: var(--paper); }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-house-card.is-complete { border-color: #3b654a; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-house-icon,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-empty > span { background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-status { background: #382f20; color: #f0d397; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-status.is-complete,
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-complete-mark { background: #1d3828; color: #b8e4c3; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-complete-button { border-color: #2a9a69; background: #23855b; color: #fff; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-complete-button:hover { border-color: #39b57c; background: #2b9b6b; }
+html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-empty { border-color: var(--line); background: #192622; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment { border-color: var(--line); }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .house-top { border-bottom-color: var(--line); }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-house-assignment { background: #192622; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card { border-color: #3a5045; border-top-color: #58c886; background: linear-gradient(145deg, #202f28 0%, #192622 100%); box-shadow: 0 8px 22px #0003, inset 0 1px #ffffff08; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card:hover { border-color: #557a62; border-top-color: #70dc99; box-shadow: 0 12px 26px #0004, inset 0 1px #ffffff0c; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment { border-color: #3b5145; background: linear-gradient(145deg, #1d2b25, #192622); }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-workload-stats > div { border-color: var(--line); background: var(--paper); }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-workload-stats strong { color: #9cddb0; }
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-workload-stats span { color: var(--muted); }
+html[data-theme="dark"] body.supervisor-workspace-mode .ventilation-house-filter { border-color: var(--line); background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] body.supervisor-workspace-mode .ventilation-house-filter.active { border-color: #3b8c63; background: #276c49; color: #fff; }
+html[data-theme="dark"] body.supervisor-workspace-mode .ventilation-house-filter span { background: #31443b; color: #e4ece8; }
+html[data-theme="dark"] body.supervisor-workspace-mode .ventilation-house-filter.active span { background: #ffffff30; color: #fff; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-empty { border-color: #476253; background: linear-gradient(145deg, #1d2b26, #192622); }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-empty .ventilation-house-empty-icon { background: #263d30; color: #a9e3bb; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-empty strong { color: #eaf4ef; }
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-empty p { color: #b1c2b8; }
 html[data-theme="dark"] body.surveyor-mode .surveyor-house-filter { border-color: var(--line); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] body.surveyor-mode .surveyor-house-filter.active { border-color: #3b8c63; background: #276c49; color: #fff; }
 html[data-theme="dark"] body.surveyor-mode .surveyor-house-filter span { background: #31443b; color: #e4ece8; }
@@ -4712,12 +5106,13 @@ body.ventilation-mode .survey-room-seai-pdf-list li { flex-wrap: wrap; }
 body.ventilation-mode .survey-room-seai-pdf-list .seai-document-name { flex-basis: calc(100% - 50px); }
 body.ventilation-mode .seai-pdf-actions { display: grid; width: 100%; flex: 1 0 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 body.ventilation-mode .seai-pdf-actions .button { min-width: 0; width: 100%; padding-inline: 8px; text-align: center; white-space: normal; }
-body.ventilation-mode .vent-pdf-annotate-button { grid-column: 1 / -1; }
 @media (max-width: 640px) {
   .survey-room-seai-pdf-list li { flex-wrap: wrap; }
   .survey-room-seai-pdf-list .seai-document-name { flex-basis: calc(100% - 50px); }
   .seai-pdf-actions { width: 100%; }
   .seai-pdf-actions .button { flex: 1; text-align: center; }
+  .ventilation-shared-pdf-list .ventilation-pdf-icon { grid-row: 1; }
+  .ventilation-shared-pdf-list .ventilation-pdf-name { grid-row: 1; }
 }
 html[data-theme="dark"] .survey-room-seai-pdf-list li { border-color: #35483f; background: #1b2823; }
 html[data-theme="dark"] .survey-room-seai-pdf-list li:hover { border-color: #61786a; box-shadow: none; }
@@ -4729,16 +5124,28 @@ html[data-theme="dark"] .survey-room-seai-pdf-list .seai-document-name small { c
 .ventilation-shared-pdfs > summary > .seai-sec-title { color: #294d38; font-size: 13px; }
 .ventilation-shared-pdfs > summary > .seai-sec-count { border-color: #d5e5da; background: #fff; color: #4a6b55; }
 .ventilation-shared-pdf-list { gap: 10px; padding: 10px; }
-.ventilation-shared-pdf-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 7px 10px; border-color: #e0e9e3; border-radius: 11px; padding: 12px; }
+.ventilation-shared-pdf-list li { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 7px 10px; border-color: #e0e9e3; border-radius: 11px; padding: 12px; }
 .ventilation-shared-pdf-list li:hover { border-color: #a9cbb4; box-shadow: 0 3px 10px #24463012; }
-.ventilation-pdf-icon { display: grid; width: 34px; height: 38px; grid-row: span 2; place-items: center; border: 1px solid #d5e6db; border-radius: 8px; background: #edf6f0; color: #28714a; font-size: 9px; font-weight: 800; letter-spacing: .03em; }
+.ventilation-shared-pdf-list .ventilation-pdf-card { position: relative; border-color: #dce8df; border-radius: 13px; padding: 13px; background: linear-gradient(145deg, #fff, #f8fbf8); box-shadow: 0 2px 8px #21432d08; }
+.ventilation-shared-pdf-list .ventilation-pdf-card.is-annotated { border-color: #c9e2d0; background: linear-gradient(145deg, #fbfffc, #f1f8f3); }
+.ventilation-pdf-icon { display: grid; width: 38px; height: 42px; grid-row: span 2; place-items: center; border: 1px solid #d5e6db; border-radius: 10px; background: #edf6f0; color: #28714a; }
+.ventilation-pdf-icon svg { width: 21px; height: 21px; }
 .ventilation-pdf-name { align-self: end; font-size: 12px; }
 .ventilation-pdf-name strong { color: #233d2e; }
-.ventilation-pdf-name small { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 5px; line-height: 1.45; }
+.ventilation-pdf-name small { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; margin-top: 6px; line-height: 1.45; }
+.ventilation-pdf-size { border-radius: 999px; padding: 2px 7px; background: #eef4ef; color: #5c7063; font-size: 9px; font-weight: 650; }
+.ventilation-pdf-audit, .ventilation-pdf-audit-date { display: inline-flex; align-items: center; gap: 4px; color: #5c7063; }
+.ventilation-pdf-audit svg, .ventilation-pdf-audit-date svg { width: 14px; height: 14px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.ventilation-pdf-card.is-annotated .ventilation-pdf-audit { color: #28714a; font-weight: 700; }
 .ventilation-pdf-actions { display: grid; grid-column: 1 / -1; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ventilation-pdf-actions .button { min-width: 0; min-height: 40px; width: 100%; padding: 7px 10px; text-align: center; white-space: normal; }
-.ventilation-pdf-actions .vent-pdf-annotate-button { grid-column: 1 / -1; border-color: #2e7c50; background: #2e7c50; font-weight: 750; }
-.ventilation-pdf-actions .vent-pdf-annotate-button:hover { border-color: #236742; background: #236742; }
+.ventilation-pdf-actions .button svg { width: 16px; height: 16px; margin-right: 5px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ventilation-pdf-actions .vent-pdf-view-button { border-color: #2e7c50; background: #2e7c50; color: #fff; font-weight: 750; }
+.ventilation-pdf-actions .vent-pdf-view-button:hover { border-color: #236742; background: #236742; }
+.vent-survey-pdfs-viewer-copy { display: grid; min-width: 0; gap: 3px; }
+.vent-survey-pdfs-viewer-copy span { overflow: hidden; color: #718078; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.vent-survey-pdf-entry-icon svg { width: 23px; height: 23px; }
+.vent-survey-pdf-entry-actions .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 html[data-theme="dark"] .ventilation-shared-pdfs,
 html[data-theme="dark"] .ventilation-shared-pdfs[open] { border-color: #3a5546; background: #192622; box-shadow: 0 4px 14px #0003; }
 html[data-theme="dark"] .ventilation-shared-pdfs > summary { border-color: #35483f; background: #20352b; color: #e2eee6; }
@@ -4750,10 +5157,16 @@ html[data-theme="dark"] .ventilation-shared-pdf-list li:hover { border-color: #6
 html[data-theme="dark"] .ventilation-pdf-icon { border-color: #42604e; background: #263d30; color: #a9e3bb; }
 html[data-theme="dark"] .ventilation-pdf-name strong { color: #eaf4ef; }
 html[data-theme="dark"] .ventilation-pdf-name small { color: #a9bdb0; }
+html[data-theme="dark"] .ventilation-shared-pdf-list .ventilation-pdf-card,
+html[data-theme="dark"] .ventilation-shared-pdf-list .ventilation-pdf-card.is-annotated { border-color: #3a5045; background: linear-gradient(145deg, #202f28, #1d2b26); }
+html[data-theme="dark"] .ventilation-pdf-size { background: #293d32; color: #b6c8bc; }
+html[data-theme="dark"] .ventilation-pdf-audit,
+html[data-theme="dark"] .ventilation-pdf-audit-date { color: #b3c5b9; }
+html[data-theme="dark"] .ventilation-pdf-card.is-annotated .ventilation-pdf-audit { color: #a9e3bb; }
+html[data-theme="dark"] .ventilation-pdf-actions .vent-pdf-view-button { border-color: #4a9a69; background: #276c49; color: #fff; }
+html[data-theme="dark"] .ventilation-pdf-actions .vent-pdf-view-button:hover { border-color: #68b582; background: #318458; }
 html[data-theme="dark"] .ventilation-pdf-actions .button-secondary { border-color: #496555; background: #263a30; color: #d3eadb; }
 html[data-theme="dark"] .ventilation-pdf-actions .button-secondary:hover { border-color: #6a997a; background: #30483a; color: #fff; }
-html[data-theme="dark"] .ventilation-pdf-actions .vent-pdf-annotate-button { border-color: #4a9a69; background: #276c49; color: #fff; }
-html[data-theme="dark"] .ventilation-pdf-actions .vent-pdf-annotate-button:hover { border-color: #68b582; background: #318458; }
 
 /* SEAI details accordions */
 .seai-accordion-toolbar { display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 8px; }
@@ -5055,6 +5468,18 @@ html[data-theme="dark"] #houses-list .surveyor-house-card:hover { border-color: 
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit .surveyor-assignment-credit-copy { display: grid; min-width: 0; gap: 2px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit strong { color: #315b3d; font-weight: 750; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit time { color: #75867a; font-size: 9px; font-variant-numeric: tabular-nums; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs { margin-top: 10px; border: 1px solid #e3eae5; border-radius: 12px; padding: 10px 12px; background: #f8faf8; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #354d3d; cursor: pointer; font-size: 12px; font-weight: 750; list-style: none; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary::-webkit-details-marker { display: none; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-count { display: grid; min-width: 22px; height: 22px; place-items: center; border-radius: 999px; background: #e6efe8; color: #365b42; font-size: 11px; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-list { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-list li { display: flex; align-items: center; gap: 9px; min-width: 0; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-copy { display: grid; flex: 1; min-width: 0; gap: 3px; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-copy strong { overflow: hidden; color: #263d2e; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-copy small { color: #65756a; font-size: 10px; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-list .seai-pdf-actions { display: flex; gap: 5px; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-list .button { min-height: 32px; padding: 5px 9px; font-size: 10px; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-empty { margin: 10px 0 0; color: #65756a; font-size: 11px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .supervisor-house-assignment { margin-top: 12px; border: 1px solid #e3eae5; border-radius: 12px; padding: 12px; background: #f6faf7; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .supervisor-assignment-heading { align-items: center; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .supervisor-assignment-heading p { display: none; }
@@ -5069,6 +5494,12 @@ html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .supe
 html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit .surveyor-assignment-credit-icon { background: #293e30; color: #a7d8b3; }
 html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit strong { color: #e0eee4; }
 html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit time { color: #a6b9aa; }
+html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs { border-color: #35473e; background: #192622; }
+html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary { color: #d3e2d7; }
+html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-count { background: #293e30; color: #b8e4c3; }
+html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-copy strong { color: #e0eee4; }
+html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-copy small,
+html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-empty { color: #b4c6bb; }
 html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card.needs-assignment { border-color: #8a6a35; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card { gap: 0; padding: 14px 16px 16px; border-radius: 14px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .house-top { padding-bottom: 10px; border-bottom: 1px solid #e3eae5; }
@@ -5701,7 +6132,7 @@ html[data-theme="dark"] .workspace-nav .nav-item:focus-visible { outline-color: 
 body.plumbing-supervisor-mode #plumbing-supervisor-workload {
   margin-top: 4px;
 }
-body:is(.plumbing-supervisor-mode, .ventilation-mode) :is(#plumbing-supervisor-workload, #ventilation-workload) .ventilation-workload-heading {
+body:is(.plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode) :is(#plumbing-supervisor-workload, #ventilation-workload, #supervisor-workload) .ventilation-workload-heading {
   align-items: center;
   margin-bottom: 18px;
 }
@@ -6155,11 +6586,1025 @@ html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house
     text-align: center;
     white-space: normal;
   }
-  body:is(.plumbing-supervisor-mode, .ventilation-mode) :is(#plumbing-supervisor-workload, #ventilation-workload) .ventilation-workload-actions {
+  body:is(.plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode) :is(#plumbing-supervisor-workload, #ventilation-workload, #supervisor-workload) .ventilation-workload-actions {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  body:is(.plumbing-supervisor-mode, .ventilation-mode) :is(#plumbing-supervisor-workload, #ventilation-workload) .ventilation-house-search {
+  body:is(.plumbing-supervisor-mode, .ventilation-mode, .supervisor-workspace-mode) :is(#plumbing-supervisor-workload, #ventilation-workload, #supervisor-workload) .ventilation-house-search {
     width: 100%;
+  }
+}
+
+@media (min-width: 681px) and (max-width: 1024px) {
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .main-content {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .page {
+    padding-top: 24px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .page-heading {
+    gap: 14px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.surveyor-dashboard-summary, .ventilation-dashboard-summary) {
+    gap: 16px;
+    padding: 18px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .surveyor-dashboard-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+    gap: 8px;
+  }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) :is(#plumbing-house-list, #ventilation-coordinator-house-list, #supervisor-house-list) .plumbing-house-card,
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) #supervisor-house-list .supervisor-house-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) :is(#plumbing-house-list, #ventilation-coordinator-house-list, #supervisor-house-list) :is(.ventilation-house-top, .plumbing-work-detail, .plumbing-house-assignment, .supervisor-house-assignment, .plumbing-assigned-supervisor, .plumbing-completion-detail) {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) :is(#plumbing-house-list, #ventilation-coordinator-house-list, #supervisor-house-list) :is(.plumbing-house-assignment, .supervisor-house-assignment) {
+    margin: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    padding: 14px 0 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .main-content {
+    min-width: 0;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+  .house-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .house-grid-scrollable {
+    max-height: none;
+    overflow-y: visible;
+  }
+  .page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .page-heading > .heading-actions {
+    width: 100%;
+  }
+  .page-heading > .date-chip { width: fit-content; }
+  .page-heading .heading-actions {
+    flex-wrap: wrap;
+  }
+  .page-heading .heading-actions > .button,
+  .page-heading .heading-actions > .search-box {
+    min-width: 0;
+    flex: 1 1 150px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .main-content {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .page {
+    padding-top: 16px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .page-heading {
+    margin-bottom: 16px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.surveyor-dashboard-summary, .ventilation-dashboard-summary) {
+    border-radius: 12px;
+    padding: 14px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .surveyor-dashboard-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) {
+    min-height: 58px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.surveyor-house-filters, .ventilation-house-filters, .assign-survey-filters) {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    padding: 2px 2px 8px;
+    scrollbar-width: thin;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.surveyor-house-filter, .ventilation-house-filter) {
+    min-height: 40px;
+    flex: 0 0 auto;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(#houses-list, #supervisor-house-list, #ventilation-house-list, #plumbing-house-list, #plumbing-supervisor-house-list, #ventilation-coordinator-house-list) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.surveyor-house-card, .ventilation-house-card, .plumbing-house-card, .supervisor-house-card) {
+    min-width: 0;
+    border-radius: 12px;
+    padding: 14px;
+  }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) :is(#plumbing-house-list, #ventilation-coordinator-house-list, #supervisor-house-list) .plumbing-house-card,
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-house-card {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 12px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card { align-items: stretch; }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions { width: 100%; }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button { min-height: 42px; flex: 1 1 145px; }
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment { width: 100%; }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) :is(#plumbing-house-list, #ventilation-coordinator-house-list, #supervisor-house-list) :is(.plumbing-house-assignment, .supervisor-house-assignment) {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    margin: 0;
+    border: 0;
+    border-top: 1px solid var(--line);
+    padding: 12px 0 0;
+  }
+  body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode, .supervisor-workspace-mode) :is(#plumbing-house-list, #ventilation-coordinator-house-list, #supervisor-house-list) :is(.plumbing-house-assignment, .supervisor-house-assignment) > * {
+    grid-column: 1;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.ventilation-workload-actions, .heading-actions) {
+    min-width: 0;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .ventilation-house-search {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 180px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.ventilation-refresh-button, #refresh-surveyor-houses) {
+    min-height: 44px;
+  }
+  body:not(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .main-content {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
+  .workspace-nav .nav-item {
+    min-height: 48px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 380px) {
+  .main-content,
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) .main-content {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+  body:is(.surveyor-mode, .supervisor-mode, .ventilation-mode, .plumbing-coordinator-mode, .plumbing-supervisor-mode) :is(.surveyor-house-card, .ventilation-house-card, .plumbing-house-card, .supervisor-house-card) {
+    padding: 12px;
+  }
+  .surveyor-dashboard-stats {
+    gap: 5px;
+  }
+  .surveyor-dashboard-stats > :is(div, .dashboard-stat-link) {
+    padding-right: 2px;
+    padding-left: 2px;
+  }
+}
+
+html[data-theme="dark"] {
+  --muted: #b1beb8;
+  --line: #40524a;
+  --scroll-track: #202c29;
+  --scroll-thumb: #70877a;
+  --scroll-thumb-hover: #9ab5a4;
+  accent-color: #69d7a5;
+}
+html[data-theme="dark"] ::selection { background: #34785b; color: #fff; }
+html[data-theme="dark"] .topbar #theme-toggle {
+  border-color: #527362;
+  background: #244234;
+  color: #d6f5e1;
+  box-shadow: inset 0 0 0 1px #ffffff08;
+}
+html[data-theme="dark"] .topbar #theme-toggle:hover {
+  border-color: #75b88f;
+  background: #2b4d3a;
+}
+.topbar #theme-toggle span {
+  display: inline-grid;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffffff18;
+  font-size: 14px;
+}
+html[data-theme="dark"] :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid #83e3b0;
+  outline-offset: 3px;
+}
+html[data-theme="dark"] :is(.button-secondary, .icon-button, .houses-teams-tab, .house-detail-nav button) {
+  border-color: #4a5e54;
+  background-color: #26352f;
+  color: #e5eee9;
+}
+html[data-theme="dark"] :is(.button-secondary, .icon-button, .houses-teams-tab, .house-detail-nav button):hover {
+  border-color: #6d947e;
+  background-color: #30453a;
+  color: #f5faf7;
+}
+html[data-theme="dark"] :is(.field input, .field select, .field textarea, .search-box input, .search-box select, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea) {
+  border-color: #4a5d53;
+  background-color: #18221e;
+  color: #eaf2ed;
+  color-scheme: dark;
+}
+html[data-theme="dark"] :is(input, select, textarea)::placeholder { color: #a4b3ab; opacity: 1; }
+html[data-theme="dark"] :is(input, select, textarea):disabled,
+html[data-theme="dark"] button:disabled {
+  border-color: #3a4942;
+  background-color: #26312c;
+  color: #a0ada6;
+  opacity: .8;
+}
+html[data-theme="dark"] select option { background: #202c29; color: #e4ece8; }
+html[data-theme="dark"] :is(th, .table-heading, .stat-label, .stat-caption, .kpi-label, .house-stock-title, .field small, .helper-text, .empty-state p, .team-roster-members small) {
+  color: #b1beb8;
+}
+html[data-theme="dark"] thead,
+html[data-theme="dark"] tbody tr:nth-child(even) { background-color: #1b2723; }
+html[data-theme="dark"] :is(td, th, .table-wrap) { border-color: #3a4b43; }
+html[data-theme="dark"] tbody tr:hover { background-color: #293a32; }
+html[data-theme="dark"] :is(.card, .stat-card, .house-card, .team-card, .dialog, .weather-panel, .stock-card, .activity-card) {
+  box-shadow: 0 4px 16px #00000020;
+}
+html[data-theme="dark"] :is(.card, .house-card, .team-card, .stat-card):hover {
+  border-color: #526b5d;
+}
+html[data-theme="dark"] .dialog::backdrop { background: #050a08bf; backdrop-filter: blur(3px); }
+html[data-theme="dark"] :is(.surveyor-house-empty, .teamlead-ewi-empty, .ventilation-house-empty, .empty-state) {
+  border-color: #46594f;
+  background-color: #1b2723;
+  color: #e4ece8;
+}
+html[data-theme="dark"] :is(.status-pill, .team-house-count, .date-chip) {
+  border-color: #43574c;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme="dark"] :is(.button, .card, .house-card, .team-card, .nav-item, .houses-teams-tab) {
+    transition-duration: .18s;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="dark"] *,
+  html[data-theme="dark"] *::before,
+  html[data-theme="dark"] *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+body.teamlead-workspace-mode #teamlead-ewi-workload {
+  gap: 18px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-greeting {
+  min-height: 108px;
+  margin-bottom: 0;
+  border-radius: 18px;
+  padding: 20px 24px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-greeting h2 {
+  font-size: clamp(21px, 2.4vw, 27px);
+}
+body.teamlead-workspace-mode .teamlead-ewi-heading {
+  align-items: center;
+  border-bottom: 1px solid #e1e9e3;
+  margin: 0;
+  padding: 0 0 16px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-heading h2 {
+  color: #203d2d;
+  font-size: 21px;
+  letter-spacing: -.025em;
+}
+body.teamlead-workspace-mode .teamlead-ewi-heading p {
+  font-size: 12px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-eyebrow {
+  color: #4b8060;
+  font-size: 10px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-heading .ventilation-workload-actions {
+  flex: 0 1 440px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-heading .ventilation-house-search {
+  width: auto;
+  min-width: 180px;
+  flex: 1 1 260px;
+  min-height: 44px;
+  border-radius: 11px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-heading .ventilation-house-search input {
+  height: 42px;
+  font-size: 12px;
+}
+body.teamlead-workspace-mode #refresh-teamlead-ewi-houses {
+  min-height: 44px;
+  border-radius: 11px;
+  padding-right: 16px;
+  padding-left: 14px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew {
+  margin: -2px 0 0;
+  border: 1px solid #dfe9e2;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #f8fbf8, #fff 75%);
+  box-shadow: 0 3px 12px #203a2b08;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew > .plumbing-supervisor-crew-heading {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 11px;
+  margin: 0;
+  border-radius: 10px;
+  padding: 2px;
+  cursor: pointer;
+  list-style: none;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew > .plumbing-supervisor-crew-heading::-webkit-details-marker {
+  display: none;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew > .plumbing-supervisor-crew-heading::after {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  margin: 0 4px 4px 2px;
+  border-right: 2px solid #73877a;
+  border-bottom: 2px solid #73877a;
+  content: "";
+  transform: rotate(45deg);
+  transition: transform .18s ease;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew[open] > .plumbing-supervisor-crew-heading::after {
+  margin-bottom: -4px;
+  transform: rotate(225deg);
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew > .plumbing-supervisor-crew-heading:focus-visible {
+  outline: 3px solid #328258;
+  outline-offset: 3px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  background: #e8f4ec;
+  color: #26734d;
+  font-size: 20px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-heading h2 {
+  margin: 0;
+  color: #29483a;
+  font-size: 14px;
+  font-weight: 800;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-heading p {
+  margin: 3px 0 0;
+  color: #687a6e;
+  font-size: 11px;
+  line-height: 1.45;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-count {
+  margin-left: auto;
+  border: 1px solid #d8e6dc;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #fff;
+  color: #42644e;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list,
+body.teamlead-workspace-mode #teamlead-ewi-crew-empty {
+  margin-top: 12px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 9px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-card {
+  min-width: 0;
+  border: 1px solid #e1ebe4;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-card:hover {
+  transform: translateY(-1px);
+  border-color: #b9d1c0;
+  box-shadow: 0 5px 14px #193b2412;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-teamlead {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  background: #edf5ef;
+  color: #32734e;
+  font-size: 11px;
+  font-weight: 800;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-teamlead > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-role {
+  color: #718276;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-teamlead strong {
+  overflow-wrap: anywhere;
+  color: #29483a;
+  font-size: 12px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-house-filters {
+  gap: 8px;
+  margin: 0;
+}
+body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter {
+  min-height: 40px;
+  border-color: #dce7df;
+  border-radius: 11px;
+  padding: 0 14px;
+  color: #4e6255;
+  font-size: 11px;
+  font-weight: 700;
+}
+body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter:hover {
+  border-color: #a9cbb4;
+  background: #f0f7f2;
+}
+body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter.active {
+  border-color: #26734d;
+  background: #26734d;
+  color: #fff;
+  box-shadow: 0 3px 8px #26734d2b;
+}
+body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter span {
+  min-width: 22px;
+  height: 22px;
+  background: #edf2ee;
+  color: #4d6255;
+  font-size: 10px;
+  font-weight: 750;
+}
+body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter.active span {
+  background: #ffffff2e;
+  color: #fff;
+}
+body.teamlead-workspace-mode #teamlead-ewi-work-empty {
+  min-height: 190px;
+  border-color: #c9dacf;
+  border-radius: 16px;
+  padding: 28px;
+  background: linear-gradient(145deg, #fbfdfb, #f3f8f4);
+}
+body.teamlead-workspace-mode #teamlead-ewi-work-empty .ventilation-house-empty-icon {
+  width: 48px;
+  height: 48px;
+  border: 1px solid #d6e8dc;
+  border-radius: 15px;
+  background: #e9f4ec;
+  color: #28714c;
+}
+body.teamlead-workspace-mode #teamlead-ewi-work-empty strong {
+  color: #29483a;
+  font-size: 15px;
+}
+body.teamlead-workspace-mode #teamlead-ewi-work-empty p {
+  color: #63766a;
+  font-size: 12px;
+}
+body.teamlead-workspace-mode .teamlead-ewi-house-card {
+  border-radius: 14px;
+  padding: 15px 16px;
+  box-shadow: 0 3px 12px #203a2b08;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+body.teamlead-workspace-mode .teamlead-ewi-house-card:hover {
+  transform: translateY(-1px);
+  border-color: #b9d1c0;
+  box-shadow: 0 7px 18px #203a2b12;
+}
+@media (max-width: 760px) {
+  body.teamlead-workspace-mode .teamlead-ewi-greeting {
+    min-height: 90px;
+    padding: 15px 16px;
+  }
+  body.teamlead-workspace-mode .teamlead-ewi-heading {
+    align-items: stretch;
+  }
+  body.teamlead-workspace-mode .teamlead-ewi-heading .ventilation-workload-actions {
+    flex-basis: auto;
+  }
+}
+@media (max-width: 560px) {
+  body.teamlead-workspace-mode #teamlead-ewi-crew {
+    padding: 10px;
+  }
+  body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-heading p {
+    max-width: 220px;
+  }
+  body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-count {
+    max-width: 96px;
+    padding: 5px 7px;
+    text-align: center;
+    white-space: normal;
+  }
+  body.teamlead-workspace-mode #teamlead-ewi-house-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 2px 2px 7px;
+    scrollbar-width: thin;
+  }
+  body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter {
+    flex: 0 0 auto;
+  }
+  body.teamlead-workspace-mode #teamlead-ewi-work-empty {
+    min-height: 165px;
+    padding: 22px 16px;
+  }
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-ewi-heading {
+  border-color: #3a4b43;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-ewi-heading h2 {
+  color: #eaf4ef;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-ewi-eyebrow {
+  color: #9dd5ae;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew {
+  border-color: #3b5146;
+  background: linear-gradient(135deg, #1d2b26, #192622 75%);
+  box-shadow: 0 5px 18px #00000020;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew > .plumbing-supervisor-crew-heading::after {
+  border-color: #b0c4b7;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-mark {
+  background: #263d30;
+  color: #a9e3bb;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-heading h2,
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-teamlead strong {
+  color: #eaf4ef;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-heading p {
+  color: #b1c2b8;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew .plumbing-supervisor-crew-count {
+  border-color: #42584b;
+  background: #26382e;
+  color: #cce4d3;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-card {
+  border-color: #3a5145;
+  background: #202c29;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-card:hover {
+  border-color: #587663;
+  box-shadow: 0 6px 16px #00000025;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-avatar {
+  background: #263d30;
+  color: #b8e4c3;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-crew-list .plumbing-supervisor-crew-role {
+  color: #a8bdb0;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter {
+  border-color: #43574c;
+  background: #202c29;
+  color: #d0ded5;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter:hover {
+  border-color: #6a9278;
+  background: #293d32;
+  color: #f0f7f2;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter.active {
+  border-color: #3c9b68;
+  background: #236a48;
+  color: #fff;
+  box-shadow: 0 3px 10px #00000025;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter span {
+  background: #31443b;
+  color: #e1ece5;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-house-filters .ventilation-house-filter.active span {
+  background: #ffffff30;
+  color: #fff;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-work-empty {
+  border-color: #43584c;
+  background: radial-gradient(ellipse at 50% 0, #263d30 0, transparent 70%), #1b2723;
+  box-shadow: inset 0 1px #ffffff08;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-work-empty .ventilation-house-empty-icon {
+  border-color: #3d5a47;
+  background: #263d30;
+  color: #b5e7c4;
+  box-shadow: 0 4px 14px #00000020;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-work-empty strong {
+  color: #e7f2eb;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode #teamlead-ewi-work-empty p {
+  color: #b1c2b8;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-ewi-house-card:hover {
+  border-color: #5a7965;
+  box-shadow: 0 7px 18px #00000028;
+}
+
+body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting {
+  min-height: 112px;
+  margin-bottom: 22px;
+  border-radius: 20px;
+  padding: 21px 24px;
+  background:
+    radial-gradient(ellipse at 92% 8%, #dcefe1 0, transparent 37%),
+    linear-gradient(115deg, #fff 0%, #f5faf6 54%, #edf7f0 100%);
+  box-shadow: 0 12px 30px #1e3d2c12, inset 0 1px #ffffffd9;
+}
+body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+}
+body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting-tag {
+  border-color: #d3e6d9;
+  background: #ffffffc7;
+}
+body.supervisor-workspace-mode #supervisor-workload .ventilation-workload-heading {
+  margin-bottom: 20px;
+}
+body.supervisor-workspace-mode #supervisor-workload .plumbing-workload-intro {
+  max-width: 520px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+body.supervisor-workspace-mode #supervisor-workload .ventilation-workload-actions {
+  gap: 10px;
+}
+body.supervisor-workspace-mode #supervisor-workload .ventilation-house-search {
+  width: min(360px, 36vw);
+  min-height: 46px;
+  border-radius: 13px;
+  box-shadow: 0 3px 10px #203a2b08;
+}
+body.supervisor-workspace-mode #supervisor-workload .ventilation-house-search input {
+  height: 38px;
+  font-size: 13px;
+}
+body.supervisor-workspace-mode #supervisor-workload .ventilation-workload-actions .ventilation-refresh-button {
+  min-height: 46px;
+  border-radius: 13px;
+  padding-right: 17px;
+}
+body.supervisor-workspace-mode .supervisor-assignment-summary {
+  gap: 16px;
+  margin-bottom: 20px;
+}
+body.supervisor-workspace-mode .supervisor-assignment-summary-group {
+  border: 1px solid #e1ebe4;
+  border-radius: 16px;
+  padding: 17px;
+  background: linear-gradient(150deg, #fff, #f8fbf8);
+  box-shadow: 0 5px 16px #203a2b08;
+}
+body.supervisor-workspace-mode .supervisor-team-rosters {
+  margin-bottom: 22px;
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 5px 18px #203a2b08;
+}
+body.supervisor-workspace-mode .supervisor-team-rosters-heading {
+  min-height: 50px;
+}
+body.supervisor-workspace-mode #supervisor-house-filters {
+  gap: 8px;
+  margin-bottom: 16px;
+  border: 1px solid #e1e9e3;
+  border-radius: 15px;
+  padding: 8px;
+  background: #f5f8f5;
+}
+body.supervisor-workspace-mode #supervisor-house-filters .ventilation-house-filter {
+  min-height: 40px;
+  border-radius: 11px;
+  padding-inline: 14px;
+  font-size: 11px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+  min-height: 276px;
+  align-items: start;
+  border: 1px solid #dce8df;
+  border-top: 3px solid #45a875;
+  border-radius: 18px;
+  padding: 19px;
+  background: linear-gradient(145deg, #fff 0%, #f9fcf9 100%);
+  box-shadow: 0 8px 24px #203a2b10, inset 0 1px #ffffffd9;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card:hover {
+  transform: translateY(-2px);
+  border-color: #b8d2c0;
+  border-top-color: #31935e;
+  box-shadow: 0 14px 30px #203a2b16, inset 0 1px #ffffff;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-top {
+  gap: 13px;
+  padding-bottom: 14px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-meta h2 {
+  font-size: 19px;
+  letter-spacing: -.025em;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-meta p {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .status-pill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 750;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {
+  gap: 12px;
+  border-color: #dce9df;
+  border-radius: 14px;
+  padding: 15px;
+  background: linear-gradient(145deg, #f6fbf7, #edf6ef);
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > span {
+  font-size: 11px;
+  letter-spacing: .11em;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > strong {
+  border: 1px solid #d1e8d8;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 11px;
+  text-align: center;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts {
+  gap: 13px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts > span {
+  gap: 5px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts small {
+  font-size: 11px;
+  letter-spacing: .02em;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts strong {
+  font-size: 13px;
+  line-height: 1.45;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment,
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment {
+  gap: 13px;
+  border-color: #dfe9e2;
+  border-radius: 15px;
+  padding: 16px;
+  background: linear-gradient(145deg, #f8fbf8, #f1f7f2);
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-assignment-heading h3,
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment-heading h3 {
+  font-size: 15px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-assignment-heading p,
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment-heading p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) label {
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select {
+  min-height: 46px;
+  border-radius: 11px;
+  padding-inline: 12px 36px;
+  font-size: 13px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) button {
+  min-height: 44px;
+  border-radius: 11px;
+  font-size: 12px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions {
+  gap: 9px;
+  padding-top: 4px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button {
+  min-height: 42px;
+  border-radius: 11px;
+  padding-inline: 14px;
+  font-size: 11px;
+  font-weight: 700;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-assignment-status,
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment-status {
+  font-size: 10px;
+  line-height: 1.35;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:focus-visible,
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card select:focus-visible {
+  outline: 3px solid #55a978;
+  outline-offset: 2px;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting {
+  border-color: #3b5547;
+  background:
+    radial-gradient(ellipse at 92% 8%, #294235 0, transparent 38%),
+    linear-gradient(115deg, #202c29 0%, #1c2924 56%, #1a2a22 100%);
+  box-shadow: 0 12px 30px #0003, inset 0 1px #ffffff0a;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting-icon {
+  border-color: #405b4a;
+  background: linear-gradient(145deg, #2a4334, #22372b);
+  color: #b9edc9;
+  box-shadow: inset 0 1px #ffffff0a;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting-tag {
+  border-color: #405649;
+  background: #202c29cc;
+  color: #c6d9cd;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-assignment-summary-group {
+  border-color: #3a4e43;
+  background: linear-gradient(150deg, #202c29, #1a2722);
+  box-shadow: 0 5px 18px #0002;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode .supervisor-team-rosters {
+  border-color: #3b5146;
+  background: linear-gradient(125deg, #1e3028, #1c2924 72%);
+  box-shadow: 0 5px 18px #0002;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-filters {
+  border-color: #34493e;
+  background: #192622;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+  border-color: #3b5547;
+  border-top-color: #54cf87;
+  background: linear-gradient(145deg, #22332b 0%, #1a2722 100%);
+  box-shadow: 0 10px 28px #0003, inset 0 1px #ffffff0a;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card:hover {
+  border-color: #5a8067;
+  border-top-color: #7be2a0;
+  box-shadow: 0 16px 34px #0004, inset 0 1px #ffffff12;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-top {
+  border-color: #3a4e43;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-avatar {
+  border-color: #3e5b49;
+  background: linear-gradient(145deg, #2a4334, #21382b);
+  color: #b9edc9;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-meta h2 {
+  color: #f0f7f2;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-meta p {
+  color: #bacbc1;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {
+  border-color: #3c5748;
+  background: linear-gradient(145deg, #20372a, #1c3025);
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > span,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts small {
+  color: #adc3b5;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > strong {
+  border-color: #42684e;
+  background: #294631;
+  color: #d1f1d9;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts strong {
+  color: #e6f1e9;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment {
+  border-color: #3a5145;
+  background: linear-gradient(145deg, #202f28, #1b2923);
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select {
+  border-color: #4a6053;
+  background: #17231e;
+  color: #eef6f0;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select:hover {
+  border-color: #73947e;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button {
+  border-color: #4c6856;
+  background: #263b2f;
+  color: #e4f2e8;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:hover {
+  border-color: #70a27d;
+  background: #304a38;
+  color: #fff;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment button:not(:disabled) {
+  border-color: #496555;
+  background-color: #263a30;
+  color: #e3f1e7;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment button:not(:disabled):hover {
+  border-color: #6a997a;
+  background-color: #30483a;
+  color: #fff;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment button:disabled {
+  border-color: var(--line);
+  background-color: #26312d;
+  color: var(--muted);
+}
+@media (max-width: 760px) {
+  body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting {
+    min-height: 0;
+    align-items: flex-start;
+    gap: 13px;
+    border-radius: 17px;
+    padding: 17px;
+  }
+  body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+  }
+  body.supervisor-workspace-mode #supervisor-workload .plumbing-coordinator-greeting-tag {
+    display: none;
+  }
+  body.supervisor-workspace-mode #supervisor-workload .ventilation-workload-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+  body.supervisor-workspace-mode #supervisor-workload .ventilation-workload-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  body.supervisor-workspace-mode #supervisor-workload .ventilation-house-search {
+    width: 100%;
+  }
+  body.supervisor-workspace-mode .supervisor-assignment-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.supervisor-workspace-mode #supervisor-house-filters {
+    border-radius: 13px;
+    padding: 6px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+    min-height: 0;
+    border-radius: 16px;
+    padding: 15px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {
+    padding: 13px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment,
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment {
+    border-radius: 13px;
+    padding: 13px;
   }
 }
