@@ -271,6 +271,23 @@ td:first-child { color: #263b32; font-weight: 600; }
 .house-active { border-color: #cfe6d5; box-shadow: 0 3px 14px #277c4510; }
 .house-finished { border-color: #d8dee8; }
 .house-finished .house-stock { opacity: .8; }
+.house-survey-reference { margin: 8px 0; border: 1px solid #dfe9e2; border-radius: 9px; background: #f8fbf8; color: var(--ink); }
+.house-survey-reference > summary { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; cursor: pointer; list-style: none; }
+.house-survey-reference > summary::-webkit-details-marker { display: none; }
+.house-survey-reference > summary::after { flex: 0 0 auto; color: #527762; content: "+"; font-size: 15px; font-weight: 700; }
+.house-survey-reference[open] > summary::after { content: "−"; }
+.house-survey-reference > summary span { font-size: 10px; font-weight: 750; }
+.house-survey-reference > summary small { color: var(--muted); font-size: 9px; text-align: right; }
+.house-survey-reference-content { border-top: 1px solid #e4ece6; padding: 9px 10px 10px; }
+.house-survey-reference-meta { margin: 0 0 8px; color: var(--muted); font-size: 9px; }
+.house-survey-reference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.house-survey-reference-group { min-width: 0; }
+.house-survey-reference-group h4 { margin: 0 0 4px; color: #4a6654; font-size: 9px; }
+.house-survey-reference-group ul { display: grid; gap: 3px; margin: 0; padding-left: 15px; color: var(--ink); font-size: 9px; }
+.house-survey-reference-group p, .house-survey-reference-empty { margin: 0; color: var(--muted); font-size: 9px; }
+.house-survey-reference-perimeter, .house-survey-reference-notes { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; border-top: 1px solid #e7eee8; padding-top: 7px; color: var(--ink); font-size: 9px; }
+.house-survey-reference-notes { display: block; }
+.house-survey-reference-notes p { margin: 4px 0 0; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .house-checklist-card { border-top: 1px solid #e8efea; padding: 10px 0; }
 .checklist-card-row { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #f0f3f1; padding: 5px 2px; color: #52645b; font-size: 10px; }
 .checklist-card-row:last-child { border-bottom: 0; }
@@ -722,13 +739,20 @@ html[data-theme="dark"] .activity-card,
 html[data-theme="dark"] .team-house-count,
 html[data-theme="dark"] .house-workflow,
 html[data-theme="dark"] .house-checklist-card,
+html[data-theme="dark"] .house-survey-reference,
 html[data-theme="dark"] .snag-item,
 html[data-theme="dark"] .snag-empty,
 html[data-theme="dark"] .house-detail-note,
 html[data-theme="dark"] .house-detail-snag,
+html[data-theme="dark"] .house-survey-reference-content,
 html[data-theme="dark"] .house-detail-records-card,
 html[data-theme="dark"] .house-detail-stock-card,
 html[data-theme="dark"] .house-history-card { border-color: var(--line); background-color: var(--paper); color: var(--ink); }
+html[data-theme="dark"] .house-survey-reference > summary::after,
+html[data-theme="dark"] .house-survey-reference-group h4 { color: #a8d7b6; }
+html[data-theme="dark"] .house-survey-reference-content,
+html[data-theme="dark"] .house-survey-reference-perimeter,
+html[data-theme="dark"] .house-survey-reference-notes { border-color: var(--line); }
 html[data-theme="dark"] .button-secondary,
 html[data-theme="dark"] .overview-shortcut,
 html[data-theme="dark"] .houses-teams-tabs,
@@ -2296,8 +2320,20 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
 .pdf-annotator-text-panel .pdf-annotator-text-hint { flex: 1 1 100%; color: #718394; }
 .pdf-annotator-help { flex: 0 0 auto; margin: 0; padding: 7px 16px; color: #64746c; font-size: 11px; text-align: center; }
 .pdf-annotator-error { flex: 0 0 auto; margin: 0 14px 8px; border: 1px solid #f0c8c3; border-radius: 8px; padding: 8px 11px; background: #fff4f2; color: #9d3f36; font-size: 12px; }
-.pdf-annotator-workspace { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.pdf-annotator-workspace { position: relative; display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .pdf-annotator-viewport { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; align-items: flex-start; justify-content: flex-start; overflow: auto; overscroll-behavior: contain; padding: 14px; background: #e9eef0; touch-action: pan-x pan-y; }
+.pdf-page-loading { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; padding: 20px; background: #edf2f0cc; backdrop-filter: blur(5px); }
+.pdf-page-loading-card { display: grid; width: min(100%, 300px); justify-items: center; gap: 9px; border: 1px solid #dce8df; border-radius: 18px; padding: 24px 26px 20px; background: #fffffff2; box-shadow: 0 18px 50px #173a2820, 0 3px 8px #173a2810; color: #284335; text-align: center; animation: pdf-loading-enter .24s ease-out both; }
+.pdf-page-loading-visual { position: relative; display: grid; width: 64px; height: 64px; place-items: center; margin-bottom: 3px; border-radius: 19px; background: linear-gradient(145deg, #eaf6ed, #dcefe2); color: #27714a; }
+.pdf-page-loading-file { display: grid; width: 34px; height: 40px; place-items: center; border: 1px solid #c8dfcf; border-radius: 7px; background: #fff; box-shadow: 0 3px 8px #205a3718; font-size: 9px; font-weight: 850; letter-spacing: .04em; }
+.pdf-page-loading-spinner { position: absolute; inset: -5px; border: 2px solid #2d8d5b22; border-top-color: #278650; border-right-color: #278650; border-radius: 50%; animation: pdf-loading-spin .9s linear infinite; }
+.pdf-page-loading-card > strong { color: #233d2e; font-size: 14px; letter-spacing: -.01em; }
+.pdf-page-loading-detail { min-height: 16px; color: #74857a; font-size: 11px; }
+.pdf-page-loading-track { position: relative; width: 100%; height: 4px; overflow: hidden; margin-top: 5px; border-radius: 999px; background: #e8efe9; }
+.pdf-page-loading-track > span { position: absolute; inset: 0 auto 0 -38%; width: 38%; border-radius: inherit; background: linear-gradient(90deg, #3da16a, #80c99b); animation: pdf-loading-progress 1.35s ease-in-out infinite; }
+@keyframes pdf-loading-spin { to { transform: rotate(360deg); } }
+@keyframes pdf-loading-progress { 0% { transform: translateX(0); } 100% { transform: translateX(365%); } }
+@keyframes pdf-loading-enter { from { opacity: 0; transform: translateY(5px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .pdf-page-surface { position: relative; flex: 0 0 auto; margin: auto; background: #fff; box-shadow: 0 4px 18px #172d3a24; }
 .pdf-page-surface img { display: block; max-width: none; max-height: none; object-fit: contain; }
 #pdf-annotator-canvas { position: absolute; inset: 0 auto auto 0; display: block; touch-action: none; }
@@ -2411,6 +2447,20 @@ html[data-theme="dark"] .pdf-annotator-page-selection { color: #c4d4ca; }
 html[data-theme="dark"] .pdf-annotator-help { color: #a7b8ae; }
 html[data-theme="dark"] .pdf-annotator-error { border-color: #794944; background: #352321; color: #ffc4bb; }
 html[data-theme="dark"] .pdf-annotator-viewport { background-color: #101815; background-image: radial-gradient(#34473d 0.8px, transparent 0.8px); background-size: 18px 18px; }
+html[data-theme="dark"] .pdf-page-loading { background: #101815cc; }
+html[data-theme="dark"] .pdf-page-loading-card { border-color: #3a5143; background: #1d2b23f2; color: #e2eee6; }
+html[data-theme="dark"] .pdf-page-loading-visual { background: linear-gradient(145deg, #263d2e, #203528); color: #91d4a7; }
+html[data-theme="dark"] .pdf-page-loading-file { border-color: #496552; background: #1d2b23; }
+html[data-theme="dark"] .pdf-page-loading-spinner { border-color: #74c89333; border-top-color: #7bc995; border-right-color: #7bc995; }
+html[data-theme="dark"] .pdf-page-loading-card > strong { color: #e2eee6; }
+html[data-theme="dark"] .pdf-page-loading-detail { color: #a7b8ae; }
+html[data-theme="dark"] .pdf-page-loading-track { background: #32443a; }
+@media (prefers-reduced-motion: reduce) {
+  .pdf-page-loading-card,
+  .pdf-page-loading-spinner,
+  .pdf-page-loading-track > span { animation: none; }
+  .pdf-page-loading-track > span { inset-inline-start: 22%; width: 56%; }
+}
 html[data-theme="dark"] .pdf-page-surface { background: #fff; box-shadow: 0 8px 28px #0009, 0 0 0 1px #52675b; }
 html[data-theme="dark"] .pdf-annotator-toolbar button:focus-visible { outline-color: #8bd5a7; }
 html[data-theme="dark"] .pdf-annotator-icon-palette { border-color: #35483f; background: #1b2823; }
@@ -4018,7 +4068,7 @@ body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-works
 .ventilation-house-filter:focus-visible { outline: 3px solid #77aa8b; outline-offset: 2px; }
 .ventilation-house-filter span { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border-radius: 10px; padding: 0 5px; background: #edf2ee; color: #52665a; font-size: 9px; }
 .ventilation-house-filter.active span { background: #ffffff30; color: #fff; }
-.ventilation-house-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 16px; }
+.ventilation-house-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
 .ventilation-house-card { display: flex; min-width: 0; flex-direction: column; border-color: #e3eae5; border-radius: 13px; padding: 20px; box-shadow: 0 4px 15px #203a2b08; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-color: #e0e9e3; border-radius: 14px; padding: 18px; box-shadow: 0 4px 16px #203a2b0a; }
 .ventilation-house-card:hover { transform: translateY(-2px); border-color: #c9ddd0; box-shadow: 0 10px 24px #203a2b12; }
@@ -4701,6 +4751,432 @@ html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor
     display: none;
   }
 }
+
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+  display: grid;
+  grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);
+  align-items: stretch;
+  gap: 18px;
+  min-height: 0;
+  border: 1px solid #d6e5db;
+  border-top: 3px solid #39a56a;
+  border-radius: 20px;
+  padding: 20px;
+  background:
+    radial-gradient(ellipse at 2% 0, #eff8f1 0, transparent 36%),
+    linear-gradient(145deg, #fff 0%, #f8fbf8 100%);
+  box-shadow: 0 10px 28px #203a2b10, inset 0 1px #ffffff;
+}
+body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card:hover {
+  transform: translateY(-2px);
+  border-color: #b7d2c0;
+  border-top-color: #258a54;
+  box-shadow: 0 16px 34px #203a2b18, inset 0 1px #ffffff;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-top {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  border: 0;
+  padding: 2px 0 0;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta {
+  min-width: 0;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta h2 {
+  margin: 1px 0 0;
+  font-size: clamp(17px, 1.6vw, 21px);
+  line-height: 1.2;
+  letter-spacing: -.025em;
+  overflow-wrap: anywhere;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta p {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-status-stack {
+  align-items: flex-end;
+  padding-top: 1px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .status-pill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 750;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {
+  align-content: start;
+  gap: 14px;
+  border: 1px solid #d8e8dc;
+  border-radius: 16px;
+  padding: 16px;
+  background: linear-gradient(145deg, #f3faf5, #eaf5ed);
+  box-shadow: inset 0 1px #ffffffb3;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading {
+  align-items: flex-start;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > span {
+  padding-top: 5px;
+  color: #4d7159;
+  font-size: 10px;
+  letter-spacing: .12em;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > strong {
+  max-width: 62%;
+  border: 1px solid #cfe4d4;
+  border-radius: 12px;
+  padding: 8px 11px;
+  background: #e2f2e6;
+  color: #235d38;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts {
+  gap: 12px 18px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts > span {
+  min-width: 120px;
+  gap: 4px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts small {
+  color: #678170;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .025em;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts strong {
+  color: #263f30;
+  font-size: 13px;
+  line-height: 1.45;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: auto;
+  padding-top: 0;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button {
+  min-height: 43px;
+  flex: 1 1 150px;
+  border-radius: 12px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 750;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:first-child {
+  border-color: #287b4b;
+  background: linear-gradient(135deg, #328a55, #267346);
+  color: #fff;
+  box-shadow: 0 4px 11px #26734624;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:first-child:hover {
+  border-color: #1d673b;
+  background: linear-gradient(135deg, #287d49, #1f633c);
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 12px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-delivery-assignment,
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 0;
+  border: 1px solid #dfe9e2;
+  border-radius: 16px;
+  padding: 15px;
+  background: linear-gradient(150deg, #fff, #f6f9f6);
+  box-shadow: 0 3px 12px #203a2b08;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-heading,
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-heading {
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-heading h3,
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-heading h3 {
+  color: #243f30;
+  font-size: 14px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-heading p,
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-heading p {
+  margin-top: 4px;
+  color: #718077;
+  font-size: 11px;
+  line-height: 1.45;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #53675a;
+  font-size: 11px;
+  font-weight: 700;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid #d4e0d7;
+  border-radius: 11px;
+  padding: 0 34px 0 11px;
+  background: #fff;
+  color: #24392c;
+  font-size: 12px;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select:focus-visible {
+  border-color: #3c9b62;
+  outline: 0;
+  box-shadow: 0 0 0 3px #3c9b6224;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) button {
+  min-width: 145px;
+  min-height: 44px;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 750;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-status,
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-status {
+  max-width: 48%;
+  border: 1px solid #eadcbd;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #fff6e6;
+  color: #795b27;
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: center;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-status:not(.is-needed),
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-status.is-assigned {
+  border-color: #cfe4d4;
+  background: #e9f5ec;
+  color: #286440;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment button:disabled {
+  border-color: #dce5df;
+  background: #e9eeeb;
+  color: #829087;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary :is(.supervisor-ewi-card-actions .button, .supervisor-ewi-seai),
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow select {
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease, transform .16s ease;
+}
+body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:focus-visible {
+  outline: 3px solid #4d9d6c;
+  outline-offset: 3px;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+  border-color: #3b5747;
+  border-top-color: #54d18a;
+  background:
+    radial-gradient(ellipse at 0 0, #233d2e 0, transparent 40%),
+    linear-gradient(145deg, #202f28 0%, #19241f 100%);
+  box-shadow: 0 12px 32px #0004, inset 0 1px #ffffff0b;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card:hover {
+  border-color: #5b8068;
+  border-top-color: #7de4a3;
+  box-shadow: 0 18px 38px #0005, inset 0 1px #ffffff12;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta h2 {
+  color: #f0f7f2;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta p {
+  color: #c0d0c6;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-avatar {
+  border-color: #41604d;
+  background: linear-gradient(145deg, #2d4938, #23382c);
+  color: #c2f0cf;
+  box-shadow: inset 0 1px #ffffff10, 0 5px 14px #0002;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {
+  border-color: #3e5b48;
+  background: linear-gradient(145deg, #20372a, #1c3025);
+  box-shadow: inset 0 1px #ffffff0a;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > span {
+  color: #b5caba;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > strong {
+  border-color: #456b50;
+  background: #2a4732;
+  color: #d7f4dd;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts small {
+  color: #b1c6b7;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts strong {
+  color: #f0f6f1;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-delivery-assignment,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment {
+  border-color: #3a5145;
+  background: linear-gradient(150deg, #222f29, #1c2822);
+  box-shadow: 0 4px 14px #0002, inset 0 1px #ffffff08;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-heading h3,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-heading h3 {
+  color: #edf5ef;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-heading p,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-heading p {
+  color: #b3c2b9;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) label {
+  color: #c5d3ca;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select {
+  border-color: #4b6254;
+  background: #17211c;
+  color: #f0f6f1;
+  color-scheme: dark;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) select:focus-visible {
+  border-color: #6fbd88;
+  box-shadow: 0 0 0 3px #6fbd8835;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-status,
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-status {
+  border-color: #635337;
+  background: #342d20;
+  color: #f3d9a1;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-assignment-status:not(.is-needed),
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment-status.is-assigned {
+  border-color: #3f694b;
+  background: #203a28;
+  color: #c3eccb;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment button:disabled {
+  border-color: #3a4b41;
+  background: #29352e;
+  color: #9bab9f;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:first-child {
+  border-color: #38935b;
+  background: linear-gradient(135deg, #2c8a55, #226a42);
+  color: #fff;
+  box-shadow: 0 5px 15px #0003;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:first-child:hover {
+  border-color: #56b878;
+  background: linear-gradient(135deg, #36a064, #2a7d4d);
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:last-child {
+  border-color: #4a6654;
+  background: #26372d;
+  color: #e4f0e7;
+}
+html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button:last-child:hover {
+  border-color: #6d9477;
+  background: #304538;
+  color: #fff;
+}
+@media (max-width: 900px) {
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 17px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary {
+    gap: 13px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+@media (max-width: 560px) {
+  body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {
+    gap: 12px;
+    border-radius: 17px;
+    padding: 14px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-top {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta h2 {
+    font-size: 17px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary .house-meta p {
+    font-size: 11px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai {
+    gap: 11px;
+    border-radius: 14px;
+    padding: 13px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > span {
+    font-size: 9px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-heading > strong {
+    max-width: 66%;
+    font-size: 10px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-seai-facts > span {
+    min-width: 105px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-delivery-assignment,
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment {
+    gap: 10px;
+    border-radius: 14px;
+    padding: 13px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-assignment > * {
+    grid-column: 1;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow :is(.supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) button {
+    width: 100%;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions {
+    gap: 8px;
+  }
+  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .button {
+    min-height: 42px;
+    flex-basis: 135px;
+    padding-inline: 9px;
+    font-size: 11px;
+  }
+}
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty strong,
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-workload-heading h2 { color: #eaf4ef; }
 html[data-theme="dark"] body.plumbing-supervisor-mode .ventilation-house-empty p,
@@ -5124,6 +5600,7 @@ html[data-theme="dark"] .survey-room-seai-pdf-list .seai-document-name small { c
 .ventilation-shared-pdfs > summary > .seai-sec-title { color: #294d38; font-size: 13px; }
 .ventilation-shared-pdfs > summary > .seai-sec-count { border-color: #d5e5da; background: #fff; color: #4a6b55; }
 .ventilation-shared-pdf-list { gap: 10px; padding: 10px; }
+.ventilation-shared-pdfs[open] .ventilation-shared-pdf-list { max-height: min(320px, 42vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .ventilation-shared-pdf-list li { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 7px 10px; border-color: #e0e9e3; border-radius: 11px; padding: 12px; }
 .ventilation-shared-pdf-list li:hover { border-color: #a9cbb4; box-shadow: 0 3px 10px #24463012; }
 .ventilation-shared-pdf-list .ventilation-pdf-card { position: relative; border-color: #dce8df; border-radius: 13px; padding: 13px; background: linear-gradient(145deg, #fff, #f8fbf8); box-shadow: 0 2px 8px #21432d08; }
@@ -5504,6 +5981,13 @@ html[data-theme="dark"] :is(#houses-list, #plumbing-supervisor-house-list) .supe
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card { gap: 0; padding: 14px 16px 16px; border-radius: 14px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .house-top { padding-bottom: 10px; border-bottom: 1px solid #e3eae5; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .house-status-stack { align-items: flex-end; gap: 6px; }
+#plumbing-supervisor-house-list .supervisor-house-card .house-status-stack .status-pill,
+#plumbing-supervisor-house-list .supervisor-house-card .plumbing-job-status { border: 1px solid #4d9a69; background: transparent; color: #286541; }
+#plumbing-supervisor-house-list .supervisor-house-card .plumbing-job-status.is-needed { border-color: #b98531; color: #805a1b; }
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-card .house-status-stack .status-pill,
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-card .plumbing-job-status { border-color: #6ea982; background: transparent; color: #b8e4c3; }
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-card .plumbing-job-status.is-needed { border-color: #b38c4d; color: #f0d397; }
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-card .house-status-stack .status-pill.closed { border-color: #a26d65; color: #efb9ae; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .supervisor-house-assignment { margin-top: 12px; display: grid; gap: 10px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .supervisor-assignment-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-card .supervisor-assignment-heading h3 { margin: 0; font-size: 14px; }

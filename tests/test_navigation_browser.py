@@ -1363,6 +1363,9 @@ class NavigationBrowserTests(unittest.TestCase):
                     ("VENT-DASHBOARD-COMPLETE", teamlead_id),
                 ],
             )
+            db.execute(
+                "INSERT INTO houses (id, is_finished) VALUES ('VENT-DASHBOARD-COMPLETE', 0)"
+            )
 
         login = self.page.request.post(
             f"{self.base_url}/api/auth/login",
@@ -1473,8 +1476,40 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotIn("Assigned Vent team:", pending_card.inner_text())
         shared_pdf = pending_card.locator(".ventilation-shared-pdfs")
         self.assertFalse(shared_pdf.evaluate("element => element.open"))
+        complete_card.wait_for(state="visible")
+        complete_card_height = complete_card.evaluate(
+            "element => element.getBoundingClientRect().height"
+        )
         shared_pdf.locator("summary").click()
         self.assertTrue(shared_pdf.evaluate("element => element.open"))
+        shared_pdf_metrics = shared_pdf.locator(
+            ".ventilation-shared-pdf-list"
+        ).evaluate(
+            """list => {
+              const original = list.firstElementChild;
+              for (let index = 0; index < 8; index += 1) {
+                list.appendChild(original.cloneNode(true));
+              }
+              return {
+                clientHeight: list.clientHeight,
+                scrollHeight: list.scrollHeight,
+                overflowY: getComputedStyle(list).overflowY
+              };
+            }"""
+        )
+        self.assertEqual(shared_pdf_metrics["overflowY"], "auto")
+        self.assertGreater(
+            shared_pdf_metrics["scrollHeight"],
+            shared_pdf_metrics["clientHeight"],
+        )
+        self.assertAlmostEqual(
+            complete_card.evaluate("element => element.getBoundingClientRect().height"),
+            complete_card_height,
+            delta=1,
+        )
+        shared_pdf.locator(".ventilation-shared-pdf-list").evaluate(
+            "list => list.querySelectorAll('li').forEach((item, index) => { if (index >= 2) item.remove(); })"
+        )
         self.assertTrue(
             pending_card.locator(".ventilation-house-completion").evaluate(
                 "element => element.parentElement.classList.contains('ventilation-house-top')"
@@ -1862,8 +1897,28 @@ class NavigationBrowserTests(unittest.TestCase):
         completed_vent_card = self.page.locator(
             ".ventilation-house-card.is-complete"
         )
-        self.assertIn("Ventilation complete", completed_vent_card.inner_text())
-        self.assertIn("Completed by Ventilation Teammate", completed_vent_card.inner_text())
+        ventilation_house = self.page.locator(".ventilation-house-card").filter(
+            has_text="VENT-DASHBOARD-COMPLETE"
+        )
+        self.assertIn("Ventilation complete", ventilation_house.inner_text())
+        self.assertIn("Completed by Ventilation Teammate", ventilation_house.inner_text())
+        ventilation_house.get_by_role(
+            "button", name="Mark Vent work outstanding"
+        ).click()
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('.ventilation-house-card')]
+              .some(card => card.textContent.includes('VENT-DASHBOARD-COMPLETE') &&
+                !card.classList.contains('is-complete'))"""
+        )
+        self.assertIn("Ventilation outstanding", ventilation_house.inner_text())
+        ventilation_house.get_by_role(
+            "button", name="Mark Vent work done"
+        ).click()
+        self.page.wait_for_function(
+            """() => [...document.querySelectorAll('.ventilation-house-card')]
+              .some(card => card.textContent.includes('VENT-DASHBOARD-COMPLETE') &&
+                card.classList.contains('is-complete'))"""
+        )
         self.assertIn(
             "Ventilation outstanding",
             self.page.locator(".ventilation-house-card:not(.is-complete)").inner_text(),
@@ -2544,14 +2599,31 @@ class NavigationBrowserTests(unittest.TestCase):
             )
             db.execute(
                 """
-                INSERT INTO provided_houses(id, owner_name, ready_for_start)
-                VALUES ('ACTIVE-ASSIGN', 'Active Owner', 0)
+                INSERT INTO provided_houses(
+                    id, owner_name, ready_for_start,
+                    plan_scaffolding_required, plan_esb_required,
+                    plan_plumber_required, plan_vent_required,
+                    plan_plumber_done_by, plan_plumber_done_at,
+                    plan_vent_done_by, plan_vent_done_at
+                )
+                VALUES (
+                    'ACTIVE-ASSIGN', 'Active Owner', 0, 1, 1, 1, 1,
+                    'Plumber Browser', '2026-11-08T09:00:00',
+                    'Vent Browser', '2026-11-08T09:30:00'
+                )
                 """
             )
             db.execute(
                 """
                 INSERT INTO houses(id, owner_name, employee_name, is_finished)
                 VALUES ('ACTIVE-ASSIGN', 'Active Owner', 'Assign Browser', 0)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists
+                    (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                VALUES ('ACTIVE-ASSIGN', 'not_done', 'no', 'done')
                 """
             )
             db.execute(
@@ -2689,7 +2761,7 @@ class NavigationBrowserTests(unittest.TestCase):
               '/api/assign/seai-record/ACTIVE-ASSIGN'
             )).status"""
         )
-        self.assertEqual(admin_record_access, 403)
+        self.assertEqual(admin_record_access, 200)
         self.page.locator("#account-button").click()
         self.page.locator("#account-sign-out").click()
         self.page.locator("#auth-screen:not(.hidden)").wait_for()
@@ -2767,6 +2839,46 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(active_card.locator(".stage-switch").count(), 0)
         self.assertEqual(active_card.locator(".house-note-open").count(), 0)
         self.assertEqual(active_card.locator(".house-snags-open").count(), 0)
+        scaffolding_toggle = active_card.locator(
+            '.house-checklist-status[data-checklist-field="scaffolding_status"]'
+        )
+        esb_toggle = active_card.locator(
+            '.house-checklist-status[data-checklist-field="esb_unclipped"]'
+        )
+        self.assertTrue(scaffolding_toggle.is_visible())
+        self.assertTrue(esb_toggle.is_visible())
+        self.assertEqual(
+            active_card.locator(
+                '.house-checklist-status[data-checklist-field="plumber_status"]'
+            ).count(),
+            0,
+        )
+        plumber_row = active_card.locator(".checklist-card-row").filter(
+            has_text="Plumber work"
+        )
+        vent_row = active_card.locator(".checklist-card-row").filter(
+            has_text="Vent work"
+        )
+        self.assertEqual(plumber_row.locator(".checklist-requirement").count(), 0)
+        self.assertEqual(vent_row.locator(".checklist-requirement").count(), 0)
+        self.assertIn("Completed by Plumber Browser", plumber_row.inner_text())
+        self.assertIn("Completed by Vent Browser", vent_row.inner_text())
+        scaffolding_toggle.check()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '#houses-list .house-active:has(.house-body[data-house-id="ACTIVE-ASSIGN"]) ' +
+              '.checklist-card-row:has([data-checklist-field="scaffolding_status"]) ' +
+              '.checklist-completion-audit'
+            )?.textContent.includes('Checked by Assign Dashboard')"""
+        )
+        esb_toggle.check()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '#houses-list .house-active:has(.house-body[data-house-id="ACTIVE-ASSIGN"]) ' +
+              '.checklist-card-row:has([data-checklist-field="esb_unclipped"]) ' +
+              '.checklist-completion-audit'
+            )?.textContent.includes('Checked by Assign Dashboard')"""
+        )
         active_card.locator(".assign-seai-details").click()
         self.page.locator("#assign-seai-house-detail").wait_for(state="visible")
         self.assertEqual(
@@ -5483,7 +5595,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Vent work", card.inner_text())
         self.assertIn("Complete", card.inner_text())
         self.assertIn("Vent Team Member", card.inner_text())
-        self.assertIn("Checked by Vent Team Member", card.inner_text())
+        self.assertIn("Completed by Vent Team Member", card.inner_text())
         with server.connect_db() as db:
             db.execute(
                 """
@@ -5519,7 +5631,7 @@ class NavigationBrowserTests(unittest.TestCase):
                 card.textContent.includes('Vent Team Member') &&
                 card.textContent.includes('Complete'))"""
         )
-        self.assertIn("Checked by Vent Team Member", card.inner_text())
+        self.assertIn("Completed by Vent Team Member", card.inner_text())
         self.assertEqual(self.browser_errors, [])
         self.assertEqual(self.browser_errors, [])
 
@@ -5686,7 +5798,7 @@ class NavigationBrowserTests(unittest.TestCase):
             short_card.bounding_box()["height"],
             delta=1,
         )
-        self.assertLess(long_card.bounding_box()["height"], 680)
+        self.assertLess(long_card.bounding_box()["height"], 760)
         for house_card in (long_card, short_card):
             body_box = house_card.locator(".house-body").bounding_box()
             actions_box = house_card.locator(".house-card-actions").bounding_box()
@@ -6255,7 +6367,7 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(
             actions.locator("button").first.inner_text(),
-            "View on map",
+            "View SEAI house details\n→",
         )
         active_dot = card.locator(".house-workflow-steps li.current > span")
         self.assertEqual(
@@ -6723,6 +6835,128 @@ class NavigationBrowserTests(unittest.TestCase):
         )
         self.assertEqual(self.browser_errors, [])
 
+    def test_active_house_card_references_ready_stage_survey_and_work_checklist(self):
+        survey = {
+            "windows": [{"w": 1.2, "h": 1.4, "qty": 2}],
+            "doors": [{"w": 0.9, "h": 2.0, "qty": 1}],
+            "house_corners": [3.2, 4.1],
+            "perimeter_m": 42.5,
+            "notes": "Survey access through the side gate.",
+        }
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO provided_houses
+                    (id, postcode, source, plan_scaffolding_required,
+                     plan_scaffolding_notes, plan_esb_required, plan_plumber_required,
+                     plan_plumber_notes, plan_vent_required, plan_vent_notes)
+                VALUES ('ACTIVE-SURVEY-REFERENCE', 'D03 TEST', 'government',
+                        1, 'Rear access only', 0, 1, 'Isolate old pipework',
+                        1, 'Check attic duct route')
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO houses(id, postcode, stage)
+                VALUES ('ACTIVE-SURVEY-REFERENCE', 'D03 TEST', 1)
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_status_history
+                    (house_id, status, changed_by, changed_at)
+                VALUES ('ACTIVE-SURVEY-REFERENCE', 'ready', 'Assign Operator',
+                        '2026-11-08T09:00:00'),
+                       ('ACTIVE-SURVEY-REFERENCE', 'active', 'Assign Operator',
+                        '2026-11-08T10:00:00')
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys
+                    (house_id, data, notes, updated_by, updated_at)
+                VALUES (?, ?, ?, 'Ready Stage Surveyor', '2026-11-08T09:30:00')
+                """,
+                (
+                    "ACTIVE-SURVEY-REFERENCE",
+                    json.dumps(survey),
+                    survey["notes"],
+                ),
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists
+                    (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                VALUES ('ACTIVE-SURVEY-REFERENCE', 'not_done', 'not_esb', 'not_done')
+                """
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO seai_applications "
+                "(application_id, detail_data_json) VALUES (?, ?)",
+                (
+                    "ACTIVE-SURVEY-REFERENCE",
+                    json.dumps(
+                        {
+                            "Application Details": {
+                                "Application ID": "ACTIVE-SEAI-REFERENCE",
+                                "Applicant Name": "Active SEAI Applicant",
+                            },
+                            "Measures": [
+                                {
+                                    "Name": "External Wall Insulation",
+                                    "Survey Quantity": "42",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.locator('.nav-item[data-tab="houses"]').click()
+        card = self.page.locator(
+            '.house-active:has(.house-body[data-house-id="ACTIVE-SURVEY-REFERENCE"])'
+        )
+        card.wait_for()
+        reference = card.locator("details.house-survey-reference")
+        reference.wait_for()
+        reference.locator("summary").click()
+        self.assertIn("Perimeter 42.5 m", reference.inner_text())
+        self.assertIn("Window", reference.inner_text())
+        self.assertIn("1.2 × 1.4 m", reference.inner_text())
+        self.assertIn("Door", reference.inner_text())
+        self.assertIn("House corner lengths", reference.inner_text())
+        self.assertIn("Ready Stage Surveyor", reference.inner_text())
+        self.assertIn("Survey access through the side gate.", reference.inner_text())
+        checklist = card.locator(".house-checklist-card")
+        self.assertIn("Ready-stage work checklist", checklist.text_content())
+        self.assertIn("Rear access only", checklist.inner_text())
+        self.assertIn("Isolate old pipework", checklist.inner_text())
+        self.assertIn("Check attic duct route", checklist.inner_text())
+        seai_details_button = card.locator(".assign-seai-details")
+        self.assertEqual(
+            " ".join(seai_details_button.inner_text().split()),
+            "View SEAI house details →",
+        )
+        seai_details_button.click()
+        self.page.locator("#assign-seai-house-detail").wait_for(state="visible")
+        self.assertEqual(
+            self.page.locator("#assign-seai-house-detail-title").inner_text(),
+            "ACTIVE-SURVEY-REFERENCE",
+        )
+        self.page.wait_for_function(
+            """() => document.querySelector('#assign-seai-house-record')
+              ?.textContent.includes('Active SEAI Applicant')"""
+        )
+        self.page.locator("#assign-seai-house-back").click()
+        card.wait_for(state="visible")
+        self.assertEqual(self.browser_errors, [])
+
     def test_surveyor_work_plan_becomes_active_house_checklist(self):
         with server.connect_db() as db:
             with db:
@@ -6774,7 +7008,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(
             card.locator(".checklist-card-label").filter(
                 has_text="Scaffolding"
-            ).locator("small").inner_text(),
+            ).locator("small").first.inner_text(),
             "Use rear access",
         )
         self.assertIn(
@@ -6786,7 +7020,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(
             card.locator(".checklist-card-label").filter(
                 has_text="Plumber work"
-            ).locator("small").inner_text(),
+            ).locator("small").first.inner_text(),
             "Coordinate with owner",
         )
         scaffolding.check()

@@ -3382,12 +3382,20 @@ def _dashboard(db):
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
                        COALESCE(hs.updated_by, '') AS survey_updated_by,
                        COALESCE(hs.updated_at, '') AS survey_updated_at,
+                       hs.data AS survey_data,
+                       COALESCE(hs.notes, '') AS survey_notes,
                        p.plan_scaffolding_required,
                        COALESCE(p.plan_scaffolding_notes, '') AS plan_scaffolding_notes,
+                       COALESCE(p.plan_scaffolding_done_by, '') AS plan_scaffolding_done_by,
+                       COALESCE(p.plan_scaffolding_done_at, '') AS plan_scaffolding_done_at,
                        p.plan_esb_required,
                        COALESCE(p.plan_esb_notes, '') AS plan_esb_notes,
+                       COALESCE(p.plan_esb_done_by, '') AS plan_esb_done_by,
+                       COALESCE(p.plan_esb_done_at, '') AS plan_esb_done_at,
                        p.plan_plumber_required,
                        COALESCE(p.plan_plumber_notes, '') AS plan_plumber_notes,
+                       COALESCE(p.plan_plumber_done_by, '') AS plan_plumber_done_by,
+                       COALESCE(p.plan_plumber_done_at, '') AS plan_plumber_done_at,
                        p.plan_vent_required,
                        COALESCE(p.plan_vent_notes, '') AS plan_vent_notes,
                        COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
@@ -6196,6 +6204,22 @@ class LegacyRouteHandlers:
                     dashboard["teamlead_ewi_houses"] = _teamlead_ewi_houses(
                         db, user["id"]
                     )
+            can_view_survey_records = any(
+                _has_access_profile(user, role)
+                for role in ("admin", "assign", "surveyor", "supervisor")
+            )
+            for house in dashboard["house_list"]:
+                raw_survey = house.pop("survey_data", None)
+                if not can_view_survey_records:
+                    house.pop("survey_notes", None)
+                    continue
+                try:
+                    survey = json.loads(raw_survey) if raw_survey else None
+                except (TypeError, json.JSONDecodeError):
+                    raise ApiError(500, "Stored house survey data is invalid.")
+                if survey is not None and not isinstance(survey, dict):
+                    raise ApiError(500, "Stored house survey data is invalid.")
+                house["survey"] = survey
             self._send_json(200, dashboard)
         elif path == "/api/weather":
             user = self._login_required()
@@ -6269,8 +6293,11 @@ class LegacyRouteHandlers:
             user = self._login_required()
             if user is None:
                 return
-            if not _has_access_profile(user, "assign"):
-                self._send_json(403, {"error": "Assign role access is required."})
+            if not (
+                _has_access_profile(user, "assign")
+                or _has_access_profile(user, "admin")
+            ):
+                self._send_json(403, {"error": "Admin or Assign role access is required."})
                 return
             raw_house_id = path[len("/api/assign/seai-record/"):]
             if not raw_house_id or "/" in raw_house_id:
@@ -6299,6 +6326,12 @@ class LegacyRouteHandlers:
                     if house is None:
                         self._send_json(404, {"error": "House was not found."})
                         return
+                if (
+                    not _has_access_profile(user, "assign")
+                    and not bool(house["is_active"])
+                ):
+                    self._send_json(404, {"error": "House was not found."})
+                    return
                 application_table = db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' "
                     "AND name = 'seai_applications'"
@@ -9180,7 +9213,8 @@ class LegacyRouteHandlers:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "House checklist must be a JSON object.")
-                if not any(_has_access_profile(user, role) for role in ("admin", "employee", "plumber")):
+                is_assign = _has_access_profile(user, "assign")
+                if not any(_has_access_profile(user, role) for role in ("admin", "employee", "plumber", "assign")):
                     raise ApiError(403, "Administrator or employee access is required.")
                 house_id = str(payload.get("house_id") or "").strip()
                 if not house_id:
@@ -9195,6 +9229,13 @@ class LegacyRouteHandlers:
                 }
                 if not supplied_statuses:
                     raise ApiError(400, "Choose at least one house checklist status.")
+                if is_assign and not set(supplied_statuses).issubset(
+                    {"scaffolding_status", "esb_unclipped"}
+                ):
+                    raise ApiError(
+                        403,
+                        "Assign access is limited to scaffolding and ESB checklist items.",
+                    )
                 for name, value in supplied_statuses.items():
                     if (
                         not isinstance(value, str)
@@ -9206,8 +9247,15 @@ class LegacyRouteHandlers:
                 with connect_db() as db:
                     with db:
                         is_active = db.execute(
-                            "SELECT 1 FROM houses WHERE id = ?", (house_id,)
+                            "SELECT is_finished FROM houses WHERE id = ?", (house_id,)
                         ).fetchone()
+                        if is_assign and (
+                            not is_active or bool(is_active["is_finished"])
+                        ):
+                            raise ApiError(
+                                403,
+                                "Assign access can update checklists only on active houses.",
+                            )
                         if not is_active:
                             if not _has_access_profile(user, "admin"):
                                 raise ApiError(
@@ -9240,6 +9288,32 @@ class LegacyRouteHandlers:
                                 raise ApiError(404, "House was not found.")
                             self._send_json(200, {"house_id": house_id, "saved": True})
                             return
+                        completion_updates = {}
+                        if is_assign:
+                            required_columns = {
+                                "scaffolding_status": "plan_scaffolding_required",
+                                "esb_unclipped": "plan_esb_required",
+                            }
+                            for status_name, column_name in required_columns.items():
+                                if status_name not in supplied_statuses:
+                                    continue
+                                required = db.execute(
+                                    f"SELECT {column_name} FROM provided_houses WHERE id = ?",
+                                    (house_id,),
+                                ).fetchone()
+                                value = supplied_statuses[status_name]
+                                is_completed_or_pending = value in {
+                                    "done", "not_done", "yes", "no"
+                                }
+                                if (
+                                    required is None
+                                    or required[column_name] != 1
+                                    or not is_completed_or_pending
+                                ):
+                                    raise ApiError(
+                                        403,
+                                        "Assign access can update only required scaffolding or ESB work.",
+                                    )
                         db.execute(
                             "INSERT OR IGNORE INTO house_checklists (house_id) VALUES (?)",
                             (house_id,),
@@ -9249,26 +9323,33 @@ class LegacyRouteHandlers:
                                 f"UPDATE house_checklists SET {name} = ? WHERE house_id = ?",
                                 (value, house_id),
                             )
-                        if "plumber_status" in supplied_statuses:
+                            trade = {
+                                "scaffolding_status": "scaffolding",
+                                "esb_unclipped": "esb",
+                                "plumber_status": "plumber",
+                            }[name]
+                            completed = value in {"done", "yes"}
                             completed_at = (
                                 datetime.now().isoformat(timespec="seconds")
-                                if supplied_statuses["plumber_status"] == "done"
+                                if completed
                                 else ""
                             )
+                            completed_by = user["display_name"] if completed else ""
                             db.execute(
-                                """
-                                UPDATE provided_houses
-                                SET plan_plumber_done_by = ?,
-                                    plan_plumber_done_at = ?
-                                WHERE id = ?
-                                """,
-                                (
-                                    user["display_name"] if completed_at else "",
-                                    completed_at,
-                                    house_id,
-                                ),
+                                f"UPDATE provided_houses SET plan_{trade}_done_by = ?, "
+                                f"plan_{trade}_done_at = ? WHERE id = ?",
+                                (completed_by, completed_at, house_id),
                             )
-                self._send_json(200, {"house_id": house_id, "saved": True})
+                            completion_updates[f"{trade}_done_by"] = completed_by
+                            completion_updates[f"{trade}_done_at"] = completed_at
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "saved": True,
+                        **completion_updates,
+                    },
+                )
             elif path == "/api/house-work-plan":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(
@@ -9431,23 +9512,45 @@ class LegacyRouteHandlers:
                             UPDATE provided_houses
                             SET plan_{trade}_done_by = ?,
                                 plan_{trade}_done_at = ?
-                            WHERE id = ? AND ready_for_start = 1
+                            WHERE id = ?
                               AND plan_{trade}_required = 1
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM houses
-                                  WHERE houses.id = provided_houses.id
+                              AND (? = 1 OR plan_{trade}_done_at != '')
+                              AND (
+                                  (
+                                      ready_for_start = 1
+                                      AND NOT EXISTS (
+                                          SELECT 1 FROM houses
+                                          WHERE houses.id = provided_houses.id
+                                      )
+                                  )
+                                  OR (
+                                      ? = 'vent'
+                                      AND EXISTS (
+                                          SELECT 1 FROM houses
+                                          WHERE houses.id = provided_houses.id
+                                            AND houses.is_finished = 0
+                                      )
+                                      AND EXISTS (
+                                          SELECT 1 FROM house_vent_assignments assignment
+                                          WHERE assignment.house_id = provided_houses.id
+                                            AND assignment.teamlead_user_id = ?
+                                      )
+                                  )
                               )
                             """,
                             (
                                 user["display_name"] if done else "",
                                 completed_at if done else "",
                                 house_id,
+                                int(done),
+                                trade,
+                                user["id"],
                             ),
                         )
                         if saved.rowcount == 0:
                             raise ApiError(
                                 409,
-                                "Only required work on Ready for start houses can be checked.",
+                                "Only required work on Ready for start houses or assigned active Vent houses can be checked.",
                             )
                 self._send_json(
                     200,

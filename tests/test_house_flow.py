@@ -1901,6 +1901,12 @@ class CalculatorApiTests(HttpBase):
             "/api/auth/login",
             {"username": "seai-detail-employee", "pin": "567890"},
         )
+        endpoint_status, _, _ = self.call(
+            "GET",
+            "/api/assign/seai-record/WH2131",
+            cookie=employee_cookie,
+        )
+        self.assertEqual(endpoint_status, 403)
         _, employee_result, _ = self.call(
             "GET",
             "/api/calculator/houses?status=ready",
@@ -1914,6 +1920,30 @@ class CalculatorApiTests(HttpBase):
             next(house for house in admin_result["houses"] if house["id"] == "WH2131")["seai_summary"]["Application Details"]["Applicant Name"],
             "Sample Applicant",
         )
+
+    def test_admin_can_view_seai_record_for_active_house_only(self):
+        details = {
+            "Application Details": {"Application ID": "ACTIVE-SEAI-01"},
+            "Measures": [{"Name": "External Wall Insulation"}],
+        }
+        with server.connect_db() as db:
+            db.execute(
+                "CREATE TABLE seai_applications "
+                "(application_id TEXT PRIMARY KEY, detail_data_json TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                ("WH2131", json.dumps(details)),
+            )
+
+        status, _, _ = self.call("GET", "/api/assign/seai-record/WH2131")
+        self.assertEqual(status, 404)
+
+        status, result, _ = self.activate({"id": "WH2131"})
+        self.assertEqual(status, 201, result)
+        status, result, _ = self.call("GET", "/api/assign/seai-record/WH2131")
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["seai_details"], details)
 
     def test_seai_measure_variation_can_be_updated_and_is_returned_on_cards(self):
         self.mark_ready("WH2131")
@@ -5726,6 +5756,26 @@ class WorkPlanCompletionTests(HttpBase):
             (cathy_house["plan_vent_done_by"], cathy_house["plan_vent_done_at"]),
             ("", ""),
         )
+        self.assertEqual(self.complete(vent_lead, "vent")[0], 200)
+        with server.connect_db() as db:
+            teamlead_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'vent-lead'"
+            ).fetchone()["id"]
+            db.execute(
+                "INSERT INTO houses (id, is_finished) VALUES ('PLAN-1', 0)"
+            )
+            db.execute(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES ('PLAN-1', ?, 'Vent Coordinator', '2026-11-09T10:00:00')
+                """,
+                (teamlead_id,),
+            )
+        status, result, _ = self.complete(vent_lead, "vent", done=False)
+        self.assertEqual((status, result["done_by"], result["done_at"]), (200, "", ""))
+        status, result, _ = self.complete(vent_lead, "vent", done=True)
+        self.assertEqual((status, result["done_by"]), (200, "Vent Lead"))
         with server.connect_db() as db:
             server._clear_house_survey_records(db, "PLAN-1")
             row = db.execute(
@@ -5788,6 +5838,68 @@ class WorkPlanCompletionTests(HttpBase):
             )
         self.assertEqual(self.complete(cathy, "scaffolding")[0], 409)
 
+    def test_assign_can_check_scaffolding_and_esb_only_on_active_required_work(self):
+        self.assertEqual(self.activate({"id": "PLAN-1"})[0], 201)
+        cathy = self.login("cathy-active-checklist", "Cathy Active", "assign")
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-checklist",
+            {
+                "house_id": "PLAN-1",
+                "scaffolding_status": "done",
+                "esb_unclipped": "yes",
+            },
+            cookie=cathy,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(
+            (
+                result["scaffolding_done_by"],
+                result["esb_done_by"],
+            ),
+            ("Cathy Active", "Cathy Active"),
+        )
+        with server.connect_db() as db:
+            checklist = db.execute(
+                "SELECT scaffolding_status, esb_unclipped "
+                "FROM house_checklists WHERE house_id = 'PLAN-1'"
+            ).fetchone()
+            completion = db.execute(
+                "SELECT plan_scaffolding_done_by, plan_scaffolding_done_at, "
+                "plan_esb_done_by, plan_esb_done_at FROM provided_houses "
+                "WHERE id = 'PLAN-1'"
+            ).fetchone()
+        self.assertEqual(tuple(checklist), ("done", "yes"))
+        self.assertEqual(
+            (completion["plan_scaffolding_done_by"], completion["plan_esb_done_by"]),
+            ("Cathy Active", "Cathy Active"),
+        )
+        self.assertTrue(completion["plan_scaffolding_done_at"])
+        self.assertTrue(completion["plan_esb_done_at"])
+
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-checklist",
+                {"house_id": "PLAN-1", "plumber_status": "done"},
+                cookie=cathy,
+            )[0],
+            403,
+        )
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_esb_required = 0 WHERE id = 'PLAN-1'"
+            )
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-checklist",
+                {"house_id": "PLAN-1", "esb_unclipped": "no"},
+                cookie=cathy,
+            )[0],
+            403,
+        )
+
     def test_reset_clears_checks(self):
         cathy = self.login("cathy-plan", "Cathy", "assign")
         self.assertEqual(self.complete(cathy, "esb")[0], 200)
@@ -5800,14 +5912,27 @@ class WorkPlanCompletionTests(HttpBase):
 
 
 class HouseDashboardVentStatusTests(HttpBase):
-    def test_active_house_dashboard_includes_vent_completion_for_house_cards(self):
+    def test_active_house_dashboard_includes_checklist_completion_for_house_cards(self):
         with server.connect_db() as db:
             with db:
                 server._upsert_house(db, "VENT-CARD-DASHBOARD")
                 db.execute(
                     """
+                    INSERT INTO house_checklists
+                        (house_id, scaffolding_status, esb_unclipped, plumber_status)
+                    VALUES ('VENT-CARD-DASHBOARD', 'done', 'yes', 'done')
+                    """
+                )
+                db.execute(
+                    """
                     UPDATE provided_houses
-                    SET plan_vent_required = 1,
+                    SET plan_scaffolding_done_by = 'Scaffold Worker',
+                        plan_scaffolding_done_at = '2026-11-03T08:00:00',
+                        plan_esb_done_by = 'ESB Worker',
+                        plan_esb_done_at = '2026-11-03T09:00:00',
+                        plan_plumber_done_by = 'Plumber Worker',
+                        plan_plumber_done_at = '2026-11-03T09:30:00',
+                        plan_vent_required = 1,
                         plan_vent_done_by = 'Vent Team Member',
                         plan_vent_done_at = '2026-11-03T10:00:00'
                     WHERE id = 'VENT-CARD-DASHBOARD'
@@ -5819,6 +5944,10 @@ class HouseDashboardVentStatusTests(HttpBase):
             item for item in dashboard["house_list"]
             if item["id"] == "VENT-CARD-DASHBOARD"
         )
+        self.assertEqual(house["plan_scaffolding_done_by"], "Scaffold Worker")
+        self.assertEqual(house["plan_esb_done_by"], "ESB Worker")
+        self.assertEqual(house["plan_plumber_done_by"], "Plumber Worker")
+        self.assertEqual(house["plan_plumber_done_at"], "2026-11-03T09:30:00")
         self.assertEqual(house["plan_vent_done_by"], "Vent Team Member")
         self.assertEqual(house["plan_vent_done_at"], "2026-11-03T10:00:00")
 
@@ -5966,6 +6095,29 @@ class SnagTests(HttpBase):
 
 
 class UiWiringTests(unittest.TestCase):
+    def test_assign_active_checklist_access_is_limited_to_scaffolding_and_esb(self):
+        self.assertIn(
+            'const assignCanEdit =\n          isAssign &&\n          (field === "scaffolding_status" || field === "esb_unclipped") &&\n          Number(required) === 1;',
+            APP_JS,
+        )
+        self.assertIn(
+            "Assign access is limited to scaffolding and ESB checklist items.",
+            (ROOT / "server.py").read_text(encoding="utf-8"),
+        )
+    def test_active_house_cards_link_to_seai_details_for_admin_and_assign(self):
+        self.assertIn(
+            'const canViewSeaiDetails = canManageHouses || hasAccessProfile(state.user, "assign");',
+            APP_JS,
+        )
+        self.assertIn(
+            '${canViewSeaiDetails ? `<button class="text-button assign-seai-details"',
+            APP_JS,
+        )
+        self.assertIn(
+            'if (!hasAccessProfile(state.user, "assign") && !hasAccessProfile(state.user, "admin")) return;',
+            APP_JS,
+        )
+
     def test_teams_tab_cards_are_compact_and_size_to_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
@@ -6064,6 +6216,8 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn("!canAssignEwiWork && !house.plumbing_assignment_pending_activation", APP_JS)
         self.assertIn('house.seai_summary?.["Application Details"]', APP_JS)
         self.assertIn('class="supervisor-ewi-seai"', APP_JS)
+        self.assertIn('class="supervisor-ewi-card-primary"', APP_JS)
+        self.assertIn('class="supervisor-ewi-card-workflow"', APP_JS)
         self.assertIn("supervisor-ewi-delivery-assignment", APP_JS)
         self.assertIn('data-ewi-house-pdfs="${houseId}"', APP_JS)
         self.assertIn(">View house details</button>", APP_JS)
@@ -6079,6 +6233,14 @@ class UiWiringTests(unittest.TestCase):
         )
         self.assertIn(
             "html[data-theme=\"dark\"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card",
+            css,
+        )
+        self.assertIn(
+            "html[data-theme=\"dark\"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-delivery-assignment",
+            css,
+        )
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {\n  display: grid;\n  grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);",
             css,
         )
         self.assertIn(
@@ -6471,6 +6633,44 @@ console.log(JSON.stringify([blankValid,blankMessage,assignedValid,employee.value
         self.assertIn("if (returnTab !== \"houses\") setTab(returnTab);", return_from_detail)
         self.assertIn('["Perimeter", surveyPerimeter == null ? "" : `${formatQuantity(surveyPerimeter)} m`]', detail_renderer)
         self.assertNotIn('"Floor area"', detail_renderer)
+
+    def test_active_house_card_renders_ready_stage_survey_record(self):
+        start = APP_JS.index("function activeHouseSurveyReferenceHtml")
+        end = APP_JS.index("function houseWorkPlanSummaryHtml", start)
+        script = (
+            'const escapeHtml=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");\n'
+            'const formatQuantity=value=>new Intl.NumberFormat("en",{maximumFractionDigits:2}).format(value);\n'
+            'const formatAuditDateTime=value=>value;\n'
+            + APP_JS[start:end]
+            + """
+console.log(activeHouseSurveyReferenceHtml({
+  survey:{windows:[{w:1.2,h:1.4,qty:2}],doors:[{w:.9,h:2,qty:1}],
+    house_corners:[3.2,4.1],perimeter_m:42.5,notes:"Survey <note>"},
+  survey_updated_by:"Ready Surveyor",survey_updated_at:"2026-11-08T09:30:00"
+}));
+"""
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Ready-stage survey record", result.stdout)
+        self.assertIn("1.2", result.stdout)
+        self.assertIn("1.4 m", result.stdout)
+        self.assertIn("0.9", result.stdout)
+        self.assertIn("3.2 m", result.stdout)
+        self.assertIn("42.5 m", result.stdout)
+        self.assertIn("Ready Surveyor", result.stdout)
+        self.assertIn("Survey &lt;note&gt;", result.stdout)
+        self.assertIn(
+            '${canManageHouses || hasAccessProfile(state.user, "supervisor")',
+            APP_JS,
+        )
+        self.assertIn("Ready-stage work checklist", APP_JS)
 
     def test_plan_lists_refresh_without_flashing_loading_state(self):
         body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]

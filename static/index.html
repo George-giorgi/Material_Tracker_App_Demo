@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261109-vent-pen-tool-1">
+    <link rel="stylesheet" href="/app.css?v=20261109-pdf-loading-1">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -891,6 +891,14 @@
         <p class="pdf-annotator-help" id="pdf-annotator-help">Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.</p>
         <div class="pdf-annotator-error hidden" id="pdf-annotator-error" role="alert"></div>
         <div class="pdf-annotator-workspace" id="pdf-annotator-workspace">
+          <div class="pdf-page-loading hidden" id="pdf-page-loading" role="status" aria-live="polite" aria-atomic="true">
+            <div class="pdf-page-loading-card">
+              <span class="pdf-page-loading-visual" aria-hidden="true"><span class="pdf-page-loading-file">PDF</span><span class="pdf-page-loading-spinner"></span></span>
+              <strong>Preparing your document</strong>
+              <span class="pdf-page-loading-detail" id="pdf-page-loading-detail">Loading page 1…</span>
+              <span class="pdf-page-loading-track" aria-hidden="true"><span></span></span>
+            </div>
+          </div>
           <main class="pdf-annotator-viewport" id="pdf-annotator-viewport" aria-label="PDF page annotation area">
             <div class="pdf-page-surface" id="pdf-page-surface">
               <img id="pdf-annotator-image" alt="Current survey PDF page">
@@ -1177,6 +1185,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261109-vent-text-to-icons-1" defer></script>
+    <script src="/app.js?v=20261109-vent-undo-active-1" defer></script>
   </body>
 </html>
