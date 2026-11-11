@@ -2223,8 +2223,6 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
 .pdf-annotator-page-jump-controls > span strong { color: #435c4d; }
 .pdf-annotator-page-jump input { width: 64px; min-height: 40px; border: 1px solid #cbd9cf; border-radius: 9px; padding: 0 7px; background: #fff; color: #304239; font-size: 14px; text-align: center; }
 .pdf-annotator-page-jump .button { min-height: 40px; padding: 0 15px; }
-.pdf-annotator-page-selection { display: inline-flex; min-height: 38px; align-items: center; gap: 6px; color: #425d4d; font-size: 10px; font-weight: 650; cursor: pointer; }
-.pdf-annotator-page-selection input { width: 17px; height: 17px; accent-color: #176347; }
 .pdf-annotator-save { min-width: 150px; }
 .pdf-annotator-text-panel { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 16px; border-bottom: 1px solid #e7ece9; background: #f4f8fc; color: #415c75; font-size: 11px; }
 .pdf-annotator-text-panel > label { font-weight: 650; }
@@ -2325,7 +2323,6 @@ html[data-theme="dark"] .auth-footnote { border-top-color: #2c3b36; }
   .pdf-annotator-step { width: 38px; height: 38px; }
   .pdf-annotator-page-jump input { width: 52px; min-height: 42px; }
   .pdf-annotator-page-jump .button { min-height: 42px; padding: 0 10px; }
-  .pdf-annotator-page-selection { min-height: 44px; }
   .pdf-annotator-help { padding: 6px 10px; font-size: 10px; }
   .pdf-annotator-viewport { padding: 8px; }
 }
@@ -2368,7 +2365,6 @@ html[data-theme="dark"] .pdf-annotator-text-panel textarea { border-color: #4965
 html[data-theme="dark"] .pdf-annotator-text-panel textarea::placeholder { color: #8fa197; }
 html[data-theme="dark"] .pdf-annotator-text-resize output { color: #c4d4ca; }
 html[data-theme="dark"] .pdf-annotator-text-panel .pdf-annotator-text-hint { color: #a7b8ae; }
-html[data-theme="dark"] .pdf-annotator-page-selection { color: #c4d4ca; }
 html[data-theme="dark"] .pdf-annotator-help { color: #a7b8ae; }
 html[data-theme="dark"] .pdf-annotator-error { border-color: #794944; background: #352321; color: #ffc4bb; }
 html[data-theme="dark"] .pdf-annotator-viewport { background-color: #101815; background-image: radial-gradient(#34473d 0.8px, transparent 0.8px); background-size: 18px 18px; }

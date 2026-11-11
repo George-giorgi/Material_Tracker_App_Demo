@@ -1,7 +1,9 @@
+import base64
+import binascii
 import csv
-import json
 import hashlib
 import hmac
+import json
 import math
 import os
 import re
@@ -28,6 +30,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 import pymupdf as fitz
+from PIL import Image
 from pypdf.errors import PdfReadError
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib import colors
@@ -280,10 +283,34 @@ def _render_pdf_page(content, page_number):
         document.close()
 
 
-def _render_ventilation_icon(icon_key, rotation, base_width, base_height):
+def _render_ventilation_icon(
+    icon_key, rotation, base_width, base_height, browser_image=None
+):
     filename = VENT_ANNOTATION_ICON_FILES.get(icon_key)
     if not filename:
         raise ApiError(400, "A ventilation icon is not recognized.")
+    radians = math.radians(rotation)
+    cosine = abs(math.cos(radians))
+    sine = abs(math.sin(radians))
+    rotated_width = base_width * cosine + base_height * sine
+    rotated_height = base_height * cosine + base_width * sine
+    if browser_image is not None:
+        image_width = max(1, round(base_width * 3))
+        image_height = max(1, round(base_height * 3))
+        raster = browser_image.resize(
+            (image_width, image_height),
+            Image.Resampling.LANCZOS,
+        )
+        if rotation % 360:
+            raster = raster.rotate(
+                -rotation,
+                resample=Image.Resampling.BICUBIC,
+                expand=True,
+            )
+        output = BytesIO()
+        raster.save(output, format="PNG")
+        return output.getvalue(), rotated_width, rotated_height
+
     icon_path = STATIC_DIR / "ventilation-icons" / filename
     try:
         root = fromstring(icon_path.read_bytes())
@@ -294,11 +321,6 @@ def _render_ventilation_icon(icon_key, rotation, base_width, base_height):
         if len(view_box) != 4 or view_box[2] <= 0 or view_box[3] <= 0:
             raise ValueError("Invalid SVG viewBox.")
         origin_x, origin_y, original_width, original_height = view_box
-        radians = math.radians(rotation)
-        cosine = abs(math.cos(radians))
-        sine = abs(math.sin(radians))
-        rotated_width = base_width * cosine + base_height * sine
-        rotated_height = base_height * cosine + base_width * sine
         padding_x = (rotated_width - base_width) / 2
         padding_y = (rotated_height - base_height) / 2
         center_x = base_width / 2
@@ -334,6 +356,43 @@ def _render_ventilation_icon(icon_key, rotation, base_width, base_height):
         raise ApiError(422, "A ventilation product icon could not be rendered.") from exc
 
 
+def _decode_ventilation_icon_images(icon_images):
+    if icon_images is None:
+        return None
+    if (
+        not isinstance(icon_images, dict)
+        or len(icon_images) > len(VENT_ANNOTATION_ICON_FILES)
+        or any(key not in VENT_ANNOTATION_ICON_FILES for key in icon_images)
+    ):
+        raise ApiError(400, "Ventilation icon images are invalid.")
+    decoded = {}
+    for key, data_url in icon_images.items():
+        if not isinstance(data_url, str) or len(data_url) > 1_400_000:
+            raise ApiError(400, "A ventilation icon image is invalid or too large.")
+        match = re.fullmatch(r"data:image/png;base64,([A-Za-z0-9+/]+={0,2})", data_url)
+        if not match:
+            raise ApiError(400, "A ventilation icon image is invalid.")
+        try:
+            image_bytes = base64.b64decode(match.group(1), validate=True)
+            if not image_bytes or len(image_bytes) > 1_000_000:
+                raise ValueError("Invalid image size.")
+            image = Image.open(BytesIO(image_bytes))
+            if (
+                image.format != "PNG"
+                or image.width < 1
+                or image.height < 1
+                or image.width > 2048
+                or image.height > 2048
+                or image.width * image.height > 4_194_304
+            ):
+                raise ValueError("Invalid image dimensions.")
+            image.load()
+            decoded[key] = image.convert("RGBA")
+        except (binascii.Error, OSError, ValueError) as exc:
+            raise ApiError(400, "A ventilation icon image is invalid.") from exc
+    return decoded
+
+
 def _pdf_annotation_metadata_json(annotations):
     stored_annotations = []
     for annotation in annotations:
@@ -346,7 +405,7 @@ def _pdf_annotation_metadata_json(annotations):
                 "text_width",
             ),
             "ventilation_icon": (
-                "page", "tool", "color", "point", "icon", "width", "height", "rotation",
+                "page", "tool", "point", "icon", "width", "height", "rotation",
             ),
         }[tool]
         stored_annotations.append(
@@ -355,11 +414,14 @@ def _pdf_annotation_metadata_json(annotations):
     return json.dumps(stored_annotations, separators=(",", ":"), allow_nan=False)
 
 
-def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
+def _annotate_pdf_document(
+    content, annotations, allow_ventilation_icons=False, icon_images=None
+):
     if not isinstance(annotations, list) or not annotations:
         raise ApiError(400, "Add at least one mark, product icon, or text note before saving.")
     if len(annotations) > HOUSE_DOCUMENT_MAX_ANNOTATIONS:
         raise ApiError(400, "This PDF has too many annotations to save at once.")
+    browser_icon_images = _decode_ventilation_icon_images(icon_images)
     document = _open_pdf_document(content)
     try:
         for annotation in annotations:
@@ -373,16 +435,17 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                 or not isinstance(page_number, int)
                 or not 1 <= page_number <= document.page_count
                 or tool not in {"pen", "highlighter", "text", "ventilation_icon"}
-                or not isinstance(color_value, str)
-                or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_value)
+                or (
+                    tool != "ventilation_icon"
+                    and (
+                        not isinstance(color_value, str)
+                        or not re.fullmatch(r"#[0-9a-fA-F]{6}", color_value)
+                    )
+                )
             ):
                 raise ApiError(400, "PDF annotations contain an invalid page, tool, or color.")
             page = document.load_page(page_number - 1)
             rect = page.rect
-            color = tuple(
-                int(color_value[index:index + 2], 16) / 255
-                for index in (1, 3, 5)
-            )
             if tool == "ventilation_icon":
                 if not allow_ventilation_icons:
                     raise ApiError(
@@ -419,6 +482,11 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                     or not -3600 <= rotation <= 3600
                 ):
                     raise ApiError(400, "A ventilation icon annotation is invalid.")
+                if (
+                    browser_icon_images is not None
+                    and icon_key not in browser_icon_images
+                ):
+                    raise ApiError(400, "A ventilation icon image is missing.")
                 base_width = rect.width * width_ratio
                 base_height = rect.height * height_ratio
                 image, image_width, image_height = _render_ventilation_icon(
@@ -426,6 +494,11 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                     rotation % 360,
                     base_width,
                     base_height,
+                    browser_image=(
+                        browser_icon_images.get(icon_key)
+                        if browser_icon_images is not None
+                        else None
+                    ),
                 )
                 center_x = point[0] * rect.width
                 center_y = point[1] * rect.height
@@ -441,6 +514,10 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                     overlay=True,
                 )
                 continue
+            color = tuple(
+                int(color_value[index:index + 2], 16) / 255
+                for index in (1, 3, 5)
+            )
             if tool == "text":
                 text = annotation.get("text")
                 point = annotation.get("point")
@@ -7259,6 +7336,7 @@ class LegacyRouteHandlers:
                     raise ApiError(400, "SEAI PDF share details must be a JSON object.")
                 house_id = str(payload.get("house_id") or "").strip()
                 selections = payload.get("pages")
+                icon_images = payload.get("icon_images")
                 include_survey_note = payload.get("include_survey_note", True)
                 if not isinstance(include_survey_note, bool):
                     raise ApiError(400, "The survey note option must be true or false.")
@@ -7421,6 +7499,7 @@ class LegacyRouteHandlers:
                                 content,
                                 annotations,
                                 allow_ventilation_icons=True,
+                                icon_images=icon_images,
                             )
                         if len(content) > SEAI_DOCUMENT_MAX_BYTES:
                             raise ApiError(
@@ -7453,6 +7532,7 @@ class LegacyRouteHandlers:
                             content,
                             annotations,
                             allow_ventilation_icons=True,
+                            icon_images=icon_images,
                         )
                     if len(content) > SEAI_DOCUMENT_MAX_BYTES:
                         raise ApiError(
@@ -7519,6 +7599,7 @@ class LegacyRouteHandlers:
                     source["content"],
                     annotations,
                     allow_ventilation_icons=True,
+                    icon_images=payload.get("icon_images"),
                 )
                 if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
                     raise ApiError(413, "The annotated PDF exceeds the 8 MB Vent document limit.")
@@ -7829,6 +7910,7 @@ class LegacyRouteHandlers:
                     source_content,
                     payload.get("annotations"),
                     allow_ventilation_icons=True,
+                    icon_images=payload.get("icon_images"),
                 )
                 if len(annotated_pdf) > HOUSE_DOCUMENT_MAX_BYTES:
                     raise ApiError(413, "The annotated PDF exceeds the 8 MB document limit.")

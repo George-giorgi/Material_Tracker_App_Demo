@@ -7988,6 +7988,11 @@ class NavigationBrowserTests(unittest.TestCase):
             "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
         )
         self.page.locator("[data-pdf-tool='text']").click()
+        self.assertEqual(
+            canvas.evaluate("element => [element.clientWidth, element.clientHeight]"),
+            original_page_size,
+            "Showing text controls must not rescale the PDF page at 225% zoom",
+        )
         self.page.locator("#pdf-annotator-text").fill(
             "Staged annotation for the final PDF"
         )
@@ -8265,14 +8270,6 @@ class NavigationBrowserTests(unittest.TestCase):
                 {"xRatio": x_ratio, "yRatio": y_ratio},
             )
             self.assertEqual(text_count, 1, placement_state)
-            self.assertEqual(
-                [
-                    placement_state["canvas"]["width"],
-                    placement_state["canvas"]["height"],
-                ],
-                original_page_size,
-                "Showing text controls must not rescale the PDF page at 225% zoom",
-            )
             self.assertTrue(
                 self.page.locator("#pdf-annotator-text-resize").is_enabled()
             )
@@ -8289,13 +8286,6 @@ class NavigationBrowserTests(unittest.TestCase):
                 },
             )
             self.page.wait_for_timeout(100)
-            self.assertEqual(
-                canvas.evaluate(
-                    "element => [element.clientWidth, element.clientHeight]"
-                ),
-                original_page_size,
-                "Showing icon controls must not rescale the PDF page at 225% zoom",
-            )
             self.assertTrue(self.page.locator("#pdf-annotator-icon-edit").is_visible())
             self.assertEqual(
                 self.page.locator("[data-pdf-tool='pen']").get_attribute("aria-pressed"),

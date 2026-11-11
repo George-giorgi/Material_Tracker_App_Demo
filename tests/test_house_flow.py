@@ -1,4 +1,5 @@
 """Tests for the SEAI provided houses -> active house -> calculator -> record movement flow."""
+import base64
 import http.client
 import json
 import re
@@ -7,14 +8,15 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
-from io import BytesIO
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import seed_houses
 import server
 import pymupdf as fitz
+from PIL import Image
 from tests.support import UvicornTestServer
 from pypdf import PdfReader
 from reportlab.pdfgen import canvas
@@ -6213,6 +6215,93 @@ class SnagTests(HttpBase):
 
 
 class UiWiringTests(unittest.TestCase):
+    def test_dropped_ventilation_icons_do_not_receive_an_ink_colour(self):
+        start = APP_JS.index("const placeVentIcon =")
+        end = APP_JS.index("const ventIconAt =", start)
+        script = """
+          const VENT_ANNOTATION_ICONS = [{
+            key: "terracotta-grille",
+            label: "Terracotta external grille",
+            filename: "terracotta.svg"
+          }];
+          const $ = () => ({ classList: { add() {} } });
+          const $$ = () => [{
+            dataset: { pdfTool: "pen" },
+            classList: { toggle() {} },
+            setAttribute() {}
+          }];
+          const drawPdfAnnotations = () => {};
+          const annotator = { page: 1, nextIconId: 1, annotations: [] };
+        """ + APP_JS[start:end] + """
+          placeVentIcon(annotator, "terracotta-grille", [0.5, 0.5]);
+          if (Object.hasOwn(annotator.annotations[0], "color"))
+            throw new Error("An icon inherited an ink colour.");
+          console.log("Dropped icon colour separation passed");
+        """;
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        self.assertIn("Dropped icon colour separation passed", result.stdout)
+
+    def test_selected_pdf_icon_render_preserves_source_colours_without_ink_colour(self):
+        source_document = fitz.open()
+        source_document.new_page()
+        source_pdf = source_document.tobytes()
+        page_rect = source_document[0].rect
+        source_document.close()
+        icon_annotation = {
+            "page": 1,
+            "tool": "ventilation_icon",
+            "icon": "terracotta-grille",
+            "point": [0.5, 0.5],
+            "width": 0.18,
+            "height": 0.12,
+            "rotation": 0,
+        }
+        browser_image = Image.new("RGBA", (16, 16), (232, 121, 80, 255))
+        browser_image_data = BytesIO()
+        browser_image.save(browser_image_data, format="PNG")
+        icon_images = {
+            "terracotta-grille": (
+                "data:image/png;base64,"
+                + base64.b64encode(browser_image_data.getvalue()).decode("ascii")
+            )
+        }
+        annotated_pdf = server._annotate_pdf_document(
+            source_pdf,
+            [icon_annotation],
+            allow_ventilation_icons=True,
+            icon_images=icon_images,
+        )
+        annotated_document = fitz.open(stream=annotated_pdf, filetype="pdf")
+        try:
+            image_xref = annotated_document[0].get_images(full=True)[0][0]
+            embedded_image = annotated_document.extract_image(image_xref)["image"]
+            actual_pixels = fitz.Pixmap(embedded_image)
+            self.assertEqual(
+                actual_pixels.n,
+                3,
+            )
+            center = (
+                (actual_pixels.height // 2 * actual_pixels.width)
+                + actual_pixels.width // 2
+            ) * actual_pixels.n
+            self.assertEqual(
+                tuple(actual_pixels.samples[center:center + 3]),
+                (232, 121, 80),
+            )
+            self.assertNotIn(
+                '"color"',
+                server._pdf_annotation_metadata_json([icon_annotation]),
+            )
+        finally:
+            annotated_document.close()
+
     def test_surveyor_seai_annotator_supports_ventilation_icons(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         start = APP_JS.index("function supportsVentilationIcons")
@@ -6532,7 +6621,9 @@ class UiWiringTests(unittest.TestCase):
         self.assertNotIn("Share annotated PDF", APP_JS)
         self.assertIn("Add to selected pages", APP_JS)
         self.assertIn("only the final combined PDF is saved", APP_JS)
-        self.assertIn('id="pdf-annotator-page-selection"', html)
+        self.assertNotIn('id="pdf-annotator-page-selection"', html)
+        self.assertNotIn("Include this page in selected PDF", html)
+        self.assertNotIn("updateSeaiPageSelection", APP_JS)
         self.assertIn('data-seai-share-clear', APP_JS)
         self.assertIn("/api/seai-documents/share", APP_JS)
         self.assertIn("Previously saved combined PDFs for this house.", APP_JS)
@@ -6780,56 +6871,6 @@ class UiWiringTests(unittest.TestCase):
             raise AssertionError(result.stderr)
         self.assertIn("PDF scroll navigation passed", result.stdout)
 
-    def test_seai_page_selection_tracks_pdf_page_navigation(self):
-        self.assertIn(
-            "annotator.page = pageNumber;\n  updateSeaiShareToolbar();",
-            APP_JS,
-        )
-        start = APP_JS.index("function seaiSharePageKey")
-        end = APP_JS.index("function openBlankSeaiPage", start)
-        script = """
-          const nodes = {
-            countLabel: { textContent: "" },
-            shareButton: { disabled: true },
-            clearButton: { disabled: true },
-            selection: { checked: false }
-          };
-          const $ = selector => ({
-            "[data-seai-share-count]": nodes.countLabel,
-            "[data-seai-share-selected]": nodes.shareButton,
-            "[data-seai-share-clear]": nodes.clearButton,
-            "#pdf-annotator-page-selection": nodes.selection
-          })[selector];
-          const state = {
-            seaiSharePages: new Map([["17:1", { page: 1 }]]),
-            pdfAnnotator: {
-              documentType: "seai", documentId: "17", page: 1
-            }
-          };
-        """ + APP_JS[start:end] + """
-          updateSeaiShareToolbar();
-          if (!nodes.selection.checked || nodes.countLabel.textContent !== "1 page selected")
-            throw new Error("The selected current page was not shown as selected.");
-          state.pdfAnnotator.page = 2;
-          updateSeaiShareToolbar();
-          if (nodes.selection.checked)
-            throw new Error("The checkbox remained checked on an unselected page.");
-          state.pdfAnnotator.page = 1;
-          updateSeaiShareToolbar();
-          if (!nodes.selection.checked)
-            throw new Error("The checkbox did not restore the page's selected state.");
-          console.log("SEAI page selection navigation passed");
-        """;
-        result = subprocess.run(
-            ["node", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if result.returncode:
-            raise AssertionError(result.stderr)
-        self.assertIn("SEAI page selection navigation passed", result.stdout)
-
     def test_seai_review_preserves_pdf_selection_order_including_blank_page(self):
         start = APP_JS.index("async function prepareSeaiDocumentShare")
         end = APP_JS.index("function clearSeaiShareSelection", start)
@@ -6838,7 +6879,10 @@ class UiWiringTests(unittest.TestCase):
             surveyRoomHouseId: "ORDER-TEST",
             preparedHouseShare: null,
             seaiSharePages: new Map([
-              ["1:1", { document_id: 1, page: 1, category: "Variation", filename: "first.pdf", annotations: [{ text: "1" }] }],
+              ["1:1", { document_id: 1, page: 1, category: "Variation", filename: "first.pdf", annotations: [
+                { text: "1" },
+                { tool: "ventilation_icon", icon: "terracotta-grille" }
+              ] }],
               ["2:1", { document_id: 2, page: 1, category: "Application", filename: "second.pdf", annotations: [{ text: "2" }] }],
               ["3:1", { document_id: 3, page: 1, category: "Survey", filename: "third.pdf", annotations: [{ text: "3" }] }],
               ["blank:4", { blank_page: true, filename: "blank.pdf", annotations: [{ text: "4" }] }]
@@ -6853,9 +6897,15 @@ class UiWiringTests(unittest.TestCase):
           const $ = selector => elements[selector];
           let postedPages;
           const fetch = async (_url, options) => {
-            postedPages = JSON.parse(options.body).pages;
+            const body = JSON.parse(options.body);
+            postedPages = body.pages;
+            if (body.icon_images?.["terracotta-grille"] !== "data:image/png;base64,test")
+              throw new Error("Browser-rendered icon image was not sent.");
             return { ok: true, blob: async () => ({}) };
           };
+          const renderVentilationIconPngs = async () => ({
+            "terracotta-grille": "data:image/png;base64,test"
+          });
           const clearSelectedPdfPreview = () => {};
           class File {
             constructor() {}

@@ -4030,44 +4030,6 @@ function updateSeaiShareToolbar() {
   if (countLabel) countLabel.textContent = `${count} ${count === 1 ? "page" : "pages"} selected`;
   if (shareButton) shareButton.disabled = count === 0;
   if (clearButton) clearButton.disabled = count === 0;
-  const selection = $("#pdf-annotator-page-selection");
-  const annotator = state.pdfAnnotator;
-  if (selection && (annotator?.documentType === "seai" ||
-      annotator?.documentType === "seai_test")) {
-    selection.checked = state.seaiSharePages.has(
-      seaiSharePageKey(
-        annotator.documentId,
-        annotator.page,
-        annotator.documentType,
-      ),
-    );
-  }
-}
-function updateSeaiPageSelection(isSelected) {
-  const annotator = state.pdfAnnotator;
-  if (!annotator ||
-      (annotator.documentType !== "seai" &&
-        annotator.documentType !== "seai_test")) return;
-  const key = seaiSharePageKey(
-    annotator.documentId,
-    annotator.page,
-    annotator.documentType,
-  );
-  if (isSelected) {
-    const existing = state.seaiSharePages.get(key) || {};
-    state.seaiSharePages.set(key, {
-      ...existing,
-      ...(annotator.documentType === "seai_test"
-        ? { test_pdf_name: annotator.documentId }
-        : { document_id: Number(annotator.documentId) }),
-      page: annotator.page,
-      filename: annotator.filename,
-      category: annotator.category,
-    });
-  } else {
-    state.seaiSharePages.delete(key);
-  }
-  updateSeaiShareToolbar();
 }
 function openBlankSeaiPage() {
   openPdfAnnotator(
@@ -4095,6 +4057,9 @@ async function prepareSeaiDocumentShare(button) {
   if (!pages.length || button.disabled) return;
   button.disabled = true;
   try {
+    const iconImages = await renderVentilationIconPngs(
+      pages.flatMap((page) => page.annotations || []),
+    );
     const selectedPages = pages.map((page) => page.blank_page
       ? { blank_page: true, annotations: page.annotations }
       : {
@@ -4110,6 +4075,7 @@ async function prepareSeaiDocumentShare(button) {
       body: JSON.stringify({
         house_id: state.surveyRoomHouseId,
         pages: selectedPages,
+        ...(Object.keys(iconImages).length ? { icon_images: iconImages } : {}),
         include_survey_note: false,
       }),
     });
@@ -4310,7 +4276,6 @@ function drawPdfAnnotations() {
   const annotator = state.pdfAnnotator;
   const canvas = $("#pdf-annotator-canvas");
   const image = $("#pdf-annotator-image");
-  updateSeaiShareToolbar();
   if (!annotator || !image.naturalWidth || !image.naturalHeight) return;
   const width = image.clientWidth;
   const height = image.clientHeight;
@@ -4568,7 +4533,6 @@ async function loadHouseDocumentPage(pageNumber) {
   if (!annotator) return;
   if (pageNumber < 1 || pageNumber > annotator.pageCount || annotator.loading) return;
   annotator.page = pageNumber;
-  updateSeaiShareToolbar();
   annotator.loading = true;
   setPdfPageLoading(true, `Loading page ${pageNumber} of ${annotator.pageCount}…`);
   $("#pdf-annotator-page-count").textContent =
@@ -4733,6 +4697,38 @@ const VENT_ANNOTATION_ICONS = [
   { key: "axial-fan", label: "Axial exhaust fan", filename: "D Series Axial Fan.svg" },
   { key: "core-drill", label: "5-inch core-drill ventilator", filename: "5” Core Drill Ventilator.svg", urlName: "core-drill-ventilator.svg" },
 ];
+async function renderVentilationIconPngs(annotations, imageCache = new Map()) {
+  const iconKeys = [...new Set(
+    annotations
+      .filter((annotation) => annotation.tool === "ventilation_icon")
+      .map((annotation) => annotation.icon),
+  )];
+  const entries = await Promise.all(iconKeys.map(async (iconKey) => {
+    const asset = VENT_ANNOTATION_ICONS.find((item) => item.key === iconKey);
+    if (!asset) throw new Error("A ventilation product icon is no longer available.");
+    let image = imageCache.get(iconKey);
+    if (!image) {
+      image = new Image();
+      image.src = `/ventilation-icons/${encodeURIComponent(asset.urlName || asset.filename)}`;
+      imageCache.set(iconKey, image);
+    }
+    if (!image.complete || !image.naturalWidth) await image.decode();
+    const scale = Math.min(
+      3,
+      2048 / image.naturalWidth,
+      2048 / image.naturalHeight,
+      Math.sqrt(4194304 / (image.naturalWidth * image.naturalHeight)),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.floor(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Ventilation product icon colors could not be prepared.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return [iconKey, canvas.toDataURL("image/png")];
+  }));
+  return Object.fromEntries(entries);
+}
 function supportsVentilationIcons(documentType) {
   return documentType === "vent" ||
     documentType === "vent_seai" ||
@@ -4770,17 +4766,6 @@ function openPdfAnnotator(button, documentType) {
     wheelLocked: false,
   };
   $("#pdf-annotator-title").textContent = button.dataset.documentName;
-  $("#pdf-annotator-page-selection-label").classList.toggle(
-    "hidden",
-    documentType !== "seai" && documentType !== "seai_test",
-  );
-  $("#pdf-annotator-page-selection").checked = state.seaiSharePages.has(
-    seaiSharePageKey(
-      state.pdfAnnotator.documentId,
-      state.pdfAnnotator.page,
-      documentType,
-    ),
-  );
   $(".pdf-annotator-title .eyebrow").textContent =
     documentType === "seai" || documentType === "seai_test"
       ? "SEAI PDF · ORIGINAL PRESERVED"
@@ -4946,6 +4931,10 @@ async function saveHouseDocumentAnnotations() {
     const annotationUrl = annotator.documentType === "vent_seai"
         ? `/api/seai-documents/${annotator.documentId}/vent-annotations`
         : `/api/${isVentDocument ? "house-vent-documents" : "house-documents"}/${annotator.documentId}/annotations`;
+    const iconImages = await renderVentilationIconPngs(
+      annotator.annotations,
+      annotator.iconImages,
+    );
     const result = await request(
       annotationUrl,
       {
@@ -4953,6 +4942,7 @@ async function saveHouseDocumentAnnotations() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           annotations: annotator.annotations,
+          ...(Object.keys(iconImages).length ? { icon_images: iconImages } : {}),
         }),
       },
     );
@@ -9643,9 +9633,6 @@ function bindEvents() {
       deleteSavedSelectedSeaiPdf(deleteSelectedPdf);
     }
   });
-  $("#pdf-annotator-page-selection").addEventListener("change", (event) => {
-    updateSeaiPageSelection(event.currentTarget.checked);
-  });
   $("#pdf-annotator-page-number").addEventListener("input", (event) => {
     event.currentTarget.setCustomValidity("");
   });
@@ -9779,7 +9766,6 @@ function bindEvents() {
       icon: asset.key,
       filename: asset.urlName || asset.filename,
       label: asset.label,
-      color: "#ffffff",
       point,
       width: 0.18,
       height: 0.12,
