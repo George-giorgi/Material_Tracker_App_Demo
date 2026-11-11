@@ -329,7 +329,7 @@ class HouseDocumentHttpTests(HttpBase):
         status, saved, _ = self.call(
             "POST",
             f"/api/house-documents/{uploaded['id']}/annotations",
-            {"annotations": annotations},
+            {"house_id": "DOC-TEST", "annotations": annotations},
             cookie=surveyor_cookie,
         )
         self.assertEqual(status, 201, saved)
@@ -2147,11 +2147,32 @@ class CalculatorApiTests(HttpBase):
                 """
             )
         server.initialize_db()
+        seai_application_id = "SEAI-APPLICATION-PDF-TEST-1"
         with server.connect_db() as db:
             columns = {
                 row["name"] for row in db.execute("PRAGMA table_info(seai_documents)")
             }
             self.assertIn("content", columns)
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_applications (
+                    application_id TEXT PRIMARY KEY,
+                    detail_data_json TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO seai_applications (application_id, detail_data_json)
+                VALUES (?, ?)
+                """,
+                (
+                    house_id,
+                    json.dumps(
+                        {"Application Details": {"Application ID": seai_application_id}}
+                    ),
+                ),
+            )
             for category, filename, content in (
                 ("Application", "application.pdf", b"%PDF-1.4 application"),
                 ("Survey", "survey.pdf", b"%PDF-1.4 survey"),
@@ -2165,7 +2186,7 @@ class CalculatorApiTests(HttpBase):
                     VALUES (?, ?, ?, ?, ?)
                     """,
                     (
-                        house_id,
+                        seai_application_id,
                         category,
                         filename,
                         filename.rsplit(".", 1)[-1],
@@ -2279,35 +2300,59 @@ class CalculatorApiTests(HttpBase):
                 "point": [0.2, 0.5],
                 "text": "Saved SEAI note",
             },
+            {
+                "page": 1,
+                "tool": "ventilation_icon",
+                "color": "#ffffff",
+                "point": [0.65, 0.5],
+                "icon": "trickle-vent",
+                "width": 0.18,
+                "height": 0.12,
+                "rotation": 0,
+            },
         ]
-        status, saved, _ = self.call(
+        status, result, _ = self.call(
             "POST",
             f"/api/seai-documents/{document_id}/annotations",
-            {"annotations": annotations},
+            {"house_id": house_id, "annotations": annotations},
             cookie=surveyor_cookie,
         )
-        self.assertEqual(status, 201, saved)
-        self.assertNotEqual(saved["id"], document_id)
-        self.assertEqual(saved["source_id"], document_id)
-        self.assertEqual(saved["filename"], "application-annotated.pdf")
+        self.assertEqual(status, 409, result)
+        self.assertIn("Review selected pages", result["error"])
+        status, content_type, _, combined_pdf = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                "house_id": house_id,
+                "pages": [
+                    {
+                        "document_id": document_id,
+                        "page": 1,
+                        "annotations": annotations,
+                    }
+                ],
+                "include_survey_note": False,
+            },
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        self.assertIn(
+            "Saved SEAI note",
+            PdfReader(BytesIO(combined_pdf)).pages[0].extract_text(),
+        )
         with server.connect_db() as db:
-            rows = db.execute(
+            source = db.execute(
                 "SELECT filename, content FROM seai_documents WHERE id = ?",
                 (document_id,),
-            ).fetchall()
-            annotated_row = db.execute(
-                "SELECT filename, content FROM seai_documents WHERE id = ?",
-                (saved["id"],),
             ).fetchone()
             document_count = db.execute(
                 "SELECT COUNT(*) FROM seai_documents WHERE application_id = ?",
-                (house_id,),
+                (seai_application_id,),
             ).fetchone()[0]
-        self.assertEqual(rows[0]["filename"], "application.pdf")
-        self.assertEqual(rows[0]["content"], original_pdf)
-        self.assertEqual(annotated_row["filename"], "application-annotated.pdf")
-        self.assertNotEqual(annotated_row["content"], original_pdf)
-        self.assertEqual(document_count, 5)
+        self.assertEqual(source["filename"], "application.pdf")
+        self.assertEqual(source["content"], original_pdf)
+        self.assertEqual(document_count, 4)
         status, _, _, original_body = self.call_raw(
             "GET", f"/api/seai-documents/{document_id}/file"
         )
@@ -2317,59 +2362,10 @@ class CalculatorApiTests(HttpBase):
             "GET", f"/api/seai-documents?house_id={house_id}"
         )
         self.assertEqual(status, 200)
-        self.assertIn(
-            "application-annotated.pdf",
+        self.assertEqual(
             [document["filename"] for document in document_list["documents"]],
+            ["application.pdf", "survey.pdf", "variation.pdf"],
         )
-        listed_documents = {
-            document["filename"]: document["is_annotated"]
-            for document in document_list["documents"]
-        }
-        self.assertFalse(listed_documents["application.pdf"])
-        self.assertTrue(listed_documents["application-annotated.pdf"])
-        with fitz.open(stream=annotated_row["content"], filetype="pdf") as annotated:
-            self.assertIn("Saved SEAI note", annotated[0].get_text())
-            self.assertTrue(annotated[0].get_drawings())
-
-        status, second_saved, _ = self.call(
-            "POST",
-            f"/api/seai-documents/{document_id}/annotations",
-            {
-                "annotations": [
-                    {
-                        "page": 1,
-                        "tool": "text",
-                        "color": "#18804b",
-                        "font_size": 0.02,
-                        "point": [0.2, 0.65],
-                        "text": "Another saved note",
-                    }
-                ]
-            },
-            cookie=surveyor_cookie,
-        )
-        self.assertEqual(status, 201, second_saved)
-        self.assertEqual(second_saved["filename"], "application-annotated-2.pdf")
-        status, document_list, _ = self.call(
-            "GET", f"/api/seai-documents?house_id={house_id}"
-        )
-        self.assertEqual(status, 200)
-        listed_documents = {
-            document["filename"]: document["is_annotated"]
-            for document in document_list["documents"]
-        }
-        self.assertTrue(listed_documents["application-annotated-2.pdf"])
-        with server.connect_db() as db:
-            original = db.execute(
-                "SELECT content FROM seai_documents WHERE id = ?", (document_id,)
-            ).fetchone()
-            annotated_count = db.execute(
-                "SELECT COUNT(*) FROM seai_documents "
-                "WHERE application_id = ? AND filename LIKE '%-annotated%.pdf'",
-                (house_id,),
-            ).fetchone()[0]
-        self.assertEqual(original["content"], original_pdf)
-        self.assertEqual(annotated_count, 2)
 
     def test_seai_pdf_listing_identifies_repeated_annotated_suffixes(self):
         house_id = "PDF-LABEL-TEST"
@@ -2442,7 +2438,7 @@ class CalculatorApiTests(HttpBase):
             stream=source_pdfs[1], filetype="pdf"
         )
         annotated_survey[0].insert_text(
-            (72, 150), "Saved annotation mark", color=(0.1, 0.3, 0.8)
+            (72, 150), "Legacy standalone annotation", color=(0.1, 0.3, 0.8)
         )
         annotated_survey_pdf = annotated_survey.tobytes()
         annotated_survey.close()
@@ -2526,7 +2522,21 @@ class CalculatorApiTests(HttpBase):
                 "house_id": house_id,
                 "pages": [
                     {"document_id": source_document_ids[0], "page": 2},
-                    {"document_id": source_document_ids[1], "page": 1},
+                    {
+                        "document_id": source_document_ids[1],
+                        "page": 1,
+                        "annotations": [
+                            {
+                                "page": 1,
+                                "tool": "text",
+                                "text": "Saved annotation mark",
+                                "point": [0.2, 0.2],
+                                "font_size": 0.04,
+                                "color": "#245fbd",
+                                "wrap": True,
+                            }
+                        ],
+                    },
                 ],
             },
             cookie=surveyor_cookie,
@@ -2541,6 +2551,7 @@ class CalculatorApiTests(HttpBase):
         )
         self.assertIn("Survey selected page one", reader.pages[1].extract_text())
         self.assertIn("Saved annotation mark", reader.pages[1].extract_text())
+        self.assertNotIn("Legacy standalone annotation", reader.pages[1].extract_text())
         self.assertIn("Saved SEAI survey note.", reader.pages[2].extract_text())
         status, content_type, disposition, vent_body = self.call_raw_json(
             "POST",
@@ -2549,7 +2560,21 @@ class CalculatorApiTests(HttpBase):
                 "house_id": house_id,
                 "pages": [
                     {"document_id": source_document_ids[0], "page": 2},
-                    {"document_id": source_document_ids[1], "page": 1},
+                    {
+                        "document_id": source_document_ids[1],
+                        "page": 1,
+                        "annotations": [
+                            {
+                                "page": 1,
+                                "tool": "text",
+                                "text": "Saved annotation mark",
+                                "point": [0.2, 0.2],
+                                "font_size": 0.04,
+                                "color": "#245fbd",
+                                "wrap": True,
+                            }
+                        ],
+                    },
                 ],
                 "include_survey_note": False,
             },
@@ -2565,6 +2590,9 @@ class CalculatorApiTests(HttpBase):
         )
         self.assertIn("Survey selected page one", vent_reader.pages[1].extract_text())
         self.assertIn("Saved annotation mark", vent_reader.pages[1].extract_text())
+        self.assertNotIn(
+            "Legacy standalone annotation", vent_reader.pages[1].extract_text()
+        )
         self.assertNotIn(
             "Saved SEAI survey note.",
             "\n".join(page.extract_text() for page in vent_reader.pages),
@@ -2620,6 +2648,7 @@ class CalculatorApiTests(HttpBase):
                 "Please check all window measurements",
                 extracted_text,
             )
+
             self.assertIn(
                 "averylongwordthatneedstobreak",
                 "".join(extracted_text.split()),
@@ -2631,6 +2660,53 @@ class CalculatorApiTests(HttpBase):
                 self.assertGreaterEqual(word[1], 0)
                 self.assertLessEqual(word[2], page.rect.width)
                 self.assertLessEqual(word[3], page.rect.height)
+        with server.connect_db() as db:
+            document_count_before_test_selection = db.execute(
+                "SELECT COUNT(*) FROM seai_documents WHERE application_id = ?",
+                (house_id,),
+            ).fetchone()[0]
+        status, content_type, _, test_pdf_body = self.call_raw_json(
+            "POST",
+            "/api/seai-documents/share",
+            {
+                "house_id": house_id,
+                "pages": [
+                    {
+                        "test_pdf_name": "application-letter.pdf",
+                        "page": 1,
+                        "annotations": [
+                            {
+                                "page": 1,
+                                "tool": "text",
+                                "text": "Staged test PDF annotation",
+                                "point": [0.2, 0.2],
+                                "font_size": 0.04,
+                                "color": "#245fbd",
+                                "wrap": True,
+                            }
+                        ],
+                    }
+                ],
+                "include_survey_note": False,
+            },
+            cookie=surveyor_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/pdf")
+        test_pdf_reader = PdfReader(BytesIO(test_pdf_body))
+        self.assertEqual(len(test_pdf_reader.pages), 1)
+        self.assertIn(
+            "Staged test PDF annotation",
+            test_pdf_reader.pages[0].extract_text(),
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM seai_documents WHERE application_id = ?",
+                    (house_id,),
+                ).fetchone()[0],
+                document_count_before_test_selection,
+            )
         status, _, _, saved_pdf_body = self.call_raw(
             "POST",
             f"/api/seai-documents/save-selected?house_id={house_id}",
@@ -4355,7 +4431,7 @@ class ReadyForStartResetTests(HttpBase):
         status, result, _ = self.call(
             "POST",
             f"/api/seai-documents/{seai_original_id}/annotations",
-            {"annotations": []},
+            {"house_id": house_id, "annotations": []},
         )
         self.assertEqual(status, 409, result)
         self.assertIn("view-only", result["error"])
@@ -5950,6 +6026,48 @@ class HouseDashboardVentStatusTests(HttpBase):
         self.assertEqual(house["plan_plumber_done_at"], "2026-11-03T09:30:00")
         self.assertEqual(house["plan_vent_done_by"], "Vent Team Member")
         self.assertEqual(house["plan_vent_done_at"], "2026-11-03T10:00:00")
+        self.assertNotIn("has_assigned_surveyor", house)
+
+        with server.connect_db() as db:
+            server._insert_user(
+                db, "assign-dashboard-check", "Assign Dashboard", "123456", "assign"
+            )
+            surveyor_id = server._insert_user(
+                db, "surveyor-dashboard-check", "Assigned Surveyor", "234567", "surveyor"
+            )
+        _, _, assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "assign-dashboard-check", "pin": "123456"},
+        )
+        _, assign_dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=assign_cookie
+        )
+        assign_house = next(
+            item for item in assign_dashboard["house_list"]
+            if item["id"] == "VENT-CARD-DASHBOARD"
+        )
+        self.assertFalse(assign_house["has_assigned_surveyor"])
+        self.assertIsNone(assign_house["assigned_surveyor_name"])
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('VENT-CARD-DASHBOARD', 'surveyor', ?, 'Assign Dashboard',
+                        '2026-11-03T11:00:00')
+                """,
+                (surveyor_id,),
+            )
+        _, assign_dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=assign_cookie
+        )
+        assign_house = next(
+            item for item in assign_dashboard["house_list"]
+            if item["id"] == "VENT-CARD-DASHBOARD"
+        )
+        self.assertTrue(assign_house["has_assigned_surveyor"])
+        self.assertEqual(assign_house["assigned_surveyor_name"], "Assigned Surveyor")
 
 
 class FrontEndLogicTests(unittest.TestCase):
@@ -6095,6 +6213,193 @@ class SnagTests(HttpBase):
 
 
 class UiWiringTests(unittest.TestCase):
+    def test_surveyor_seai_annotator_supports_ventilation_icons(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        start = APP_JS.index("function supportsVentilationIcons")
+        end = APP_JS.index("function openPdfAnnotator", start)
+        script = APP_JS[start:end] + """
+          if (!supportsVentilationIcons("seai")) throw new Error("SEAI icons unavailable");
+          if (!supportsVentilationIcons("seai_test")) throw new Error("Test SEAI icons unavailable");
+          if (!supportsVentilationIcons("vent")) throw new Error("Vent icons unavailable");
+          if (!supportsVentilationIcons("vent_seai")) throw new Error("Surveyor Vent icons unavailable");
+          if (supportsVentilationIcons("house")) throw new Error("House documents gained icon tools");
+          console.log("PDF icon support passed");
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            self.fail(result.stderr or result.stdout)
+        self.assertIn('button.dataset.testPdfName ? "seai_test" : "seai"', APP_JS)
+        self.assertIn('test_pdf_name: annotator.documentId', APP_JS)
+        self.assertIn('annotations: [...annotator.annotations]', APP_JS)
+        self.assertIn("Add to selected pages", APP_JS)
+        self.assertNotIn(
+            "/api/survey-room-test-pdfs/${encodeURIComponent(annotator.documentId)}/annotations",
+            APP_JS,
+        )
+        self.assertNotIn(
+            "/api/seai-documents/${annotator.documentId}/annotations",
+            APP_JS,
+        )
+        self.assertNotIn("Share annotated PDF", APP_JS)
+        self.assertIn("zoom: 1.75", APP_JS)
+        self.assertIn("selectedTextId", APP_JS)
+        self.assertIn("text_width: 0.42", APP_JS)
+        self.assertIn("drag its large green corner handle to resize", APP_JS)
+        self.assertIn("Number.isFinite(fontSize) && fontSize > 0", APP_JS)
+        self.assertIn("startPixels:", APP_JS)
+        self.assertIn("textDrag.startPixels[0]", APP_JS)
+        self.assertIn("textDrag.startPixels[1]", APP_JS)
+        self.assertIn('$("#pdf-annotator-text-resize").value = String(Math.round(currentSize))', APP_JS)
+        self.assertIn('$("#pdf-annotator-text-resize-value").value = `${Math.round(currentSize)} px`', APP_JS)
+        self.assertIn('$("#pdf-annotator-text").value = "";', APP_JS)
+        self.assertIn("const tolerance = 32", APP_JS)
+        self.assertIn("const handleRadius = 12", APP_JS)
+        self.assertIn('context.strokeStyle = "#67d99a"', APP_JS)
+        self.assertIn("function pdfTextAnnotationDisplayScale(annotator)", APP_JS)
+        self.assertIn("pdfTextAnnotationDisplayScale(annotator)", APP_JS)
+        place_icon_start = APP_JS.index("const placeVentIcon =")
+        place_icon_end = APP_JS.index("const ventIconAt =", place_icon_start)
+        place_icon_handler = APP_JS[place_icon_start:place_icon_end]
+        self.assertIn(
+            "annotator.selectedTextId = null;",
+            place_icon_handler,
+        )
+        self.assertIn('annotator.tool = "pen";', place_icon_handler)
+        self.assertIn("const textResizeHandleAt = (annotator, annotation, point)", APP_JS)
+        self.assertIn(
+            "annotation.page === annotator.page &&\n          textResizeHandleAt(annotator, annotation, point)",
+            APP_JS,
+        )
+        self.assertIn(") <= 26;", APP_JS)
+        icon_handle_start = APP_JS.index("const selectedIconHandle =")
+        icon_handle_end = APP_JS.index("const textAnnotationAt =", icon_handle_start)
+        self.assertIn("const candidates = [", APP_JS[icon_handle_start:icon_handle_end])
+        selected_controls_start = APP_JS.index(
+            "const selectedIcon = annotator.annotations.find("
+        )
+        selected_controls_end = APP_JS.index(
+            "const textPanel = $(\"#pdf-annotator-text-panel\")",
+            selected_controls_start,
+        )
+        selected_controls = APP_JS[selected_controls_start:selected_controls_end]
+        self.assertIn('annotation.tool === "ventilation_icon"', selected_controls)
+        self.assertIn('annotation.tool === "text"', selected_controls)
+        pdf_pointer_start = APP_JS.index(
+            'pdfCanvas.addEventListener("pointerdown", (event) =>'
+        )
+        icon_interaction = APP_JS.index(
+            "const handle = selectedIconHandle(annotator, point);",
+            pdf_pointer_start,
+        )
+        text_placement = APP_JS.index(
+            'if (annotator.tool === "text")',
+            pdf_pointer_start,
+        )
+        self.assertLess(
+            icon_interaction,
+            text_placement,
+            "Existing ventilation icons should remain interactive in text mode",
+        )
+        tool_change_start = APP_JS.index('$$(".pdf-tool-button").forEach((button) =>')
+        tool_change_end = APP_JS.index('$("#pdf-annotator-undo")', tool_change_start)
+        tool_change_handler = APP_JS[tool_change_start:tool_change_end]
+        self.assertIn("annotator.selectedIconId = null;", tool_change_handler)
+        self.assertIn("annotator.selectedTextId = null;", tool_change_handler)
+        self.assertIn("drawPdfAnnotations();", tool_change_handler)
+        self.assertIn('style.setProperty(\n      "--pdf-resize-progress"', APP_JS)
+        self.assertIn(
+            '$("#pdf-annotator-text-resize").addEventListener("input"',
+            APP_JS,
+        )
+        set_theme_start = APP_JS.index("function setTheme")
+        set_theme_end = APP_JS.index("let authBulbIgnitionTimeout", set_theme_start)
+        self.assertNotIn(
+            'pdf-annotator-text-size").addEventListener',
+            APP_JS[set_theme_start:set_theme_end],
+        )
+        self.assertIn("selectedText.font_size = safeSize / displayScale", APP_JS)
+        self.assertIn('effectAllowed = "move"', APP_JS)
+        self.assertIn('dropEffect = "move"', APP_JS)
+        self.assertIn("clearVentIconPlacement(annotator)", APP_JS)
+        self.assertIn("tap once to place it", html)
+        self.assertIn(
+            "large green corner handle to resize",
+            APP_JS,
+        )
+
+    def test_pdf_text_note_layout_wraps_long_words_and_keeps_resize_width(self):
+        start = APP_JS.index("function wrapPdfAnnotationText")
+        end = APP_JS.index("function drawPdfAnnotations", start)
+        script = APP_JS[start:end] + """
+          const context = {
+            font: "",
+            measureText: text => ({ width: text.length * 8 })
+          };
+          const layout = pdfTextAnnotationLayout(context, {
+            point: [0.2, 0.2],
+            text: "AVeryLongUnbrokenWordThatMustWrap around words",
+            font_size: 0.02,
+            text_width: 0.25
+          }, 800, 1000);
+          const missingSizeLayout = pdfTextAnnotationLayout(context, {
+            point: [0.2, 0.2],
+            text: "Missing saved font size",
+            text_width: 0.25
+          }, 800, 1000);
+          const displayScale = pdfTextAnnotationDisplayScale({
+            fitWidth: 200,
+            zoom: 1.75
+          });
+          if (layout.lines.length < 2) throw new Error("Long text did not wrap");
+          if (layout.lines.some(line => context.measureText(line).width > layout.width)) {
+            throw new Error("Wrapped line exceeds its resize width");
+          }
+          if (!Number.isFinite(missingSizeLayout.fontSize)) {
+            throw new Error("Missing font size produced an invalid layout");
+          }
+          if (displayScale !== 350) {
+            throw new Error("Text resize scale did not include PDF zoom");
+          }
+          console.log("PDF text wrapping passed");
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            self.fail(result.stderr or result.stdout)
+
+    def test_assign_active_house_highlights_missing_surveyor_assignment(self):
+        self.assertIn("function houseSurveyorAssignmentAlertHtml(house)", APP_JS)
+        self.assertIn(
+            "house.has_assigned_surveyor) return \"\";",
+            APP_JS,
+        )
+        self.assertIn(
+            "house-audit-summary-field surveyor-assignment-field surveyor-assignment-missing",
+            APP_JS,
+        )
+        self.assertIn("${isAssign ? houseSurveyorAssignmentAlertHtml(house) : \"\"}", APP_JS)
+
+    def test_assign_ready_card_highlights_missing_surveyor(self):
+        self.assertIn(
+            "const needsSurveyorAssignment = isAssign && isReady && !h.has_assigned_surveyor;",
+            APP_JS,
+        )
+        self.assertIn('class="surveyor-assignment-alert" role="status"', APP_JS)
+        self.assertIn("Surveyor assignment needed", APP_JS)
+        self.assertIn(
+            ".house-grid-ready > .house-plan-ready.needs-surveyor-assignment",
+            (ROOT / "static" / "app.css").read_text(encoding="utf-8"),
+        )
+
     def test_assign_active_checklist_access_is_limited_to_scaffolding_and_esb(self):
         self.assertIn(
             'const assignCanEdit =\n          isAssign &&\n          (field === "scaffolding_status" || field === "esb_unclipped") &&\n          Number(required) === 1;',
@@ -6118,6 +6423,60 @@ class UiWiringTests(unittest.TestCase):
             APP_JS,
         )
 
+    def test_assign_seai_details_show_saved_and_original_pdf_sections(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            '<div class="assign-seai-house-actions not-started" id="assign-seai-house-actions">',
+            html,
+        )
+        self.assertIn('actions.classList.toggle("active", result.is_active);', APP_JS)
+        self.assertIn(
+            'actions.classList.toggle("ready", !result.is_active && result.ready_for_start);',
+            APP_JS,
+        )
+        self.assertIn('$("#assign-seai-house-actions").classList.add("ready");', APP_JS)
+        for state in ("not-started", "ready", "active"):
+            self.assertIn(f".assign-seai-house-actions.{state}", css)
+        self.assertIn(
+            '<div id="assign-seai-house-pdf-sections" class="assign-seai-house-pdf-sections"></div>',
+            html,
+        )
+        self.assertLess(
+            html.index('id="assign-seai-house-pdf-sections"'),
+            html.index('id="assign-seai-toolbar"'),
+        )
+        self.assertIn(
+            "pdfSections.innerHTML = html;",
+            APP_JS,
+        )
+        self.assertIn("assignHousePdfSectionHtml(", APP_JS)
+        self.assertIn("seaiPdfSectionsHtml(result.documents || [])", APP_JS)
+        self.assertIn('No ${category.toLowerCase()} PDFs are available for this house yet.', APP_JS)
+        self.assertNotIn("if (!items.length) return;", APP_JS)
+        self.assertIn(
+            "(document) => !document.is_annotated && !document.is_selected_pdf,",
+            APP_JS,
+        )
+        self.assertIn("assignTestPdfDocuments.filter(", APP_JS)
+        self.assertIn('document.is_test_sample ? "TEST PDF" : "ORIGINAL PDF"', APP_JS)
+        self.assertIn("Sample PDF for testing", APP_JS)
+        self.assertIn("const normalizeCategory = (value) => String(value || \"Other\")", APP_JS)
+        self.assertIn("const extraCategories = [...new Set(", APP_JS)
+        self.assertIn('survey-room-seai-pdfs"><summary>', APP_JS)
+        self.assertNotIn('survey-room-seai-pdfs" open', APP_JS)
+        self.assertIn(
+            "houseDocuments.filter((document) => !document.is_annotated)",
+            APP_JS,
+        )
+        self.assertIn("document.is_selected_pdf && !document.is_annotated", APP_JS)
+        pdf_loader = APP_JS[
+            APP_JS.index("async function loadAssignSeaiPdfSections"):
+            APP_JS.index("async function loadAssignSeaiHouseRecord")
+        ]
+        self.assertNotIn("house-vent-documents", pdf_loader)
+        self.assertIn("Could not load original or saved PDFs:", pdf_loader)
+
     def test_teams_tab_cards_are_compact_and_size_to_content(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
@@ -6137,19 +6496,23 @@ class UiWiringTests(unittest.TestCase):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         self.assertIn('id="survey-room-seai-documents"', html)
+        self.assertIn('id="survey-room-seai-library"', html)
+        self.assertNotIn('id="survey-room-house-pdfs"', html)
+        self.assertNotIn("No survey PDFs uploaded for this house yet", APP_JS)
         self.assertIn('id="pdf-annotator-dialog"', html)
         self.assertIn(
             "loadSeaiDocuments(houseId, state.surveyRoomRequest, isReady)",
             APP_JS,
         )
         self.assertIn('`/api/seai-documents?house_id=${encodeURIComponent(houseId)}`', APP_JS)
+        self.assertIn("_find_seai_application_id(details)", (ROOT / "server.py").read_text(encoding="utf-8"))
         self.assertIn('data-document-id="${Number(document.id)}"', APP_JS)
         self.assertRegex(
             APP_JS,
             r'const documentPath = previewType === "seai"\s+\|\|\s+previewType === "vent_seai"\s+\? "seai-documents"\s+: previewType === "vent"\s+\? "house-vent-documents"\s+: "house-documents";',
         )
         self.assertIn('"The original SEAI PDF stays unchanged.', APP_JS)
-        self.assertIn("The original is unchanged.", APP_JS)
+        self.assertIn("original stays unchanged.", APP_JS)
         self.assertIn(".seai-document-category", css)
         self.assertIn(
             'document.is_annotated ? "ANNOTATED COPY" : "ORIGINAL PDF"',
@@ -6158,22 +6521,18 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(".seai-document-status.original", css)
         self.assertIn(".seai-document-status.annotated", css)
         self.assertIn('data-seai-share-selected', APP_JS)
-        self.assertIn('data-seai-document-share="${Number(document.id)}"', APP_JS)
-        self.assertIn("Share annotated PDF", APP_JS)
+        self.assertNotIn("Share annotated PDF", APP_JS)
+        self.assertIn("Add to selected pages", APP_JS)
+        self.assertIn("only the final combined PDF is saved", APP_JS)
         self.assertIn('id="pdf-annotator-page-selection"', html)
         self.assertIn('data-seai-share-clear', APP_JS)
         self.assertIn("/api/seai-documents/share", APP_JS)
-        self.assertIn("View-only PDFs.", APP_JS)
-        self.assertIn(
-            "Editing, annotations, and sharing are disabled while the house is Not started.",
-            APP_JS,
-        )
-        self.assertIn(
-            '`<a class="button button-secondary" href="/api/seai-documents/${Number(document.id)}/file"',
-            APP_JS,
-        )
+        self.assertIn("Previously saved combined PDFs for this house.", APP_JS)
+        self.assertIn("These files are view-only while the house is Not started.", APP_JS)
+        self.assertIn('href="${document.is_test_sample ? document.file_url :', APP_JS)
+        self.assertIn('file_url: `/api/survey-room-test-pdfs/${filename}`', APP_JS)
         self.assertNotIn("loadHouseDocuments(houseId, state.surveyRoomRequest, isReady)", APP_JS)
-        self.assertIn('data-not-started-only', html)
+        self.assertIn('href="#survey-room-seai-library">SEAI PDFs</a>', html)
 
     def test_annotated_pdfs_can_be_shared_with_the_ewi_supervisor_team(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -6185,8 +6544,10 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn("Send PDF to Vent team", html)
         self.assertIn("Send PDF to external insulation team", html)
         self.assertIn("Available to active External Insulation supervisors", html)
-        self.assertIn('$("#house-document-share-ewi").hidden = false', APP_JS)
-        self.assertIn("ewiTeamShare: {", APP_JS)
+        self.assertIn(
+            '$("#house-document-share-ewi").addEventListener("click", sendPreparedPdfToEwiTeam)',
+            APP_JS,
+        )
         self.assertIn("/api/supervisor/shared-seai-documents?house_id=", APP_JS)
         self.assertIn("sendPreparedPdfToEwiTeam", APP_JS)
         self.assertIn(".house-document-team-buttons { display: grid;", css)
@@ -6222,7 +6583,7 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('data-ewi-house-pdfs="${houseId}"', APP_JS)
         self.assertIn(">View house details</button>", APP_JS)
         self.assertIn("openEwiSupervisorPdfs", APP_JS)
-        self.assertIn("request(`/api/house-vent-documents?house_id=", APP_JS)
+        self.assertIn("/api/house-vent-documents?house_id=", APP_JS)
         self.assertIn(
             "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card",
             css,
@@ -6352,13 +6713,14 @@ class UiWiringTests(unittest.TestCase):
             'html[data-theme="dark"] .survey-room-seai-documents {',
             css,
         )
-        self.assertIn("Browse application records, survey plans", APP_JS)
+        self.assertIn("alongside any SEAI PDFs linked to this house", APP_JS)
 
     def test_pdf_annotator_keeps_scroll_and_adds_page_navigation_controls(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="pdf-annotator-text-size"', html)
         self.assertIn('<option value="32">XXL</option>', html)
-        self.assertIn('font_size: textSize / annotator.fitWidth', APP_JS)
+        self.assertIn("selectedText.font_size = safeSize / displayScale", APP_JS)
+        self.assertIn('id="pdf-annotator-text-resize"', html)
         self.assertIn('id="pdf-annotator-page-count"', html)
         self.assertIn('id="pdf-annotator-page-number"', html)
         self.assertIn('addEventListener("submit", jumpToPdfPage)', APP_JS)
@@ -6966,14 +7328,12 @@ console.log(JSON.stringify([
 
     def test_dark_mode_cards_use_cohesive_dark_surfaces(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
-        self.assertIn('html[data-theme="dark"] .card,\nhtml[data-theme="dark"] .stat-card,\nhtml[data-theme="dark"] .team-card,\nhtml[data-theme="dark"] .house-card,', css)
+        self.assertIn('html[data-theme="dark"] .card,\nhtml[data-theme="dark"] .team-card,\nhtml[data-theme="dark"] .house-card,', css)
         self.assertIn('html[data-theme="dark"] .kpi.seai { border-left-color: #86a9ba; background: #202d32; }', css)
-        self.assertIn('html[data-theme="dark"] .house-tile.active { border-color: #3e7054; background: #20382b; }', css)
         self.assertIn('html[data-theme="dark"] .house-grid.house-grid-ready > .house-plan-ready,', css)
         self.assertIn('html[data-theme="dark"] #houses-list.house-grid-compact > .house-plan-pending .house-workflow-heading strong {\n  color: #edf5ef;', css)
         self.assertIn('html[data-theme="dark"] .back-button {\n  border-color: #4a6656;', css)
         self.assertIn('html[data-theme="dark"] .back-button:hover {\n  border-color: #75a987;', css)
-        self.assertIn('html[data-theme="dark"] .activity-item { border-top-color: #34463e; }', css)
 
     def test_house_card_scrollbars_are_visible_and_theme_aware(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
@@ -7035,6 +7395,30 @@ console.log(JSON.stringify([
         )
         self.assertIn(
             'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-workflow-steps li.current > span {',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-workflow-steps li.current.workflow-stage-2 > span {\n'
+            '  border-color: #5896d1;\n'
+            '  background: #245888;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-ready > .house-plan-ready .house-workflow-steps li.complete > span {\n'
+            '  border-color: #536861;\n'
+            '  background: #1b2823;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-active > .house-active .house-workflow-steps li.complete > span {\n'
+            '  border-color: #51665a;\n'
+            '  background: #1b2823;',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #houses-list.house-grid-closed > .house-finished .house-workflow-steps li.current.workflow-stage-4 > span {\n'
+            '  border-color: #cf625b;\n'
+            '  background: #8d3935;',
             css,
         )
         self.assertIn(
@@ -7157,7 +7541,14 @@ console.log(JSON.stringify([
     def test_logo_returns_to_overview_and_hides_overview_shortcut(self):
         self.assertIn('$$(".brand, .mobile-brand, .surveyor-brand").forEach((link) =>', APP_JS)
         self.assertIn('link.addEventListener("click", goToHomeView)', APP_JS)
+        self.assertIn(
+            'showHousesOverview();\n    setTab("houses");\n    loadSurveyorHouses();',
+            APP_JS,
+        )
         self.assertIn('setTab("overview");\n  showHousesOverview();', APP_JS)
+        self.assertIn('id="survey-room-pdf-preview-dialog"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        self.assertIn('data-survey-room-pdf-preview=', APP_JS)
+        self.assertIn('$("#survey-room-pdf-preview-frame").src = url.href', APP_JS)
         self.assertIn('$("#go-overview").classList.toggle("hidden", tab === "overview")', APP_JS)
         self.assertIn('$("#go-overview").classList.add("hidden")', APP_JS)
         self.assertIn('button.setAttribute("aria-current", "page")', APP_JS)

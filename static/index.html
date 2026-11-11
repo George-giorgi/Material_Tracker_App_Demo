@@ -8,15 +8,70 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261109-pdf-loading-1">
+    <link rel="stylesheet" href="/app.css?v=20261111-pdf-icon-text-after-drop">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
       <section class="auth-card">
+        <button class="button button-secondary auth-theme-toggle" id="auth-theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><span aria-hidden="true">☾</span></button>
+        <div class="auth-heading">
+          <div class="eyebrow" id="auth-eyebrow">SECURE WORKSPACE</div>
+          <h1 id="auth-title" class="hidden"></h1>
+          <p id="auth-description" class="hidden"></p>
+        </div>
         <img class="auth-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat">
-        <div class="eyebrow" id="auth-eyebrow">SECURE WORKSPACE</div>
-        <h1 id="auth-title">Sign in</h1>
-        <p id="auth-description" class="hidden"></p>
+        <div class="auth-light-scene">
+          <button class="auth-lights-toggle" id="auth-lights-toggle" type="button" aria-label="Pull the cord to turn lights off" aria-pressed="true">
+            <svg class="auth-light-fixture" viewBox="0 0 220 122" aria-hidden="true">
+              <defs>
+                <linearGradient id="auth-lamp-metal" x1="0" x2="1" y1="0" y2="1">
+                  <stop offset="0" stop-color="#65736b"></stop>
+                  <stop offset=".35" stop-color="#202b25"></stop>
+                  <stop offset=".62" stop-color="#3d4941"></stop>
+                  <stop offset="1" stop-color="#151d18"></stop>
+                </linearGradient>
+                <linearGradient id="auth-lamp-fabric" x1="0" x2="1" y1="0" y2="0">
+                  <stop offset="0" stop-color="#d8c8a9"></stop>
+                  <stop offset=".22" stop-color="#f6ecd5"></stop>
+                  <stop offset=".52" stop-color="#fff8e9"></stop>
+                  <stop offset=".82" stop-color="#eee1c6"></stop>
+                  <stop offset="1" stop-color="#c9b894"></stop>
+                </linearGradient>
+                <radialGradient id="auth-lamp-bulb-glass" cx=".38" cy=".28" r=".8">
+                  <stop offset="0" stop-color="#fffef0"></stop>
+                  <stop offset=".55" stop-color="#ffe89c"></stop>
+                  <stop offset="1" stop-color="#eaa842"></stop>
+                </radialGradient>
+                <linearGradient id="auth-lamp-spill" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0" stop-color="#ffd96d" stop-opacity=".46"></stop>
+                  <stop offset="1" stop-color="#ffd96d" stop-opacity="0"></stop>
+                </linearGradient>
+              </defs>
+              <g class="auth-lamp-assembly">
+              <ellipse class="auth-lamp-wall-shadow" cx="195" cy="35" rx="17" ry="25"></ellipse>
+              <path class="auth-lamp-wall-plate" d="M194 10c-12 0-21 10-21 24s9 24 21 24 21-10 21-24-9-24-21-24Z"></path>
+              <circle class="auth-lamp-wall-screw" cx="194" cy="17" r="2"></circle>
+              <circle class="auth-lamp-wall-screw" cx="194" cy="51" r="2"></circle>
+              <path class="auth-lamp-arm" d="M194 30c-10-25-30-28-49-12-11 9-24 13-38 7-9-4-16-11-23-14"></path>
+              <path class="auth-lamp-arm-highlight" d="M190 27c-11-17-26-16-41-4-13 11-27 17-44 9"></path>
+              <path class="auth-lamp-socket" d="M82 15v20m-6-2h12"></path>
+              <g class="auth-lamp-bulb">
+                <path class="auth-lamp-bulb-glass" d="M82 39c-5 0-8 4-8 9 0 4 2 7 4 10l2 17c0 3 1 4 2 4s2-1 2-4l2-17c2-3 4-6 4-10 0-5-3-9-8-9Z"></path>
+                <path class="auth-lamp-bulb-base" d="M78 36h8m-8 3h8m-7 3h6"></path>
+                <path class="auth-lamp-bulb-filament" d="m79 52 3 5 3-5"></path>
+              </g>
+              <path class="auth-lamp-shade" d="M52 34h65l32 62c1 3-1 5-4 5H21c-3 0-5-2-4-5l30-62Z"></path>
+              <path class="auth-lamp-shade-seam" d="m49 39-27 56m70-60 1 63m27-60 26 57"></path>
+              <path class="auth-lamp-shade-rim" d="M18 96h130"></path>
+              <path class="auth-lamp-cord" d="M194 58c0 19 0 30 0 45q0 8 5 8"></path>
+              <path class="auth-lamp-cord-twist" d="M194 58c0 19 0 30 0 45q0 8 5 8"></path>
+              <path class="auth-lamp-cord-hit" d="M194 58v49"></path>
+              <circle class="auth-lamp-cord-pull" cx="199" cy="112" r="5"></circle>
+              <path class="auth-lamp-light-cone" d="m51 101 14 17h61l16-17Z"></path>
+              </g>
+            </svg>
+          </button>
+        </div>
         <div class="auth-cat-stage" id="auth-cat" data-mood="watching" data-field="username" aria-hidden="true">
           <svg class="auth-cat-art" viewBox="0 0 240 148" role="presentation">
             <defs>
@@ -543,8 +598,8 @@
             <nav class="survey-room-nav" aria-label="Survey room sections">
               <a href="#survey-room-work-plan">Work plan</a>
               <a href="#survey-room-seai-details" data-ready-only>SEAI record</a>
-              <a href="#survey-room-seai-details" data-not-started-only>SEAI PDFs</a>
               <a href="#survey-room-saved-pdfs">Saved PDFs</a>
+              <a href="#survey-room-seai-library">SEAI PDFs</a>
               <a href="#survey-room-measurements">Measurements</a>
             </nav>
             <article class="card survey-room-summary-card">
@@ -555,6 +610,14 @@
                 <div class="survey-room-notes-actions"><small>Up to 2,000 characters. Visible in the house record.</small><button class="button button-secondary note-delete" type="button" data-delete-note>Delete note</button><button class="button button-secondary" type="submit">Save house notes</button></div>
               </form>
             </article>
+            <section class="card survey-room-saved-pdfs" id="survey-room-saved-pdfs" aria-labelledby="survey-room-saved-pdfs-title">
+              <div class="survey-room-saved-pdfs-heading"><div><h2 id="survey-room-saved-pdfs-title">Saved PDFs</h2><p>Selected PDFs saved by surveyors for this house.</p></div></div>
+              <div id="survey-room-saved-pdfs-list" class="survey-room-saved-pdfs-list" aria-live="polite"></div>
+            </section>
+            <article class="card survey-room-seai-library-card" id="survey-room-seai-library" aria-labelledby="survey-room-seai-library-title">
+              <div class="card-heading"><div><h2 id="survey-room-seai-library-title">SEAI PDFs</h2><p>Browse and open the SEAI application, survey, and variation PDFs for this house.</p></div></div>
+              <div id="survey-room-seai-documents" class="survey-room-seai-documents" aria-live="polite"></div>
+            </article>
             <article class="card survey-room-seai-card hidden" id="survey-room-seai-details">
               <div class="card-heading"><div><h2>SEAI application record</h2><p>Captured application, property, contractor, measures, tests, variance, notes, and attachment metadata. Surveyors can edit only “Survey Qty including Variation”.</p></div></div>
               <div class="seai-accordion-toolbar" id="survey-room-seai-toolbar" role="group" aria-label="Section controls" data-seai-scope="#survey-room-seai-details">
@@ -562,11 +625,6 @@
                 <button class="text-button" type="button" data-seai-toggle-all="close">Collapse all</button>
               </div>
               <div id="survey-room-seai-content" class="survey-room-seai-content"></div>
-              <section class="survey-room-saved-pdfs" id="survey-room-saved-pdfs" aria-labelledby="survey-room-saved-pdfs-title">
-                <div class="survey-room-saved-pdfs-heading"><div><h3 id="survey-room-saved-pdfs-title">Saved PDFs</h3><p>Selected PDFs saved by surveyors for this house.</p></div></div>
-                <div id="survey-room-saved-pdfs-list" class="survey-room-saved-pdfs-list" aria-live="polite"></div>
-              </section>
-              <div id="survey-room-seai-documents" class="survey-room-seai-documents" aria-live="polite"></div>
             </article>
             <article class="card survey-room-work-plan-card" id="survey-room-work-plan">
               <div class="card-heading"><div><span class="work-plan-eyebrow">Before activation</span><h2>Pre-start work plan</h2><p>For each trade, choose whether work is required and add any helpful details. The Assign team sees this plan on the house card, and the Active house checklist starts required work as not done.</p></div><span id="surveyor-work-plan-progress" class="work-plan-progress" aria-live="polite">0 of 4 chosen</span></div>
@@ -743,10 +801,11 @@
                 <p class="page-subtitle">Read-only information saved from the SEAI portal.</p>
               </div>
             </div>
-            <div class="assign-seai-house-actions">
+            <div class="assign-seai-house-actions not-started" id="assign-seai-house-actions">
               <button class="button button-primary hidden" id="assign-seai-house-ready" type="button">Mark ready for start</button>
               <span class="status-pill ready hidden" id="assign-seai-house-status"></span>
             </div>
+            <div id="assign-seai-house-pdf-sections" class="assign-seai-house-pdf-sections"></div>
             <div class="seai-accordion-toolbar" id="assign-seai-toolbar" role="group" aria-label="Section controls" data-seai-scope="#assign-seai-house-detail">
               <button class="text-button" type="button" data-seai-toggle-all="open">Expand all</button>
               <button class="text-button" type="button" data-seai-toggle-all="close">Collapse all</button>
@@ -809,8 +868,22 @@
         <p id="selected-pdf-preview-description" class="page-subtitle">Check the combined pages before sharing.</p>
         <iframe id="selected-pdf-preview" title="Preview of selected survey PDF"></iframe>
         <div class="dialog-actions">
-          <button class="button button-secondary close-dialog" type="button">Back to Surveyor room</button>
-          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Save selected PDF to house</button>
+          <button class="button button-secondary close-dialog" type="button">Close PDF preview</button>
+          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Save selected PDFs to house</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="survey-room-pdf-preview-dialog" class="dialog selected-pdf-preview-dialog" aria-labelledby="survey-room-pdf-preview-title">
+      <div class="dialog-content">
+        <div class="dialog-heading">
+          <div><div class="eyebrow">HOUSE PDF</div><h2 id="survey-room-pdf-preview-title">View PDF</h2></div>
+          <button class="icon-button close-dialog" type="button" aria-label="Close PDF preview">×</button>
+        </div>
+        <p class="page-subtitle">PDF preview for this house.</p>
+        <iframe id="survey-room-pdf-preview-frame" title="House PDF preview"></iframe>
+        <div class="dialog-actions">
+          <button class="button button-secondary close-dialog" id="survey-room-pdf-preview-back" type="button">Back to Surveyor room</button>
         </div>
       </div>
     </dialog>
@@ -871,8 +944,8 @@
               </div>
             </form>
           </div>
-          <label class="pdf-annotator-page-selection hidden" id="pdf-annotator-page-selection-label"><input id="pdf-annotator-page-selection" type="checkbox"><span>Include this page in share</span></label>
-          <button class="button button-primary pdf-annotator-save" id="pdf-annotator-save" type="button" disabled>Save annotations</button>
+          <label class="pdf-annotator-page-selection hidden" id="pdf-annotator-page-selection-label"><input id="pdf-annotator-page-selection" type="checkbox"><span>Include this page in selected PDF</span></label>
+          <button class="button button-primary pdf-annotator-save" id="pdf-annotator-save" type="button" disabled>Add to selected pages</button>
         </div>
         <div class="pdf-annotator-text-panel hidden" id="pdf-annotator-text-panel">
           <label class="pdf-annotator-text-label" for="pdf-annotator-text">Text note</label>
@@ -886,7 +959,12 @@
               <option value="32">XXL</option>
             </select>
           </label>
-          <span class="pdf-annotator-text-hint">Choose a size, then tap the PDF to place the note.</span>
+          <label class="pdf-annotator-text-resize" for="pdf-annotator-text-resize">
+            Selected note size
+            <input id="pdf-annotator-text-resize" type="range" min="8" max="48" step="1" value="16" disabled>
+            <output id="pdf-annotator-text-resize-value" for="pdf-annotator-text-resize">16 px</output>
+          </label>
+          <span class="pdf-annotator-text-hint">Type a note and tap once to place it. Drag the green corner handle to resize, including on the first drag; the slider also works.</span>
         </div>
         <p class="pdf-annotator-help" id="pdf-annotator-help">Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark.</p>
         <div class="pdf-annotator-error hidden" id="pdf-annotator-error" role="alert"></div>
@@ -910,7 +988,7 @@
               <div>
                 <span class="pdf-annotator-page-caption">VENTILATION PRODUCTS</span>
                 <h3 id="pdf-annotator-icon-title">Add a product icon</h3>
-                <p>Drag an icon onto the plan or select it and tap the page.</p>
+                <p>Drag an icon onto the plan or select it and tap once to place it.</p>
               </div>
               <span class="pdf-annotator-ventilation-icons-count" id="pdf-annotator-icon-count">9 icons</span>
             </div>
@@ -924,7 +1002,7 @@
                 <button class="button button-secondary" id="pdf-annotator-icon-larger" type="button" aria-label="Make icon larger">Larger</button>
                 <button class="button button-secondary" id="pdf-annotator-icon-delete" type="button">Remove</button>
               </div>
-              <span>Drag to move · Drag a corner to resize · Drag the top handle to rotate</span>
+              <span>Tap the icon to select it. Drag the icon to move, a large green corner handle to resize, or the top handle to rotate.</span>
             </div>
           </aside>
         </div>
@@ -1185,6 +1263,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261109-vent-undo-active-1" defer></script>
+    <script src="/app.js?v=20261111-pdf-annotation-mode-handles-3" defer></script>
   </body>
 </html>

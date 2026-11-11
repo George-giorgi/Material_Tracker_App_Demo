@@ -89,6 +89,70 @@ class TrackerTests(unittest.TestCase):
 
         self.assertEqual([house["id"] for house in houses], ["VENT-NEW-CYCLE"])
 
+    def test_vent_team_sees_selected_annotated_seai_copy_for_house(self):
+        with server.connect_db() as db:
+            with db:
+                teamlead_id = server._insert_user(
+                    db,
+                    "vent-selected-pdf",
+                    "Vent Selected PDF",
+                    "234567",
+                    "teamlead",
+                    team_name="Ventilation",
+                )
+                db.execute(
+                    """
+                    INSERT INTO provided_houses
+                        (id, owner_name, plan_vent_required, ready_for_start)
+                    VALUES ('VENT-ANNOTATED-PDF', 'Vent PDF Owner', 1, 1)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_vent_assignments
+                        (house_id, teamlead_user_id, assigned_by, assigned_at)
+                    VALUES ('VENT-ANNOTATED-PDF', ?, 'Admin', '2026-11-10T12:00:00')
+                    """,
+                    (teamlead_id,),
+                )
+                db.execute(
+                    """
+                    CREATE TABLE seai_documents (
+                        id INTEGER PRIMARY KEY,
+                        application_id TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        filename TEXT NOT NULL,
+                        extension TEXT NOT NULL DEFAULT '',
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        content BLOB
+                    )
+                    """
+                )
+                cursor = db.execute(
+                    """
+                    INSERT INTO seai_documents
+                        (application_id, category, filename, content)
+                    VALUES ('SEAI-APP-VENT-ANNOTATED', 'Survey',
+                            'survey-annotated.pdf', x'255044462d312e34')
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO selected_seai_documents
+                        (document_id, house_id, created_by, created_at)
+                    VALUES (?, 'VENT-ANNOTATED-PDF', 'Surveyor', '2026-11-10T12:01:00')
+                    """,
+                    (cursor.lastrowid,),
+                )
+
+            houses = server._ventilation_house_list(db, teamlead_id)
+
+        self.assertEqual(len(houses), 1)
+        self.assertEqual(
+            [document["filename"] for document in houses[0]["survey_documents"]],
+            ["survey-annotated.pdf"],
+        )
+
     def add_material(self, name="Board", opening=10):
         with server.connect_db() as db:
             cursor = db.execute(
@@ -1377,6 +1441,19 @@ class TrackerTests(unittest.TestCase):
                 {"username": "assign-test-user", "pin": "234567"},
             )
             self.assertEqual(status, 200)
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_address[1], timeout=5
+            )
+            connection.request(
+                "GET",
+                "/api/survey-room-test-pdfs/application-letter.pdf",
+                headers={"Cookie": assign_cookie},
+            )
+            response = connection.getresponse()
+            test_pdf = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(test_pdf.startswith(b"%PDF"))
+            connection.close()
 
             status, dashboard, _ = self.http_request(
                 httpd, "GET", "/api/dashboard", cookie=assign_cookie
@@ -1522,6 +1599,12 @@ class TrackerTests(unittest.TestCase):
                 httpd, "GET", "/oldest-house-test/pdfs/survey-report.pdf"
             )
             self.assertEqual(status, 401)
+            status, _, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/survey-room-test-pdfs/application-letter.pdf",
+            )
+            self.assertEqual(status, 401)
 
             status, _, admin_cookie = self.http_request(
                 httpd,
@@ -1589,6 +1672,34 @@ class TrackerTests(unittest.TestCase):
                 self.assertTrue(pdf.startswith(b"%PDF"), name)
                 connection.close()
 
+            for name in server.SURVEY_ROOM_TEST_PDFS:
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", httpd.server_address[1], timeout=10
+                )
+                connection.request(
+                    "GET",
+                    f"/api/survey-room-test-pdfs/{name}",
+                    headers={"Cookie": admin_cookie},
+                )
+                response = connection.getresponse()
+                pdf = response.read()
+                self.assertEqual(response.status, 200, name)
+                self.assertEqual(
+                    response.getheader("Content-Type"), "application/pdf", name
+                )
+                self.assertIn("inline", response.getheader("Content-Disposition"))
+                self.assertEqual(
+                    pdf,
+                    (
+                        server.STATIC_DIR
+                        / "oldest-house-test"
+                        / "synthetic"
+                        / "pdfs"
+                        / name
+                    ).read_bytes(),
+                )
+                connection.close()
+
             status, _, _ = self.http_request(
                 httpd,
                 "POST",
@@ -1617,6 +1728,14 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(status, 403)
             self.assertIn("Surveyor access", error["error"])
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/survey-room-test-pdfs/application-letter.pdf",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("Admin, Surveyor, or Assign access", error["error"])
             status, error, _ = self.http_request(
                 httpd,
                 "GET",
@@ -1650,6 +1769,111 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(status, 404)
             self.assertEqual(error["error"], "PDF not found.")
+            status, error, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/survey-room-test-pdfs/not-allowed.pdf",
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(error["error"], "Test PDF was not found.")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_survey_room_test_pdf_annotations_do_not_persist_separately(self):
+        httpd, thread = self.start_test_server()
+        try:
+            status, _, admin_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/setup",
+                {
+                    "username": "test-pdf-admin",
+                    "display_name": "Test PDF Admin",
+                    "pin": "123456",
+                },
+            )
+            self.assertEqual(status, 201)
+            house_id = "TEST-PDF-ANNOTATIONS"
+            with server.connect_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO provided_houses (id, ready_for_start, source)
+                    VALUES (?, 1, 'tracker')
+                    """,
+                    (house_id,),
+                )
+                db.execute(
+                    """
+                    CREATE TABLE seai_documents (
+                        id INTEGER PRIMARY KEY,
+                        application_id TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        filename TEXT NOT NULL,
+                        extension TEXT NOT NULL DEFAULT '',
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        content BLOB
+                    )
+                    """
+                )
+            source_path = (
+                server.STATIC_DIR
+                / "oldest-house-test"
+                / "pdfs"
+                / "application-letter.pdf"
+            )
+            original_pdf = source_path.read_bytes()
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_address[1], timeout=5
+            )
+            connection.request(
+                "GET",
+                f"/api/survey-room-test-pdfs/application-letter.pdf/preview?house_id={house_id}&page=1",
+                headers={"Cookie": admin_cookie},
+            )
+            response = connection.getresponse()
+            preview = response.read()
+            headers = dict(response.getheaders())
+            self.assertEqual(response.status, 200)
+            self.assertEqual(headers["Content-Type"], "image/png")
+            self.assertTrue(preview.startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertEqual(headers["X-PDF-Page-Count"], "1")
+            connection.close()
+
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/survey-room-test-pdfs/application-letter.pdf/annotations",
+                {
+                    "house_id": house_id,
+                    "annotations": [
+                        {
+                            "page": 1,
+                            "tool": "ventilation_icon",
+                            "color": "#ffffff",
+                            "point": [0.5, 0.5],
+                            "icon": "trickle-vent",
+                            "width": 0.18,
+                            "height": 0.12,
+                            "rotation": 0,
+                        }
+                    ],
+                },
+                cookie=admin_cookie,
+            )
+            self.assertEqual(status, 409, result)
+            self.assertIn("Review selected pages", result["error"])
+            with server.connect_db() as db:
+                self.assertEqual(
+                    db.execute(
+                        "SELECT COUNT(*) FROM seai_documents WHERE application_id = ?",
+                        (house_id,),
+                    ).fetchone()[0],
+                    0,
+                )
+            self.assertEqual(source_path.read_bytes(), original_pdf)
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -2394,8 +2618,9 @@ class TrackerTests(unittest.TestCase):
     def test_surveyors_can_save_ready_house_work_plans(self):
         with server.connect_db() as db:
             db.execute(
-                "INSERT INTO provided_houses(id, postcode, owner_name, source) "
-                "VALUES ('H-WORKPLAN', 'T1', 'Owner', 'fictional_sample')"
+                "INSERT INTO provided_houses"
+                "(id, postcode, owner_name, source, plan_vent_required) "
+                "VALUES ('H-WORKPLAN', 'T1', 'Owner', 'fictional_sample', 1)"
             )
             db.execute(
                 "UPDATE provided_houses SET ready_for_start = 1 WHERE id = 'H-WORKPLAN'"
@@ -2413,6 +2638,16 @@ class TrackerTests(unittest.TestCase):
                 },
             )
             self.assertEqual(status, 201)
+            with server.connect_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO house_vent_assignments
+                        (house_id, teamlead_user_id, assigned_by, assigned_at)
+                    SELECT 'H-WORKPLAN', id, 'Earlier Vent Coordinator',
+                           '2026-10-30T11:00:00'
+                    FROM app_users WHERE username = 'admin1'
+                    """
+                )
             status, _, _ = self.http_request(
                 httpd,
                 "POST",
@@ -2456,6 +2691,8 @@ class TrackerTests(unittest.TestCase):
                     "esb_notes": "",
                     "plumber_required": True,
                     "plumber_notes": "Coordinate with owner",
+                    "vent_required": False,
+                    "vent_notes": "",
                 },
                 surveyor_cookie,
             )
@@ -2521,6 +2758,18 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(survey_status, 200, survey_result)
             self.assertTrue(survey_result["work_plan_published"])
+            with server.connect_db() as db:
+                published_vent_requirement = db.execute(
+                    "SELECT plan_vent_required FROM provided_houses "
+                    "WHERE id = 'H-WORKPLAN'"
+                ).fetchone()["plan_vent_required"]
+                self.assertEqual(published_vent_requirement, 0)
+                self.assertIsNone(
+                    db.execute(
+                        "SELECT 1 FROM house_vent_assignments "
+                        "WHERE house_id = 'H-WORKPLAN'"
+                    ).fetchone()
+                )
             admin_plan_status, admin_plan_result, _ = self.http_request(
                 httpd,
                 "POST",
@@ -2561,6 +2810,99 @@ class TrackerTests(unittest.TestCase):
                 tuple(checklist),
                 ("not_done", "not_esb", "not_done"),
             )
+            with server.connect_db() as db:
+                plumbing_supervisor_id = server._insert_user(
+                    db,
+                    "plumbing-workplan-supervisor",
+                    "Plumbing Workplan Supervisor",
+                    "456789",
+                    "supervisor",
+                    supervisor_specialty="Plumbing",
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_role_assignments
+                        (house_id, role, user_id, assigned_by, assigned_at)
+                    VALUES ('H-WORKPLAN', 'supervisor', ?,
+                            'Plumbing Coordinator', '2026-10-30T13:00:00')
+                    """,
+                    (plumbing_supervisor_id,),
+                )
+            draft_status, draft_result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "scaffolding_required": True,
+                    "scaffolding_notes": "Rear access only",
+                    "esb_required": False,
+                    "esb_notes": "",
+                    "plumber_required": False,
+                    "plumber_notes": "",
+                },
+                surveyor_cookie,
+            )
+            self.assertEqual(draft_status, 409, draft_result)
+            self.assertIn("Ready for start", draft_result["error"])
+            survey_status, survey_result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-survey",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "survey": {
+                        "windows": [],
+                        "doors": [],
+                        "house_corners": [],
+                        "perimeter_m": 42.5,
+                        "notes": "",
+                    },
+                },
+                surveyor_cookie,
+            )
+            self.assertEqual(survey_status, 409, survey_result)
+            self.assertIn("ready for start", survey_result["error"])
+            with server.connect_db() as db:
+                published_plan = db.execute(
+                    "SELECT plan_plumber_required FROM provided_houses "
+                    "WHERE id = 'H-WORKPLAN'"
+                ).fetchone()
+                self.assertEqual(published_plan["plan_plumber_required"], 1)
+                self.assertIsNotNone(
+                    db.execute(
+                        "SELECT 1 FROM house_role_assignments "
+                        "WHERE house_id = 'H-WORKPLAN' AND role = 'supervisor'"
+                    ).fetchone()
+                )
+            admin_plan_status, admin_plan_result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-work-plan",
+                {
+                    "house_id": "H-WORKPLAN",
+                    "scaffolding_required": True,
+                    "scaffolding_notes": "Rear access only",
+                    "esb_required": False,
+                    "esb_notes": "",
+                    "plumber_required": True,
+                    "plumber_notes": "Coordinate with owner",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(admin_plan_status, 409, admin_plan_result)
+            self.assertIn("Ready for start", admin_plan_result["error"])
+            with server.connect_db() as db:
+                plumbing_house = next(
+                    house
+                    for house in server._plumbing_coordinator_dashboard(db)[
+                        "plumbing_houses"
+                    ]
+                    if house["id"] == "H-WORKPLAN"
+                )
+                self.assertEqual(
+                    plumbing_house["supervisor_user_id"], plumbing_supervisor_id
+                )
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -3073,6 +3415,58 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             self.assertTrue(result["saved"])
+            with server.connect_db() as db:
+                db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS seai_documents (
+                        id INTEGER PRIMARY KEY,
+                        application_id TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        filename TEXT NOT NULL,
+                        extension TEXT NOT NULL DEFAULT '',
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        content BLOB
+                    )
+                    """
+                )
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_address[1], timeout=5
+            )
+            connection.request(
+                "GET",
+                "/api/survey-room-test-pdfs/application-letter.pdf/preview"
+                "?house_id=H-READY&page=1",
+                headers={"Cookie": survey_cookie},
+            )
+            response = connection.getresponse()
+            preview = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "image/png")
+            self.assertTrue(preview.startswith(b"\x89PNG\r\n\x1a\n"))
+            connection.close()
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/survey-room-test-pdfs/application-letter.pdf/annotations",
+                {
+                    "house_id": "H-READY",
+                    "annotations": [
+                        {
+                            "page": 1,
+                            "tool": "ventilation_icon",
+                            "color": "#ffffff",
+                            "point": [0.5, 0.5],
+                            "icon": "trickle-vent",
+                            "width": 0.18,
+                            "height": 0.12,
+                            "rotation": 0,
+                        }
+                    ],
+                },
+                survey_cookie,
+            )
+            self.assertEqual(status, 409, result)
+            self.assertIn("Review selected pages", result["error"])
             status, result, _ = self.http_request(
                 httpd, "GET", "/api/calculator/houses?q=H-READY", cookie=survey_cookie
             )

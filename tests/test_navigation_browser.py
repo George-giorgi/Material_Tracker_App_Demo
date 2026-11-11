@@ -7,6 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import server
 from tests.support import UvicornTestServer
@@ -108,6 +109,38 @@ class NavigationBrowserTests(unittest.TestCase):
 
     def active_page(self):
         return self.page.locator(".page.active").get_attribute("data-page")
+
+    def wait_for_pdf_canvas_layout(self):
+        self.page.evaluate(
+            """async () => {
+              const canvas = document.querySelector('#pdf-annotator-canvas');
+              let previous = '';
+              let stableFrames = 0;
+              while (stableFrames < 3) {
+                await new Promise(requestAnimationFrame);
+                const rect = canvas.getBoundingClientRect();
+                const size = `${rect.width}:${rect.height}`;
+                stableFrames = size === previous ? stableFrames + 1 : 0;
+                previous = size;
+              }
+            }"""
+        )
+
+    def create_seai_document_storage(self):
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_documents (
+                    id INTEGER PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    extension TEXT NOT NULL DEFAULT '',
+                    downloaded INTEGER NOT NULL DEFAULT 0,
+                    content BLOB
+                )
+                """
+            )
 
     def test_primary_navigation_and_overview_house_shortcuts_work(self):
         for tab in ("overview", "inventory", "houses", "movements"):
@@ -1539,7 +1572,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Combined PDFs by Surveyor", attached_pdfs_dialog.locator("h2").inner_text())
         self.assertEqual(attached_pdfs_button.locator(".vent-survey-pdfs-count").inner_text(), "1")
         attached_pdf = attached_pdfs_dialog.locator(
-            ".vent-survey-pdf-entry [data-vent-survey-pdf-view]"
+            ".vent-survey-pdf-entry [data-survey-room-pdf-preview]"
         )
         attached_pdf.wait_for(state="visible")
         self.assertIn("Combined PDF by Surveyor Teammate", attached_pdfs_dialog.inner_text())
@@ -1548,149 +1581,52 @@ class NavigationBrowserTests(unittest.TestCase):
               const response = await fetch(url);
               return { status: response.status, content: await response.text() };
             }""",
-            attached_pdf.get_attribute("data-pdf-url"),
+            attached_pdf.get_attribute("data-survey-room-pdf-preview"),
         )
         self.assertEqual(attached_pdf_response["status"], 200)
         self.assertIn("selected SEAI pages", attached_pdf_response["content"])
-        attached_pdf.click()
-        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
-        self.page.wait_for_function(
-            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        self.assertEqual(attached_pdf.inner_text(), "View PDF")
+        self.assertEqual(
+            attached_pdfs_dialog.locator(
+                ".vent-survey-pdf-entry a[download]"
+            ).get_attribute("href"),
+            attached_pdf.get_attribute("data-survey-room-pdf-preview"),
         )
         self.assertEqual(
-            self.page.locator("#pdf-annotator-icon-list .pdf-annotator-icon-card").count(),
-            9,
+            attached_pdfs_dialog.locator(
+                ".vent-survey-pdf-entry a[download]"
+            ).get_attribute("download"),
+            "VENT-DASHBOARD-selected-seai-pages.pdf",
+        )
+        self.assertEqual(
+            attached_pdfs_dialog.locator(
+                ".vent-survey-pdf-entry [data-survey-room-pdf-preview]"
+            ).count(),
+            1,
+        )
+        self.assertFalse(self.page.locator("#pdf-annotator-dialog").evaluate("dialog => dialog.open"))
+        attached_pdf.click()
+        preview_dialog = self.page.locator("#survey-room-pdf-preview-dialog")
+        preview_dialog.wait_for(state="visible")
+        iframe_url = urlsplit(
+            preview_dialog.locator("iframe").get_attribute("src")
+        )
+        document_url = urlsplit(
+            attached_pdf.get_attribute("data-survey-room-pdf-preview")
+        )
+        self.assertEqual(
+            (iframe_url.path, iframe_url.query),
+            (document_url.path, document_url.query),
         )
         self.assertIn(
             "VENT-DASHBOARD-selected-seai-pages.pdf",
-            self.page.locator("#pdf-annotator-title").inner_text(),
+            preview_dialog.locator("h2").inner_text(),
         )
-        icon_palette = self.page.locator("#pdf-annotator-icon-list")
-        icon_palette.locator(".pdf-annotator-icon-card").first.click()
-        annotation_canvas = self.page.locator("#pdf-annotator-canvas")
-        canvas_bounds = annotation_canvas.bounding_box()
-        self.page.mouse.click(
-            canvas_bounds["x"] + canvas_bounds["width"] / 2,
-            canvas_bounds["y"] + canvas_bounds["height"] / 2,
-        )
-        save_copy = self.page.get_by_role("button", name="Save annotated copy")
-        self.assertTrue(save_copy.is_enabled())
-        self.page.locator("#pdf-annotator-undo").click()
-        self.assertFalse(save_copy.is_enabled())
-        self.page.evaluate(
-            """() => {
-              const card = document.querySelector(
-                '#pdf-annotator-icon-list .pdf-annotator-icon-card'
-              );
-              const canvas = document.querySelector('#pdf-annotator-canvas');
-              const transfer = new DataTransfer();
-              card.dispatchEvent(new DragEvent('dragstart', {
-                bubbles: true,
-                dataTransfer: transfer
-              }));
-              const bounds = canvas.getBoundingClientRect();
-              canvas.dispatchEvent(new DragEvent('dragover', {
-                bubbles: true,
-                cancelable: true,
-                dataTransfer: transfer,
-                clientX: bounds.left + bounds.width * 0.65,
-                clientY: bounds.top + bounds.height * 0.65
-              }));
-              canvas.dispatchEvent(new DragEvent('drop', {
-                bubbles: true,
-                cancelable: true,
-                dataTransfer: transfer,
-                clientX: bounds.left + bounds.width * 0.65,
-                clientY: bounds.top + bounds.height * 0.65
-              }));
-            }"""
-        )
-        self.assertTrue(save_copy.is_enabled())
-        self.page.locator("[data-pdf-tool='pen']").click()
-        self.assertEqual(
-            icon_palette.locator(".pdf-annotator-icon-card.active").count(),
-            0,
-        )
-        self.page.mouse.click(
-            canvas_bounds["x"] + canvas_bounds["width"] * 0.3,
-            canvas_bounds["y"] + canvas_bounds["height"] * 0.3,
-        )
-        annotation_counts = self.page.evaluate(
-            """() => ({
-              icons: state.pdfAnnotator.annotations.filter(
-                annotation => annotation.tool === 'ventilation_icon'
-              ).length,
-              penStrokes: state.pdfAnnotator.annotations.filter(
-                annotation => annotation.tool === 'pen'
-              ).length
-            })"""
-        )
-        self.assertEqual(annotation_counts, {"icons": 1, "penStrokes": 1})
-        self.page.locator("[data-pdf-tool='text']").click()
-        self.page.locator("#pdf-annotator-text").fill("Outlet location")
-        self.page.mouse.click(
-            canvas_bounds["x"] + canvas_bounds["width"] * 0.65,
-            canvas_bounds["y"] + canvas_bounds["height"] * 0.65,
-        )
-        text_annotation_counts = self.page.evaluate(
-            """() => ({
-              icons: state.pdfAnnotator.annotations.filter(
-                annotation => annotation.tool === 'ventilation_icon'
-              ).length,
-              notes: state.pdfAnnotator.annotations.filter(
-                annotation => annotation.tool === 'text'
-              ).length
-            })"""
-        )
-        self.assertEqual(text_annotation_counts, {"icons": 1, "notes": 1})
-        next_icon = icon_palette.locator(".pdf-annotator-icon-card").nth(1)
-        next_icon.click()
-        self.assertEqual(
-            self.page.locator("[data-pdf-tool='pen']").get_attribute("aria-pressed"),
-            "true",
-        )
-        self.assertTrue(self.page.locator("#pdf-annotator-text-panel").is_hidden())
-        self.page.evaluate(
-            """card => {
-              const canvas = document.querySelector('#pdf-annotator-canvas');
-              const transfer = new DataTransfer();
-              card.dispatchEvent(new DragEvent('dragstart', {
-                bubbles: true,
-                dataTransfer: transfer
-              }));
-              const bounds = canvas.getBoundingClientRect();
-              canvas.dispatchEvent(new DragEvent('dragover', {
-                bubbles: true,
-                cancelable: true,
-                dataTransfer: transfer,
-                clientX: bounds.left + bounds.width * 0.4,
-                clientY: bounds.top + bounds.height * 0.4
-              }));
-              canvas.dispatchEvent(new DragEvent('drop', {
-                bubbles: true,
-                cancelable: true,
-                dataTransfer: transfer,
-                clientX: bounds.left + bounds.width * 0.4,
-                clientY: bounds.top + bounds.height * 0.4
-              }));
-            }""",
-            next_icon.element_handle(),
-        )
-        mode_switch_counts = self.page.evaluate(
-            """() => ({
-              icons: state.pdfAnnotator.annotations.filter(
-                annotation => annotation.tool === 'ventilation_icon'
-              ).length,
-              notes: state.pdfAnnotator.annotations.filter(
-                annotation => annotation.tool === 'text'
-              ).length
-            })"""
-        )
-        self.assertEqual(mode_switch_counts, {"icons": 2, "notes": 1})
-        self.page.keyboard.press("Escape")
-        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
+        preview_dialog.get_by_role("button", name="Back to dashboard").click()
+        preview_dialog.wait_for(state="hidden")
+        self.assertFalse(attached_pdfs_dialog.evaluate("dialog => dialog.open"))
         annotated_seai_pdf = attached_pdfs_dialog.locator(
-            '.vent-survey-pdf-entry [data-vent-survey-pdf-view][aria-label="Open and annotate VENT-DASHBOARD-survey-annotated.pdf"]'
+            '.vent-survey-pdf-entry [data-survey-room-pdf-preview][aria-label="View VENT-DASHBOARD-survey-annotated.pdf"]'
         )
         self.assertFalse(annotated_seai_pdf.count())
         self.assertFalse(attached_pdfs_dialog.locator(".vent-survey-pdf-entry").filter(has_text="saved-house-survey").count())
@@ -1756,6 +1692,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_function(
             "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
         )
+        self.page.set_viewport_size({"width": 1280, "height": 900})
         canvas = self.page.locator("#pdf-annotator-canvas")
         self.page.evaluate(
             """() => {
@@ -1988,24 +1925,21 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertNotEqual(dark_pdf_style["metadata"], dark_pdf_style["background"])
         attached_pdfs_button.click()
         attached_pdf = self.page.locator(
-            "#vent-survey-pdfs-dialog [data-vent-survey-pdf-view]"
+            "#vent-survey-pdfs-dialog [data-survey-room-pdf-preview]"
         )
-        attached_pdf.click()
-        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
-        dark_icon_style = self.page.locator(".pdf-annotator-icon-palette").evaluate(
-            """panel => ({
-              background: getComputedStyle(panel).backgroundColor,
-              title: getComputedStyle(panel.querySelector('h3')).color,
-              caption: getComputedStyle(panel.querySelector('.pdf-annotator-icon-card span')).color,
-              imageCount: panel.querySelectorAll('img').length
-            })"""
+        attached_pdf.wait_for(state="visible")
+        self.assertEqual(attached_pdf.inner_text(), "View PDF")
+        self.assertTrue(
+            self.page.locator("#vent-survey-pdfs-dialog a[download]").is_visible()
         )
-        self.assertNotEqual(dark_icon_style["background"], "rgb(255, 255, 255)")
-        self.assertNotEqual(dark_icon_style["title"], dark_icon_style["background"])
-        self.assertNotEqual(dark_icon_style["caption"], dark_icon_style["background"])
-        self.assertEqual(dark_icon_style["imageCount"], 9)
-        self.page.keyboard.press("Escape")
-        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
+        self.assertFalse(
+            self.page.locator("#pdf-annotator-dialog").evaluate(
+                "dialog => dialog.open"
+            )
+        )
+        self.page.locator("#vent-survey-pdfs-dialog").get_by_role(
+            "button", name="Close attached PDFs"
+        ).click()
         pending_card.get_by_role(
             "button", name="Annotate survey-plan.pdf"
         ).click()
@@ -2047,6 +1981,30 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(
             self.page.locator("#pdf-annotator-selected-icon-name").inner_text(),
             "Window trickle vent",
+        )
+        self.page.mouse.click(
+            canvas_box["x"] + canvas_box["width"] / 2,
+            canvas_box["y"] + canvas_box["height"] / 2,
+        )
+        self.assertGreater(
+            canvas.evaluate(
+                """canvas => {
+                  const pixels = canvas.getContext('2d').getImageData(
+                    0, 0, canvas.width, canvas.height
+                  ).data;
+                  let greenSelectionPixels = 0;
+                  for (let index = 0; index < pixels.length; index += 4) {
+                    if (pixels[index] < 150 &&
+                        pixels[index + 1] > 170 &&
+                        pixels[index + 2] > 120 &&
+                        pixels[index + 2] < 190 &&
+                        pixels[index + 3] > 0) greenSelectionPixels += 1;
+                  }
+                  return greenSelectionPixels;
+                }"""
+            ),
+            0,
+            "Selecting a placed icon should show its green resize outline",
         )
         self.assertTrue(self.page.locator("#pdf-annotator-save").is_enabled())
         self.page.locator("#pdf-annotator-icon-rotate-right").click()
@@ -2437,11 +2395,11 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(insulation.locator(".house-insulation-row").count(), 4)
         self.assertEqual(
             " ".join(card.locator(".surveyor-house-action").inner_text().split()),
-            "Start survey →",
+            "Start survey · View your room →",
         )
         self.assertEqual(
             card.locator(".surveyor-house-action").get_attribute("aria-label"),
-            "Open Surveyor room for DASHBOARD-1",
+            "Start survey and view your room",
         )
         button_layout = card.evaluate(
             """element => {
@@ -2463,7 +2421,7 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertLess(button_layout["buttonBottom"], button_layout["detailsTop"])
         self.assertEqual(
             " ".join(self.page.locator("#houses-list article[data-house-id='DASHBOARD-2'] .surveyor-house-action").inner_text().split()),
-            "Review survey →",
+            "Review survey · View your room →",
         )
         completed_card = self.page.locator("#houses-list article[data-house-id='DASHBOARD-2']")
         self.assertTrue(completed_card.evaluate("(element) => element.classList.contains('is-surveyed')"))
@@ -2681,6 +2639,23 @@ class NavigationBrowserTests(unittest.TestCase):
                     ),
                 ),
             )
+            for category, filename in (
+                ("application", "original-application.pdf"),
+                ("Variation", "original-variation.pdf"),
+            ):
+                db.execute(
+                    """
+                    INSERT INTO seai_documents
+                        (application_id, category, filename, extension, downloaded, content)
+                    VALUES (?, ?, ?, '.pdf', 1, ?)
+                    """,
+                    (
+                        "ACTIVE-ASSIGN",
+                        category,
+                        filename,
+                        b"%PDF-1.4\nOriginal SEAI PDF\n%%EOF",
+                    ),
+                )
             selected_document_id = db.execute(
                 """
                 INSERT INTO seai_documents
@@ -2771,6 +2746,15 @@ class NavigationBrowserTests(unittest.TestCase):
 
         dashboard = self.page.locator("#assign-houses-dashboard")
         dashboard.wait_for(state="visible")
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator("#assign-houses-dashboard").wait_for(state="visible")
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#assign-houses-dashboard [data-assign-house-filter='ready']"
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        self.page.locator("[data-assign-house-filter='active']").click()
         self.assertTrue(self.page.locator(".main-nav.workspace-nav").is_hidden())
         self.assertTrue(self.page.locator("#houses-teams-tabs").is_hidden())
         self.assertTrue(self.page.locator("#teams-section").is_hidden())
@@ -2836,6 +2820,12 @@ class NavigationBrowserTests(unittest.TestCase):
             has=self.page.locator("h2", has_text="ACTIVE-ASSIGN")
         )
         active_card.wait_for()
+        missing_surveyor = active_card.locator(
+            ".house-audit-summary-field.surveyor-assignment-field.surveyor-assignment-missing"
+        )
+        missing_surveyor.wait_for()
+        self.assertIn("Assigned Surveyor", missing_surveyor.inner_text())
+        self.assertIn("Not assigned", missing_surveyor.inner_text())
         self.assertEqual(active_card.locator(".stage-switch").count(), 0)
         self.assertEqual(active_card.locator(".house-note-open").count(), 0)
         self.assertEqual(active_card.locator(".house-snags-open").count(), 0)
@@ -2896,9 +2886,12 @@ class NavigationBrowserTests(unittest.TestCase):
             self.page.locator("#assign-seai-house-status").inner_text(),
             "Active",
         )
-        self.page.locator("#assign-seai-house-record .survey-room-seai-section").filter(
+        self.page.locator("#assign-seai-house-pdf-sections .survey-room-seai-section").filter(
             has_text="Application",
         ).locator("summary").click()
+        self.page.locator(
+            "#assign-seai-house-record .survey-room-seai-section"
+        ).filter(has_text="Application").locator("summary").click()
         self.page.locator("#assign-seai-house-record .survey-room-seai-measures summary").click()
         self.assertIn(
             "SEAI Owner",
@@ -2908,18 +2901,81 @@ class NavigationBrowserTests(unittest.TestCase):
             "External Wall Insulation",
             self.page.locator("#assign-seai-house-record").inner_text(),
         )
-        house_pdfs = self.page.locator("#assign-seai-house-record .survey-room-saved-pdfs")
+        pdf_sections = self.page.locator("#assign-seai-house-pdf-sections")
+        house_pdfs = pdf_sections.locator(".survey-room-saved-pdfs")
+        house_pdfs.wait_for()
+        for section_title in (
+            "Application PDFs",
+            "Survey PDFs",
+            "Variation PDFs",
+        ):
+            self.assertTrue(
+                pdf_sections.get_by_text(section_title, exact=True).is_visible(),
+                section_title,
+            )
+        survey_section = pdf_sections.locator(".survey-room-seai-section").filter(
+            has_text="Survey PDFs",
+        )
+        survey_section.locator("summary").click()
+        self.assertIn("TEST PDF · survey-report.pdf", survey_section.inner_text())
+        self.assertNotIn("selected-survey-pages.pdf", survey_section.inner_text())
+        self.assertIn(
+            "/api/survey-room-test-pdfs/survey-report.pdf",
+            survey_section.locator("a").first.get_attribute("href"),
+        )
+        pdf_sections.locator(".survey-room-seai-section").filter(
+            has_text="Variation PDFs",
+        ).locator("summary").click()
+        application_pdf_section = pdf_sections.locator(
+            ".survey-room-seai-section"
+        ).filter(
+            has_text="Application PDFs",
+        )
+        if not application_pdf_section.evaluate("section => section.open"):
+            application_pdf_section.locator("summary").click()
+        self.assertIn("ORIGINAL PDF · original-application.pdf", pdf_sections.inner_text())
+        self.assertIn("ORIGINAL PDF · original-variation.pdf", pdf_sections.inner_text())
+        self.assertEqual(pdf_sections.get_by_text("Vent team PDFs", exact=True).count(), 0)
         self.assertTrue(house_pdfs.is_visible())
         self.assertIn("Saved PDFs", house_pdfs.locator("h3").inner_text())
-        self.assertIn("survey-plan-annotated.pdf", house_pdfs.inner_text())
+        self.assertTrue(
+            house_pdfs.evaluate(
+                "(element) => element.parentElement.firstElementChild === element"
+            )
+        )
+        self.assertTrue(
+            pdf_sections.evaluate(
+                "(element) => element.compareDocumentPosition("
+                "document.querySelector('#assign-seai-toolbar')) & "
+                "Node.DOCUMENT_POSITION_FOLLOWING"
+            )
+        )
+        self.assertNotIn("survey-plan-annotated.pdf", house_pdfs.inner_text())
+        self.assertNotIn("ANNOTATED COPY", house_pdfs.inner_text())
         self.assertIn("selected-survey-pages.pdf", house_pdfs.inner_text())
-        self.assertIn("Saved by Surveyor Browser", house_pdfs.inner_text())
-        self.assertEqual(house_pdfs.locator(".saved-pdf-entry").count(), 2)
+        self.assertIn(
+            "original-application.pdf",
+            pdf_sections.inner_text(),
+        )
+        self.assertIn(
+            "original-variation.pdf",
+            pdf_sections.inner_text(),
+        )
+        self.assertTrue(
+            pdf_sections.get_by_role(
+                "link", name="View original-application.pdf"
+            ).is_visible()
+        )
+        self.assertTrue(
+            pdf_sections.get_by_role(
+                "link", name="View original-variation.pdf"
+            ).is_visible()
+        )
+        self.assertEqual(house_pdfs.locator(".saved-pdf-entry").count(), 1)
         pdf_view_links = house_pdfs.locator(".saved-pdf-view")
-        self.assertEqual(pdf_view_links.count(), 2)
+        self.assertEqual(pdf_view_links.count(), 1)
         self.assertTrue(pdf_view_links.first.is_visible())
-        self.assertTrue(pdf_view_links.nth(1).is_visible())
-        self.assertEqual(house_pdfs.locator("a[download]").count(), 2)
+        self.assertEqual(house_pdfs.locator("a[download]").count(), 1)
         history = self.page.locator(".assign-seai-variation-history")
         self.assertTrue(history.is_visible())
         self.assertIn("120", history.inner_text())
@@ -3430,6 +3486,180 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_function(
             "document.querySelector('#auth-cat').dataset.mood === 'watching'",
             timeout=2000,
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_login_dark_mode_uses_refined_high_contrast_surfaces(self):
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+
+        cat = self.page.locator("#auth-cat")
+        eyebrow = self.page.locator("#auth-eyebrow")
+        title = self.page.locator("#auth-title")
+        self.assertEqual(eyebrow.inner_text(), "SECURE WORKSPACE")
+        self.assertTrue(title.is_hidden())
+        self.assertEqual(title.inner_text(), "")
+        self.assertLess(
+            eyebrow.bounding_box()["y"],
+            self.page.locator(".auth-logo").bounding_box()["y"],
+        )
+        self.assertLess(
+            title.evaluate("element => parseFloat(getComputedStyle(element).fontSize)"),
+            18,
+        )
+        eyebrow_box = eyebrow.bounding_box()
+        icon_box = self.page.locator("#auth-theme-toggle span").bounding_box()
+        self.assertAlmostEqual(
+            eyebrow_box["y"] + eyebrow_box["height"] / 2,
+            icon_box["y"] + icon_box["height"] / 2,
+            delta=2,
+        )
+        self.assertEqual(
+            self.page.locator(".auth-card").evaluate(
+                "element => getComputedStyle(element).display"
+            ),
+            "grid",
+        )
+        self.assertGreater(
+            self.page.locator("#auth-form").bounding_box()["x"],
+            self.page.locator(".auth-logo").bounding_box()["x"],
+        )
+        card_box = self.page.locator(".auth-card").bounding_box()
+        self.assertLess(
+            eyebrow_box["x"] + eyebrow_box["width"] / 2,
+            card_box["x"] + card_box["width"] / 2,
+        )
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertEqual(
+            self.page.locator(".auth-card").evaluate(
+                "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+            ),
+            1,
+        )
+        self.assertGreater(
+            self.page.locator("#auth-form").bounding_box()["y"],
+            self.page.locator("#auth-cat").bounding_box()["y"],
+        )
+        self.assertLess(
+            self.page.locator(".auth-logo").bounding_box()["y"],
+            cat.bounding_box()["y"],
+        )
+        self.page.locator("#auth-theme-toggle").click()
+        username = self.page.locator("#auth-username")
+        username.focus()
+        self.page.wait_for_function(
+            """() => getComputedStyle(
+              document.querySelector('#auth-username')
+            ).backgroundColor === 'rgb(19, 30, 24)'"""
+        )
+        self.assertEqual(
+            self.page.locator("#auth-theme-toggle").get_attribute("aria-pressed"),
+            "true",
+        )
+        self.assertEqual(
+            username.evaluate("element => getComputedStyle(element).backgroundColor"),
+            "rgb(19, 30, 24)",
+        )
+        self.assertEqual(
+            username.evaluate("element => getComputedStyle(element).color"),
+            "rgb(237, 245, 239)",
+        )
+        self.assertIn(
+            "radial-gradient",
+            self.page.locator(".auth-card").evaluate(
+                "element => getComputedStyle(element).backgroundImage"
+            ),
+        )
+        self.assertNotEqual(
+            username.evaluate("element => getComputedStyle(element).boxShadow"),
+            "none",
+        )
+        self.assertEqual(self.browser_errors, [])
+
+    def test_login_lights_control_disables_and_darkens_credentials(self):
+        self.page.locator("#account-button").click()
+        self.page.locator("#account-sign-out").click()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+
+        lights = self.page.locator("#auth-lights-toggle")
+        username = self.page.locator("#auth-username")
+        pin = self.page.locator("#auth-pin")
+        self.assertTrue(username.is_enabled())
+        self.assertTrue(pin.is_enabled())
+
+        lights.click()
+        self.assertEqual(lights.get_attribute("aria-pressed"), "true")
+        self.assertTrue(username.is_enabled())
+        self.assertTrue(pin.is_enabled())
+
+        def pull_cord():
+            cord = lights.locator(".auth-lamp-cord-hit").bounding_box()
+            self.assertIsNotNone(cord)
+            cord_x = cord["x"] + cord["width"] / 2
+            cord_y = cord["y"] + cord["height"] * 0.45
+            self.page.mouse.move(cord_x, cord_y)
+            self.page.mouse.down()
+            self.page.mouse.move(cord_x, cord_y + 32, steps=4)
+            stretched_path = lights.locator(".auth-lamp-cord").get_attribute("d")
+            self.assertTrue(stretched_path.startswith("M194 58"))
+            self.assertIn("143", stretched_path)
+            self.page.mouse.up()
+
+        pull_cord()
+        self.assertEqual(lights.get_attribute("aria-pressed"), "false")
+        self.assertEqual(
+            lights.get_attribute("aria-label"),
+            "Pull the cord to turn lights on",
+        )
+        self.assertTrue(username.is_disabled())
+        self.assertTrue(pin.is_disabled())
+        self.page.wait_for_function(
+            """() => getComputedStyle(
+              document.querySelector('#auth-username')
+            ).backgroundColor === 'rgb(8, 11, 10)'"""
+        )
+        login_style = self.page.evaluate(
+            """() => ({
+              lights: document.querySelector('#auth-screen').dataset.lights,
+              disabled: document.querySelector('#auth-username').disabled,
+              selectorMatches: document.querySelector('#auth-username').matches(
+                '#auth-screen[data-lights="off"] #auth-form input:disabled'
+              ),
+              background: getComputedStyle(
+                document.querySelector('#auth-username')
+              ).backgroundColor
+            })"""
+        )
+        self.assertEqual(login_style["background"], "rgb(8, 11, 10)", login_style)
+
+        self.page.reload()
+        self.page.locator("#auth-screen:not(.hidden)").wait_for()
+        lights = self.page.locator("#auth-lights-toggle")
+        username = self.page.locator("#auth-username")
+        pin = self.page.locator("#auth-pin")
+        self.assertEqual(lights.get_attribute("aria-pressed"), "false")
+        self.assertTrue(username.is_disabled())
+        self.assertTrue(pin.is_disabled())
+
+        pull_cord()
+        self.assertEqual(lights.get_attribute("aria-pressed"), "true")
+        self.assertTrue(username.is_enabled())
+        self.assertTrue(pin.is_enabled())
+        self.assertEqual(
+            self.page.locator(".auth-lamp-bulb").evaluate(
+                "element => getComputedStyle(element).transform"
+            ),
+            "none",
+        )
+        self.assertTrue(self.page.locator(".auth-lamp-bulb").is_visible())
+        self.assertEqual(
+            self.page.locator("#auth-screen").get_attribute("data-igniting"),
+            "true",
+        )
+        self.page.wait_for_function(
+            "!document.querySelector('#auth-screen').hasAttribute('data-igniting')",
+            timeout=1500,
         )
         self.assertEqual(self.browser_errors, [])
 
@@ -3965,6 +4195,12 @@ class NavigationBrowserTests(unittest.TestCase):
                 VALUES ('TEAM-PREASSIGN-1', 'T2', 'Pending Owner')
                 """
             )
+            db.execute(
+                """
+                INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
+                VALUES ('TEAM-PREASSIGN-READY', 'T3', 'Ready Owner', 1)
+                """
+            )
             server._insert_user(
                 db, "preassign-assign", "Preassign Assign", "234567", "assign"
             )
@@ -4007,6 +4243,18 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(card.locator(".assign-seai-details").is_visible())
         self.assertEqual(ready_button.inner_text(), "Mark ready for start")
         self.assertFalse(card.locator(".assign-house-team").count())
+        self.page.locator("[data-assign-house-filter='ready']").click()
+        ready_missing_surveyor = self.page.locator(
+            "#houses-list article.needs-surveyor-assignment"
+        ).first
+        ready_missing_surveyor.wait_for()
+        self.assertIn(
+            "Surveyor assignment needed",
+            ready_missing_surveyor.locator(".surveyor-assignment-alert").inner_text(),
+        )
+        self.assertTrue(
+            ready_missing_surveyor.locator(".assign-surveyor-action").is_visible()
+        )
 
     def test_admin_not_started_card_has_only_mark_ready_action(self):
         with server.connect_db() as db:
@@ -4896,6 +5144,36 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-plan-ready[data-house-id="DARK-READY-TEST"]'
         )
         ready_card.wait_for()
+        ready_step = ready_card.locator(
+            ".house-workflow-steps li.current.workflow-stage-2 > span"
+        )
+        not_started_step = ready_card.locator(
+            ".house-workflow-steps li.complete.workflow-stage-1 > span"
+        )
+        self.assertEqual(
+            not_started_step.evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(27, 40, 35)",
+        )
+        self.assertEqual(
+            not_started_step.evaluate(
+                "(element) => getComputedStyle(element).borderTopColor"
+            ),
+            "rgb(83, 104, 97)",
+        )
+        self.assertEqual(
+            ready_step.evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(36, 88, 136)",
+        )
+        self.assertEqual(
+            ready_step.evaluate(
+                "(element) => getComputedStyle(element).borderTopColor"
+            ),
+            "rgb(88, 150, 209)",
+        )
         self.assertEqual(
             ready_card.locator(".house-body").evaluate(
                 "(element) => getComputedStyle(element).overflowY"
@@ -4947,7 +5225,13 @@ class NavigationBrowserTests(unittest.TestCase):
             pending_card.locator(".house-workflow-steps li.current > span").evaluate(
                 "(element) => getComputedStyle(element).backgroundColor"
             ),
-            "rgb(64, 93, 107)",
+            "rgb(53, 47, 33)",
+        )
+        self.assertEqual(
+            pending_card.locator(".house-workflow-steps li.current > span").evaluate(
+                "(element) => getComputedStyle(element).borderTopColor"
+            ),
+            "rgb(227, 177, 94)",
         )
         self.assertEqual(
             pending_card.locator(".house-workflow-hint").evaluate(
@@ -7458,9 +7742,24 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator(
             f'.house-survey-open[data-house-id="{house_id}"]'
         ).click()
+        self.page.locator("#survey-room-seai-library").wait_for(state="visible")
+        self.assertTrue(
+            self.page.locator("#survey-room-seai-library-title").is_visible()
+        )
         self.page.locator(
             ".survey-room-nav a[data-ready-only][href='#survey-room-seai-details']"
         ).click()
+        seai_pdfs_link = self.page.locator(
+            ".survey-room-nav a[href='#survey-room-seai-library']"
+        )
+        self.assertTrue(seai_pdfs_link.is_visible())
+        seai_pdfs_link.click()
+        self.assertEqual(
+            self.page.evaluate(
+                "document.querySelector('#survey-room-seai-library').id"
+            ),
+            "survey-room-seai-library",
+        )
         self.page.locator(
             "#survey-room-seai-documents [data-seai-create-blank]"
         ).wait_for()
@@ -7490,9 +7789,22 @@ class NavigationBrowserTests(unittest.TestCase):
             "button", name="Add blank page to selection"
         ).click()
         self.page.get_by_text("1 page selected").wait_for()
-        self.page.locator(
+        share_button = self.page.locator(
             "#survey-room-seai-documents [data-seai-share-selected]"
-        ).click()
+        )
+        previous_toast = self.page.locator("#toast").inner_text()
+        share_button.click()
+        self.page.wait_for_function(
+            """previous => document.querySelector('#selected-pdf-preview-dialog').open ||
+              document.querySelector('#toast').textContent.trim() !== previous""",
+            arg=previous_toast,
+        )
+        self.assertTrue(
+            self.page.locator("#selected-pdf-preview-dialog").evaluate(
+                "dialog => dialog.open"
+            ),
+            self.page.locator("#toast").inner_text(),
+        )
         self.page.locator("#selected-pdf-preview-dialog[open]").wait_for()
         preview = self.page.locator("#selected-pdf-preview")
         self.assertTrue(preview.get_attribute("src").startswith("blob:"))
@@ -7510,10 +7822,22 @@ class NavigationBrowserTests(unittest.TestCase):
             preview.get_attribute("src"),
         )
         self.assertEqual(preview_pdf, {"type": "application/pdf", "signature": "%PDF-"})
+        previous_toast = self.page.locator("#toast").inner_text()
         self.page.locator("#selected-pdf-preview-continue").click()
         self.page.wait_for_function(
-            """() => !document.querySelector('#selected-pdf-preview-dialog').open &&
-              document.querySelector('#toast').textContent.includes('saved to the house SEAI PDFs')"""
+            """previous => !document.querySelector('#selected-pdf-preview-dialog').open ||
+              document.querySelector('#toast').textContent.trim() !== previous""",
+            arg=previous_toast,
+        )
+        self.assertFalse(
+            self.page.locator("#selected-pdf-preview-dialog").evaluate(
+                "dialog => dialog.open"
+            ),
+            self.page.locator("#toast").inner_text(),
+        )
+        self.assertIn(
+            "saved to the house SEAI PDFs",
+            self.page.locator("#toast").inner_text(),
         )
         self.assertFalse(self.page.locator("#house-document-share-dialog").evaluate(
             "dialog => dialog.open"
@@ -7526,8 +7850,10 @@ class NavigationBrowserTests(unittest.TestCase):
         saved_entry.wait_for(state="visible")
         self.assertTrue(
             self.page.locator("#survey-room-saved-pdfs").evaluate(
-                """section => section.parentElement.id === 'survey-room-seai-details' &&
-                  section.nextElementSibling.id === 'survey-room-seai-documents'"""
+                """section => section.parentElement.id === 'surveyor-room' &&
+                  section.compareDocumentPosition(
+                    document.querySelector('#survey-room-seai-library')
+                  ) & Node.DOCUMENT_POSITION_FOLLOWING"""
             )
         )
         self.assertRegex(
@@ -7556,10 +7882,468 @@ class NavigationBrowserTests(unittest.TestCase):
                 ).fetchone()[0],
                 0,
             )
+        self.assertEqual(self.browser_errors, []        )
+
+    def test_surveyor_room_lists_and_opens_oldest_house_test_pdfs(self):
+        self.page.set_viewport_size({"width": 1280, "height": 1000})
+        self.create_seai_document_storage()
+        house_id = "SURVEY-REAL-PDF-LIBRARY-TEST"
+        pdf_directory = (
+            server.STATIC_DIR
+            / "oldest-house-test"
+            / "synthetic"
+            / "pdfs"
+        )
+        pdf_categories = server.SURVEY_ROOM_TEST_PDFS
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, address, owner_name, "
+                "source, ready_for_start) VALUES (?, 'D01 TEST', '1 Example Road', "
+                "'Example Owner', 'government', 1)",
+                (house_id,),
+            )
+
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.locator('[data-house-view="ready"]').click()
+        self.page.locator(
+            f'.house-survey-open[data-house-id="{house_id}"]'
+        ).click()
+
+        library = self.page.locator("#survey-room-seai-library")
+        self.assertTrue(library.is_visible())
+        library.locator(".seai-pdf-library-count").wait_for()
+        self.assertEqual(
+            library.locator(".seai-pdf-library-count").inner_text(),
+            "6 files",
+        )
+        for category in ("Application", "Survey", "Variation"):
+            section = library.locator(
+                ".seai-document-category"
+            ).filter(has_text=f"{category} PDFs")
+            section.locator("summary").click()
+        for filename in pdf_categories:
+            entry = library.locator(".seai-document-entry").filter(
+                has_text=filename
+            )
+            entry.wait_for(state="visible")
+            self.assertTrue(entry.locator(".seai-document-status.test-sample").is_visible())
+            pdf_link = entry.locator("a.seai-document-open")
+            self.assertEqual(pdf_link.inner_text(), "View PDF")
+            response = self.page.evaluate(
+                """async (url) => {
+                  const response = await fetch(url);
+                  const blob = await response.blob();
+                  const signature = new TextDecoder().decode(
+                    await blob.slice(0, 5).arrayBuffer()
+                  );
+                  return {
+                    status: response.status,
+                    contentType: response.headers.get('content-type'),
+                    signature,
+                    size: blob.size,
+                  };
+                }""",
+                pdf_link.get_attribute("href"),
+            )
+            self.assertEqual(response["status"], 200, filename)
+            self.assertEqual(response["contentType"], "application/pdf", filename)
+            self.assertEqual(response["signature"], "%PDF-", filename)
+            self.assertEqual(response["size"], (pdf_directory / filename).stat().st_size)
+            if filename == "application-letter.pdf":
+                preview_button = entry.locator("[data-survey-room-pdf-preview]")
+                preview_button.click()
+                preview_dialog = self.page.locator(
+                    "#survey-room-pdf-preview-dialog"
+                )
+                preview_dialog.wait_for(state="visible")
+                iframe_url = urlsplit(
+                    preview_dialog.locator("iframe").get_attribute("src")
+                )
+                document_url = urlsplit(pdf_link.get_attribute("href"))
+                self.assertEqual(
+                    (iframe_url.path, iframe_url.query),
+                    (document_url.path, document_url.query),
+                )
+                self.assertEqual(
+                    preview_dialog.locator("iframe").evaluate(
+                        "frame => getComputedStyle(frame).flexGrow"
+                    ),
+                    "1",
+                )
+                preview_dialog.locator(".close-dialog").first.click()
+                preview_dialog.wait_for(state="hidden")
+        application_entry = library.locator(".seai-document-entry").filter(
+            has_text="application-letter.pdf"
+        )
+        application_entry.locator("[data-test-pdf-name]").click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        self.page.locator("[data-pdf-tool='text']").click()
+        self.page.locator("#pdf-annotator-text").fill(
+            "Staged annotation for the final PDF"
+        )
+        self.wait_for_pdf_canvas_layout()
+        canvas = self.page.locator("#pdf-annotator-canvas")
+        canvas_box = canvas.bounding_box()
+        self.page.mouse.click(
+            canvas_box["x"] + canvas_box["width"] / 2,
+            canvas_box["y"] + canvas_box["height"] / 2,
+        )
+        annotations_after_click = self.page.evaluate(
+            """() => ({
+              tool: state.pdfAnnotator.tool,
+              input: document.querySelector('#pdf-annotator-text').value,
+              annotations: state.pdfAnnotator.annotations.map(item => ({
+                tool: item.tool,
+                text: item.text,
+                point: item.point
+              })),
+              canvas: (() => {
+                const rect = document.querySelector('#pdf-annotator-canvas')
+                  .getBoundingClientRect();
+                return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+              })()
+            })"""
+        )
+        self.assertTrue(
+            any(
+                item["text"] == "Staged annotation for the final PDF"
+                for item in annotations_after_click["annotations"]
+            ),
+            annotations_after_click,
+        )
+        before_text_size = self.page.evaluate(
+            """() => state.pdfAnnotator.annotations.find(
+              item => item.tool === 'text' &&
+                item.text === 'Staged annotation for the final PDF'
+            ).font_size"""
+        )
+        self.page.evaluate(
+            """() => {
+              const slider = document.querySelector('#pdf-annotator-text-resize');
+              slider.value = '40';
+              slider.dispatchEvent(new Event('input', { bubbles: true }));
+            }"""
+        )
+        self.assertEqual(
+            self.page.locator("#pdf-annotator-text-resize-value").inner_text(),
+            "40 px",
+        )
+        self.assertGreater(
+            self.page.evaluate(
+                """() => state.pdfAnnotator.annotations.find(
+                  item => item.tool === 'text' &&
+                    item.text === 'Staged annotation for the final PDF'
+                ).font_size"""
+            ),
+            before_text_size,
+        )
+        self.page.get_by_role(
+            "button", name="Add to selected pages"
+        ).click()
+        self.page.locator("#pdf-annotator-dialog").wait_for(state="hidden")
+        self.page.get_by_text("1 page selected").wait_for()
+        self.assertIn(
+            "No saved PDFs yet",
+            self.page.locator("#survey-room-saved-pdfs-list").inner_text(),
+        )
+        share_button = self.page.locator(
+            "#survey-room-seai-documents [data-seai-share-selected]"
+        )
+        previous_toast = self.page.locator("#toast").inner_text()
+        share_button.click()
+        self.page.wait_for_function(
+            """previous => document.querySelector('#selected-pdf-preview-dialog').open ||
+              document.querySelector('#toast').textContent.trim() !== previous""",
+            arg=previous_toast,
+        )
+        self.assertTrue(
+            self.page.locator("#selected-pdf-preview-dialog").evaluate(
+                "dialog => dialog.open"
+            ),
+            self.page.locator("#toast").inner_text(),
+        )
+        self.page.locator("#selected-pdf-preview-dialog[open]").wait_for()
+        previous_toast = self.page.locator("#toast").inner_text()
+        self.page.locator("#selected-pdf-preview-continue").click()
+        self.page.wait_for_function(
+            """previous => !document.querySelector('#selected-pdf-preview-dialog').open ||
+              document.querySelector('#toast').textContent.trim() !== previous""",
+            arg=previous_toast,
+        )
+        self.assertFalse(
+            self.page.locator("#selected-pdf-preview-dialog").evaluate(
+                "dialog => dialog.open"
+            ),
+            self.page.locator("#toast").inner_text(),
+        )
+        self.assertIn(
+            "saved to the house SEAI PDFs",
+            self.page.locator("#toast").inner_text(),
+        )
+        saved_pdf = self.page.locator(
+            "#survey-room-saved-pdfs-list .saved-pdf-entry"
+        ).filter(has_text=f"{house_id}-selected-seai-pages.pdf")
+        saved_pdf.wait_for(state="visible")
+        self.assertEqual(
+            library.locator(".seai-document-entry.is-annotated").count(),
+            0,
+        )
+        with server.connect_db() as db:
+            saved_documents = db.execute(
+                "SELECT filename, content FROM seai_documents WHERE application_id = ?",
+                (house_id,),
+            ).fetchall()
+        self.assertEqual(
+            [row["filename"] for row in saved_documents],
+            [f"{house_id}-selected-seai-pages.pdf"],
+        )
+        saved_text = PdfReader(
+            BytesIO(saved_documents[0]["content"])
+        ).pages[0].extract_text()
+        for expected_line in ("Staged", "annotation for", "the final PDF"):
+            self.assertIn(expected_line, saved_text)
         self.assertEqual(self.browser_errors, [])
 
-    def test_surveyor_room_hides_the_house_pdfs_card(self):
-        house_id = "SURVEY-PDF-DELETE-TEST"
+    def test_annotator_resizes_text_then_icon_and_icon_then_text(self):
+        self.page.set_viewport_size({"width": 1280, "height": 1000})
+        self.create_seai_document_storage()
+        house_id = "SURVEY-PDF-MIXED-RESIZE-TEST"
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, address, owner_name, "
+                "source, ready_for_start) VALUES (?, 'D01 TEST', '1 Resize Road', "
+                "'Resize Test', 'government', 1)",
+                (house_id,),
+            )
+
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.locator('[data-house-view="ready"]').click()
+        self.page.locator(
+            f'.house-survey-open[data-house-id="{house_id}"]'
+        ).click()
+        library = self.page.locator("#survey-room-seai-library")
+        library.locator(".seai-document-category summary").first.click()
+        library.locator(".seai-document-entry").first.locator(
+            "[data-test-pdf-name]"
+        ).click()
+        self.page.locator("#pdf-annotator-dialog[open]").wait_for()
+        self.page.wait_for_function(
+            "document.querySelector('#pdf-annotator-image').naturalWidth > 0"
+        )
+        canvas = self.page.locator("#pdf-annotator-canvas")
+
+        def drag_text_resize_handle(text):
+            self.wait_for_pdf_canvas_layout()
+            handle = self.page.evaluate(
+                """text => {
+                  const annotator = state.pdfAnnotator;
+                  const annotation = annotator.annotations.find(
+                    item => item.tool === 'text' && item.text === text
+                  );
+                  const canvas = document.querySelector('#pdf-annotator-canvas');
+                  const layout = pdfTextAnnotationLayout(
+                    canvas.getContext('2d'),
+                    annotation,
+                    canvas.clientWidth,
+                    canvas.clientHeight
+                  );
+                  return {
+                    x: layout.x + layout.width - 2,
+                    y: layout.y + layout.height - 2
+                  };
+                }""",
+                text,
+            )
+            box = canvas.bounding_box()
+            slider = self.page.locator("#pdf-annotator-text-resize")
+            self.page.mouse.move(box["x"] + handle["x"], box["y"] + handle["y"])
+            self.page.mouse.down()
+            drag_state = self.page.evaluate(
+                """({ x, y, text, oldBox, handle }) => ({
+                  mode: state.pdfAnnotator.textDrag?.mode,
+                  hit: document.elementFromPoint(x, y)?.id ||
+                    document.elementFromPoint(x, y)?.className?.baseVal ||
+                    document.elementFromPoint(x, y)?.className,
+                  annotation: (() => {
+                    const annotator = state.pdfAnnotator;
+                    const annotation = annotator.annotations.find(
+                      item => item.tool === 'text' && item.text === text
+                    );
+                    const canvas = document.querySelector('#pdf-annotator-canvas');
+                    const layout = pdfTextAnnotationLayout(
+                      canvas.getContext('2d'),
+                      annotation,
+                      canvas.clientWidth,
+                      canvas.clientHeight
+                    );
+                    return { point: annotation.point, layout };
+                  })(),
+                  canvas: (() => {
+                    const rect = document.querySelector('#pdf-annotator-canvas')
+                      .getBoundingClientRect();
+                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                  })(),
+                  point: { x, y },
+                  previousBox: oldBox,
+                  handle
+                })""",
+                {
+                    "x": box["x"] + handle["x"],
+                    "y": box["y"] + handle["y"],
+                    "text": text,
+                    "oldBox": box,
+                    "handle": handle,
+                },
+            )
+            self.assertEqual(drag_state["mode"], "resize", drag_state)
+            before = int(slider.input_value())
+            self.page.mouse.move(
+                box["x"] + handle["x"],
+                box["y"] + handle["y"] + 8,
+                steps=4,
+            )
+            self.page.mouse.up()
+            after = int(slider.input_value())
+            self.assertGreater(
+                after,
+                before,
+                f"First drag on the {text!r} text handle should resize",
+            )
+            self.page.wait_for_timeout(100)
+
+        def place_text(text, x_ratio, y_ratio):
+            self.page.locator("[data-pdf-tool='text']").click()
+            self.page.locator("#pdf-annotator-text").fill(text)
+            self.wait_for_pdf_canvas_layout()
+            box = canvas.bounding_box()
+            self.page.mouse.click(
+                box["x"] + box["width"] * x_ratio,
+                box["y"] + box["height"] * y_ratio,
+            )
+            text_count = self.page.evaluate(
+                "text => state.pdfAnnotator.annotations.filter("
+                "item => item.tool === 'text' && item.text === text"
+                ").length",
+                text,
+            )
+            placement_state = self.page.evaluate(
+                """({ xRatio, yRatio }) => ({
+                  tool: state.pdfAnnotator.tool,
+                  input: document.querySelector('#pdf-annotator-text').value,
+                  annotations: state.pdfAnnotator.annotations.map(item => ({
+                    tool: item.tool,
+                    text: item.text,
+                    point: item.point
+                  })),
+                  canvas: (() => {
+                    const canvas = document.querySelector('#pdf-annotator-canvas');
+                    const rect = canvas.getBoundingClientRect();
+                    return {
+                      x: rect.x,
+                      y: rect.y,
+                      width: rect.width,
+                      height: rect.height,
+                      hit: document.elementFromPoint(
+                        rect.x + rect.width * xRatio,
+                        rect.y + rect.height * yRatio
+                      )?.id
+                    };
+                  })(),
+                  toast: document.querySelector('#toast').textContent
+                })""",
+                {"xRatio": x_ratio, "yRatio": y_ratio},
+            )
+            self.assertEqual(text_count, 1, placement_state)
+            self.assertTrue(
+                self.page.locator("#pdf-annotator-text-resize").is_enabled()
+            )
+            drag_text_resize_handle(text)
+            drag_text_resize_handle(text)
+
+        def drag_and_resize_icon(x_ratio, y_ratio):
+            box = canvas.bounding_box()
+            self.page.locator(".pdf-annotator-icon-card").first.drag_to(
+                canvas,
+                target_position={
+                    "x": box["width"] * x_ratio,
+                    "y": box["height"] * y_ratio,
+                },
+            )
+            self.page.wait_for_timeout(100)
+            self.assertTrue(self.page.locator("#pdf-annotator-icon-edit").is_visible())
+            self.assertEqual(
+                self.page.locator("[data-pdf-tool='pen']").get_attribute("aria-pressed"),
+                "true",
+                "Dropping an icon should leave the annotator in icon-interaction mode",
+            )
+
+            def resize_selected_icon(dx, dy):
+                handle = self.page.evaluate(
+                    """() => {
+                      const annotator = state.pdfAnnotator;
+                      const annotation = annotator.annotations.find(
+                        item => item.id === annotator.selectedIconId &&
+                          item.tool === 'ventilation_icon'
+                      );
+                      const canvas = document.querySelector('#pdf-annotator-canvas');
+                      const rect = canvas.getBoundingClientRect();
+                      return {
+                        x: rect.x + (annotation.point[0] + annotation.width / 2) * rect.width,
+                        y: rect.y + (annotation.point[1] + annotation.height / 2) * rect.height,
+                        width: annotation.width,
+                        height: annotation.height
+                      };
+                    }"""
+                )
+                self.page.mouse.move(handle["x"], handle["y"])
+                self.page.mouse.down()
+                self.page.mouse.move(
+                    handle["x"] + dx,
+                    handle["y"] + dy,
+                    steps=4,
+                )
+                self.page.mouse.up()
+                resized = self.page.evaluate(
+                    """() => {
+                      const annotation = state.pdfAnnotator.annotations.find(
+                        item => item.id === state.pdfAnnotator.selectedIconId &&
+                          item.tool === 'ventilation_icon'
+                      );
+                      return { width: annotation.width, height: annotation.height };
+                    }"""
+                )
+                self.assertGreater(resized["width"], handle["width"])
+                self.assertGreater(resized["height"], handle["height"])
+
+            resize_selected_icon(18, 14)
+            resize_selected_icon(12, 10)
+
+        place_text("Text first resize handle", 0.12, 0.25)
+        drag_and_resize_icon(0.66, 0.35)
+        self.assertTrue(
+            self.page.locator("#pdf-annotator-text-resize").is_disabled(),
+            "Dropping an icon should clear the previous text selection",
+        )
+        self.page.locator("[data-pdf-tool='text']").click()
+        self.assertFalse(
+            self.page.locator("#pdf-annotator-icon-edit").is_visible(),
+            "Switching to text should clear the icon selection",
+        )
+        drag_text_resize_handle("Text first resize handle")
+        drag_text_resize_handle("Text first resize handle")
+
+        self.page.locator("[data-pdf-tool='pen']").click()
+        drag_and_resize_icon(0.84, 0.35)
+        place_text("Text after icon resize handle", 0.65, 0.05)
+        self.assertEqual(self.browser_errors, [])
+
+    def test_surveyor_room_does_not_show_empty_house_pdfs_block(self):
+        house_id = "SURVEY-PDF-EMPTY-BLOCK-TEST"
         with server.connect_db() as db:
             db.execute(
                 "INSERT INTO provided_houses(id, postcode, address, owner_name, "
@@ -7573,12 +8357,79 @@ class NavigationBrowserTests(unittest.TestCase):
         self.page.locator(
             f'.house-survey-open[data-house-id="{house_id}"]'
         ).click()
-        self.assertEqual(self.page.locator("#survey-room-documents").count(), 0)
+        self.assertEqual(self.page.locator("#survey-room-house-pdfs").count(), 0)
         self.assertEqual(
-            self.page.locator(".survey-room-nav a[href='#survey-room-documents']").count(),
+            self.page.locator(".survey-room-nav a[href='#survey-room-house-pdfs']").count(),
             0,
         )
+        self.assertNotIn(
+            "No survey PDFs uploaded for this house yet",
+            self.page.locator("#surveyor-room").inner_text(),
+        )
         self.assertEqual(self.page.locator("#survey-room-seai-documents").count(), 1)
+        self.assertEqual(self.browser_errors, [])
+
+    def test_surveyor_logo_returns_from_room_to_assigned_house_dashboard(self):
+        created = self.page.request.post(
+            f"{self.base_url}/api/users",
+            data={
+                "username": "room-logo-surveyor",
+                "display_name": "Room Logo Surveyor",
+                "pin": "234567",
+                "role": "surveyor",
+            },
+        )
+        self.assertEqual(created.status, 201, created.text())
+        user_id = created.json()["user"]["id"]
+        house_id = "SURVEY-LOGO-DASHBOARD-TEST"
+        with server.connect_db() as db:
+            db.execute(
+                "INSERT INTO provided_houses(id, postcode, address, owner_name, "
+                "source, ready_for_start) VALUES (?, 'D01 TEST', '1 Example Road', "
+                "'Example Owner', 'government', 1)",
+                (house_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES (?, 'surveyor', ?, 'Test Admin', '2026-11-10T12:00:00')
+                """,
+                (house_id, user_id),
+            )
+        login = self.page.request.post(
+            f"{self.base_url}/api/auth/login",
+            data={"username": "room-logo-surveyor", "pin": "234567"},
+        )
+        self.assertEqual(login.status, 200, login.text())
+        cookie = login.headers["set-cookie"].split(";", 1)[0]
+        name, value = cookie.split("=", 1)
+        self.page.context.add_cookies(
+            [{"name": name, "value": value, "url": self.base_url}]
+        )
+        self.page.goto(self.base_url, wait_until="domcontentloaded")
+        self.page.locator(".app-shell:not(.hidden)").wait_for()
+        self.page.locator(
+            f'.house-survey-open[data-house-id="{house_id}"]'
+        ).click()
+        self.assertTrue(self.page.locator("#surveyor-room").is_visible())
+        self.page.locator(".surveyor-brand").click()
+        self.page.wait_for_function(
+            """() => document.querySelector('#surveyor-room').classList.contains('hidden') &&
+              !document.querySelector('#houses-overview').classList.contains('hidden')"""
+        )
+        self.page.locator(
+            f'.house-survey-open[data-house-id="{house_id}"]'
+        ).wait_for(state="visible")
+        self.assertEqual(
+            self.page.locator(".nav-item.active").get_attribute("data-tab"),
+            "houses",
+        )
+        self.assertTrue(
+            self.page.locator(
+                f'.house-survey-open[data-house-id="{house_id}"]'
+            ).is_visible()
+        )
         self.assertEqual(self.browser_errors, [])
 
     def test_ready_card_only_shows_ready_and_survey_audit(self):

@@ -43,6 +43,14 @@ import reportlab
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+SURVEY_ROOM_TEST_PDFS = {
+    "application-letter.pdf": ("Application", "Application letter"),
+    "survey-report.pdf": ("Survey", "Survey report"),
+    "survey-sketch.pdf": ("Survey", "Survey sketch"),
+    "floor-plan-1.pdf": ("Variation", "Floor plan 1"),
+    "floor-plan-2.pdf": ("Variation", "Floor plan 2"),
+    "floor-plan-3.pdf": ("Variation", "Floor plan 3"),
+}
 DB_PATH = Path(os.environ.get("EWI_DB_PATH", ROOT / "instance" / "ewi.sqlite3"))
 PORT = int(os.environ.get("EWI_PORT", "8001"))
 HOST = os.environ.get("EWI_HOST", "127.0.0.1")
@@ -96,7 +104,10 @@ def _record_change(path):
         "/api/seai-documents",
         "/api/seai-documents/save-selected",
     } or re.fullmatch(
-        r"/api/(?:house|seai)-documents/\d+/(?:annotations|vent-annotations|delete-selected)", path
+        r"/api/(?:house|seai)-documents/\d+/(?:annotations|vent-annotations|delete-selected)",
+        path,
+    ) or re.fullmatch(
+        r"/api/survey-room-test-pdfs/[^/]+/annotations", path
     ):
         domain = "documents"
     elif path in {"/api/seai-documents/share"} or re.fullmatch(
@@ -330,7 +341,10 @@ def _pdf_annotation_metadata_json(annotations):
         keys = {
             "pen": ("page", "tool", "color", "width", "points"),
             "highlighter": ("page", "tool", "color", "width", "points"),
-            "text": ("page", "tool", "color", "point", "text", "font_size", "wrap"),
+            "text": (
+                "page", "tool", "color", "point", "text", "font_size", "wrap",
+                "text_width",
+            ),
             "ventilation_icon": (
                 "page", "tool", "color", "point", "icon", "width", "height", "rotation",
             ),
@@ -371,7 +385,9 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
             )
             if tool == "ventilation_icon":
                 if not allow_ventilation_icons:
-                    raise ApiError(400, "Ventilation product icons can only be added to Vent PDFs.")
+                    raise ApiError(
+                        400, "Ventilation product icons can only be added to Vent or SEAI PDFs."
+                    )
                 icon_key = annotation.get("icon")
                 point = annotation.get("point")
                 width_ratio = annotation.get("width")
@@ -430,6 +446,7 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                 point = annotation.get("point")
                 font_ratio = annotation.get("font_size")
                 wrap_text = annotation.get("wrap", False)
+                text_width_ratio = annotation.get("text_width", 0.92)
                 if (
                     not isinstance(text, str)
                     or not text.strip()
@@ -439,6 +456,9 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                     or not isinstance(font_ratio, (int, float))
                     or not 0.005 <= font_ratio <= 0.1
                     or not isinstance(wrap_text, bool)
+                    or not isinstance(text_width_ratio, (int, float))
+                    or isinstance(text_width_ratio, bool)
+                    or not 0.1 <= text_width_ratio <= 0.95
                     or not all(
                         isinstance(value, (int, float)) and 0 <= value <= 1
                         for value in point
@@ -448,8 +468,8 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                 font_size = rect.width * font_ratio
                 if wrap_text:
                     font = fitz.Font("helv")
-                    x = min(point[0] * rect.width, rect.width * 0.62)
-                    max_width = max(24, rect.width - x - 8)
+                    max_width = max(24, rect.width * text_width_ratio)
+                    x = min(point[0] * rect.width, rect.width - max_width - 8)
                     available_height = rect.height - 16
                     lines = _wrap_pdf_annotation_text(text, font, font_size, max_width)
                     for _ in range(8):
@@ -463,12 +483,14 @@ def _annotate_pdf_document(content, annotations, allow_ventilation_icons=False):
                     required_height = font_size * 1.6 * len(lines)
                     if required_height > available_height:
                         raise ApiError(422, "The text does not fit on the blank PDF page.")
-                    y = min(
-                        point[1] * rect.height,
-                        rect.height - 8 - required_height,
-                    )
+                    y = min(point[1] * rect.height, rect.height - 8 - required_height)
                     page.insert_textbox(
-                        fitz.Rect(x, y, rect.width - 8, rect.height - 8),
+                        fitz.Rect(
+                            x,
+                            y,
+                            min(rect.width - 8, x + max_width),
+                            min(rect.height - 8, y + required_height + 2),
+                        ),
                         "\n".join(lines),
                         fontsize=font_size,
                         fontname="helv",
@@ -733,9 +755,14 @@ def _create_seai_document_share_pdf(selections, documents, house_id, survey_note
             reader = PdfReader(BytesIO(blank_pdf), strict=False)
             writer.add_page(reader.pages[0])
             continue
-        source = documents[selection["document_id"]]
+        content = selection.get("pdf_content")
+        filename = selection.get("filename", "")
+        if content is None:
+            source = documents[selection["document_id"]]
+            content = source["content"]
+            filename = source["filename"]
         try:
-            reader = PdfReader(BytesIO(source["content"]), strict=False)
+            reader = PdfReader(BytesIO(content), strict=False)
         except (PdfReadError, ValueError, OSError) as exc:
             raise ApiError(422, "A selected SEAI PDF could not be read.") from exc
         if reader.is_encrypted:
@@ -744,10 +771,10 @@ def _create_seai_document_share_pdf(selections, documents, house_id, survey_note
         if page_number < 1 or page_number > len(reader.pages):
             raise ApiError(
                 400,
-                f"Page {page_number} does not exist in {source['filename']}.",
+                f"Page {page_number} does not exist in {filename}.",
             )
         writer.add_page(reader.pages[page_number - 1])
-        filenames.add(source["filename"])
+        filenames.add(filename)
     selected_pages = BytesIO()
     writer.write(selected_pages)
     if not survey_note:
@@ -769,16 +796,6 @@ def _create_blank_annotated_pdf_page(annotations):
         )
     finally:
         document.close()
-
-
-def _seai_document_source_stem(filename):
-    stem = Path(filename).stem
-    return re.sub(
-        r"(?:-annotated(?:-\d+)?)+$",
-        "",
-        stem,
-        flags=re.IGNORECASE,
-    )
 
 
 def _is_annotated_pdf_filename(filename):
@@ -3400,11 +3417,35 @@ def _dashboard(db):
                        COALESCE(p.plan_vent_notes, '') AS plan_vent_notes,
                        COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
                        COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
+                       assigned_surveyor.display_name AS assigned_surveyor_name,
+                       assigned_surveyor.is_active AS assigned_surveyor_is_active,
+                       surveyor_assignment.assigned_by AS surveyor_assigned_by,
+                       surveyor_assignment.assigned_at AS surveyor_assigned_at,
+                       EXISTS (
+                           SELECT 1
+                           FROM house_role_assignments assignment
+                           JOIN app_users assigned_user
+                             ON assigned_user.id = assignment.user_id
+                           WHERE assignment.house_id = h.id
+                             AND assignment.role = 'surveyor'
+                             AND assigned_user.is_active = 1
+                             AND EXISTS (
+                                 SELECT 1 FROM app_role_permissions access
+                                 WHERE access.role_key = assigned_user.role
+                                   AND access.permission_key = 'access.surveyor'
+                                   AND access.is_allowed = 1
+                             )
+                       ) AS has_assigned_surveyor,
                        c.scaffolding_status, c.esb_unclipped, c.plumber_status
                 FROM houses h
                 LEFT JOIN house_checklists c ON c.house_id = h.id
                 LEFT JOIN provided_houses p ON p.id = h.id
                 LEFT JOIN house_surveys hs ON hs.house_id = h.id
+                LEFT JOIN house_role_assignments surveyor_assignment
+                  ON surveyor_assignment.house_id = h.id
+                 AND surveyor_assignment.role = 'surveyor'
+                LEFT JOIN app_users assigned_surveyor
+                  ON assigned_surveyor.id = surveyor_assignment.user_id
                 LEFT JOIN house_ewi_assignments ewi_assignment
                   ON ewi_assignment.house_id = h.id
                 LEFT JOIN app_users ewi_teamlead
@@ -3546,21 +3587,39 @@ def _ventilation_house_list(db, teamlead_user_id):
             if "content" in seai_columns:
                 for row in db.execute(
                     f"""
-                    SELECT documents.application_id AS house_id, documents.id,
+                    SELECT selected.house_id, documents.id,
                            documents.filename, length(documents.content) AS size_bytes,
                            selected.created_by AS saved_by,
                            selected.created_at AS saved_at
-                    FROM seai_documents documents
-                    JOIN selected_seai_documents selected
-                      ON selected.document_id = documents.id
-                     AND selected.house_id = documents.application_id
-                    WHERE documents.application_id IN ({placeholders})
+                    FROM selected_seai_documents selected
+                    JOIN seai_documents documents ON documents.id = selected.document_id
+                    JOIN provided_houses houses ON houses.id = selected.house_id
+                    JOIN house_vent_assignments assignment
+                      ON assignment.house_id = houses.id
+                    WHERE selected.house_id IN ({placeholders})
                       AND lower(documents.filename) LIKE '%.pdf'
                       AND documents.content IS NOT NULL
                       AND selected.created_by != ''
+                      AND houses.plan_vent_required = 1
+                      AND assignment.teamlead_user_id = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM house_status_history reset
+                          WHERE reset.house_id = houses.id
+                            AND reset.status = 'not_started'
+                            AND reset.id = (
+                                SELECT latest.id
+                                FROM house_status_history latest
+                                WHERE latest.house_id = houses.id
+                                  AND latest.status = 'not_started'
+                                ORDER BY latest.changed_at DESC, latest.id DESC
+                                LIMIT 1
+                            )
+                            AND assignment.assigned_at < reset.changed_at
+                      )
                     ORDER BY documents.id DESC
                     """,
-                    house_ids,
+                    (*house_ids, teamlead_user_id),
                 ):
                     survey_documents_by_house.setdefault(row["house_id"], []).append(
                         {
@@ -4350,6 +4409,10 @@ class LegacyRouteHandlers:
                     or urlparse(self.path).path.startswith("/api/house-documents/")
                     or urlparse(self.path).path == "/api/seai-documents"
                     or urlparse(self.path).path.startswith("/api/seai-documents/")
+                    or re.fullmatch(
+                        r"/api/survey-room-test-pdfs/[a-z0-9-]+\.pdf(?:/preview)?",
+                        urlparse(self.path).path,
+                    )
                     or urlparse(self.path).path == "/api/house-vent-documents"
                     or urlparse(self.path).path.startswith("/api/house-vent-documents/")
                     or urlparse(self.path).path == "/api/supervisor/shared-seai-documents"
@@ -4409,6 +4472,14 @@ class LegacyRouteHandlers:
                 self.command == "POST"
                 and re.fullmatch(
                     r"/api/seai-documents/\d+/annotations",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/survey-room-test-pdfs/[a-z0-9-]+\.pdf/annotations",
                     urlparse(self.path).path,
                 )
                 is not None
@@ -5123,6 +5194,64 @@ class LegacyRouteHandlers:
                 return
             attachment = parse_qs(urlparse(self.path).query).get("download", ["0"])[0] == "1"
             self._send_pdf(row["filename"], row["content"], attachment=attachment)
+        elif path.startswith("/api/survey-room-test-pdfs/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if not (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "surveyor")
+                or _has_access_profile(user, "assign")
+            ):
+                self._send_json(
+                    403,
+                    {"error": "Admin, Surveyor, or Assign access is required to view test PDFs."},
+                )
+                return
+            test_pdf_match = re.fullmatch(
+                r"/api/survey-room-test-pdfs/([^/]+)(/preview)?", path
+            )
+            if test_pdf_match is None:
+                self._send_json(404, {"error": "Test PDF was not found."})
+                return
+            pdf_name = test_pdf_match.group(1)
+            if pdf_name not in SURVEY_ROOM_TEST_PDFS:
+                self._send_json(404, {"error": "Test PDF was not found."})
+                return
+            pdf_path = (
+                STATIC_DIR
+                / "oldest-house-test"
+                / "synthetic"
+                / "pdfs"
+                / pdf_name
+            )
+            try:
+                content = pdf_path.read_bytes()
+            except OSError:
+                self._send_json(404, {"error": "Test PDF was not found."})
+                return
+            if test_pdf_match.group(2):
+                query = parse_qs(urlparse(self.path).query)
+                house_id = query.get("house_id", [""])[0].strip()
+                if not house_id:
+                    self._send_json(400, {"error": "A house ID is required."})
+                    return
+                try:
+                    page_number = int(query.get("page", ["1"])[0])
+                except ValueError:
+                    self._send_json(400, {"error": "The PDF page number is invalid."})
+                    return
+                with connect_db() as db:
+                    if not db.execute(
+                        "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
+                    ).fetchone():
+                        self._send_json(404, {"error": "House was not found."})
+                        return
+                    _require_pdf_editable(db, house_id)
+                image, page_count = _render_pdf_page(content, page_number)
+                self._send_png(image, (("X-PDF-Page-Count", str(page_count)),))
+                return
+            self._send_pdf(pdf_name, content)
         elif path == "/api/seai-documents":
             user = self._login_required()
             if user is None:
@@ -5189,9 +5318,32 @@ class LegacyRouteHandlers:
                         {"error": "SEAI PDF storage has not been initialized."},
                     )
                     return
+                document_application_ids = [house_id]
+                has_seai_applications = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'seai_applications'"
+                ).fetchone()
+                if has_seai_applications:
+                    application_row = db.execute(
+                        "SELECT detail_data_json FROM seai_applications "
+                        "WHERE application_id = ?",
+                        (house_id,),
+                    ).fetchone()
+                    if application_row:
+                        try:
+                            details = json.loads(application_row["detail_data_json"])
+                        except (TypeError, ValueError):
+                            details = None
+                        seai_application_id = _find_seai_application_id(details)
+                        if (
+                            seai_application_id
+                            and seai_application_id not in document_application_ids
+                        ):
+                            document_application_ids.append(seai_application_id)
+                placeholders = ",".join("?" for _ in document_application_ids)
                 not_started = _is_not_started_house(db, house_id)
                 rows = db.execute(
-                    """
+                    f"""
                     SELECT documents.id, documents.category, documents.filename,
                            length(documents.content) AS size_bytes,
                            CASE WHEN selected.document_id IS NULL THEN 0 ELSE 1 END
@@ -5201,8 +5353,8 @@ class LegacyRouteHandlers:
                     FROM seai_documents documents
                     LEFT JOIN selected_seai_documents selected
                         ON selected.document_id = documents.id
-                        AND selected.house_id = documents.application_id
-                    WHERE documents.application_id = ?
+                        AND selected.house_id = ?
+                    WHERE documents.application_id IN ({placeholders})
                         AND lower(documents.filename) LIKE '%.pdf'
                         AND documents.content IS NOT NULL
                     ORDER BY CASE category
@@ -5212,7 +5364,7 @@ class LegacyRouteHandlers:
                         ELSE 3
                     END, filename COLLATE NOCASE
                     """,
-                    (house_id,),
+                    (house_id, *document_application_ids),
                 ).fetchall()
                 if not_started:
                     rows = [
@@ -5223,6 +5375,7 @@ class LegacyRouteHandlers:
                     rows = [
                         row for row in rows
                         if row["is_selected_pdf"]
+                        and not _is_annotated_pdf_filename(row["filename"])
                     ]
                 if is_plumbing_supervisor:
                     rows = [
@@ -5323,6 +5476,12 @@ class LegacyRouteHandlers:
                             (row["application_id"], user["id"]),
                         ).fetchone()
                     )
+                ):
+                    row = None
+                if (
+                    is_vent_dashboard_user
+                    and row is not None
+                    and _is_annotated_pdf_filename(row["filename"])
                 ):
                     row = None
                 if (
@@ -5778,6 +5937,16 @@ class LegacyRouteHandlers:
                     dashboard = _dashboard(db)
                 if _has_access_profile(user, "assign"):
                     dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
+                else:
+                    for house in dashboard["house_list"]:
+                        for field in (
+                            "assigned_surveyor_name",
+                            "assigned_surveyor_is_active",
+                            "surveyor_assigned_by",
+                            "surveyor_assigned_at",
+                            "has_assigned_surveyor",
+                        ):
+                            house.pop(field, None)
                 if (
                     not _has_access_profile(user, "plumbing_coordinator")
                     and not _has_access_profile(user, "ventilation_coordinator")
@@ -6052,13 +6221,8 @@ class LegacyRouteHandlers:
                                 """,
                                 [house["id"] for house in dashboard["house_list"]],
                             ):
-                                if (
-                                    _is_not_started_house(
-                                        plumbing_db, document["house_id"]
-                                    )
-                                    and _is_annotated_pdf_filename(
-                                        document["filename"]
-                                    )
+                                if _is_annotated_pdf_filename(
+                                    document["filename"]
                                 ):
                                     continue
                                 documents_by_house.setdefault(
@@ -7115,11 +7279,44 @@ class LegacyRouteHandlers:
                     if not isinstance(selection, dict):
                         raise ApiError(400, "Selected SEAI PDF pages are invalid.")
                     if selection.get("blank_page") is True:
-                        if "document_id" in selection or "page" in selection:
+                        if any(
+                            key in selection
+                            for key in ("document_id", "test_pdf_name", "page")
+                        ):
                             raise ApiError(400, "Blank PDF page details are invalid.")
                         normalized_selections.append(
                             {
                                 "blank_page": True,
+                                "annotations": selection.get("annotations"),
+                            }
+                        )
+                        continue
+                    test_pdf_name = selection.get("test_pdf_name")
+                    if test_pdf_name is not None:
+                        if "document_id" in selection:
+                            raise ApiError(400, "Selected test PDF page details are invalid.")
+                        if (
+                            not isinstance(test_pdf_name, str)
+                            or test_pdf_name not in SURVEY_ROOM_TEST_PDFS
+                        ):
+                            raise ApiError(404, "Test PDF was not found.")
+                        page_number = selection.get("page")
+                        if (
+                            isinstance(page_number, bool)
+                            or not isinstance(page_number, int)
+                            or page_number < 1
+                        ):
+                            raise ApiError(
+                                400, "Selected SEAI PDF pages must have valid document and page numbers."
+                            )
+                        page_key = ("test", test_pdf_name, page_number)
+                        if page_key in selected_keys:
+                            raise ApiError(400, "A SEAI PDF page was selected more than once.")
+                        selected_keys.add(page_key)
+                        normalized_selections.append(
+                            {
+                                "test_pdf_name": test_pdf_name,
+                                "page": page_number,
                                 "annotations": selection.get("annotations"),
                             }
                         )
@@ -7143,7 +7340,11 @@ class LegacyRouteHandlers:
                     selected_keys.add(page_key)
                     document_ids.add(document_id)
                     normalized_selections.append(
-                        {"document_id": document_id, "page": page_number}
+                        {
+                            "document_id": document_id,
+                            "page": page_number,
+                            "annotations": selection.get("annotations"),
+                        }
                     )
                 with connect_db() as db:
                     _require_pdf_editable(db, house_id)
@@ -7167,40 +7368,33 @@ class LegacyRouteHandlers:
                                 409, "Save a survey note before sharing selected PDF pages."
                             )
                     rows = []
-                    annotated_rows = []
                     if document_ids:
-                        placeholders = ",".join("?" for _ in document_ids)
+                        application_ids = {
+                            house_id,
+                            _seai_application_ids_by_house(db, [house_id]).get(
+                                house_id, ""
+                            ),
+                        } - {""}
+                        application_placeholders = ",".join(
+                            "?" for _ in application_ids
+                        )
+                        document_placeholders = ",".join(
+                            "?" for _ in document_ids
+                        )
                         rows = db.execute(
                             f"""
                             SELECT id, category, filename, content FROM seai_documents
-                            WHERE application_id = ? AND id IN ({placeholders})
+                            WHERE application_id IN ({application_placeholders})
+                                AND id IN ({document_placeholders})
                                 AND lower(filename) LIKE '%.pdf' AND content IS NOT NULL
                             """,
-                            (house_id, *sorted(document_ids)),
-                        ).fetchall()
-                        annotated_rows = db.execute(
-                            """
-                            SELECT id, category, filename, content FROM seai_documents
-                            WHERE application_id = ?
-                                AND lower(filename) LIKE '%.pdf'
-                                AND lower(filename) LIKE '%-annotated%.pdf'
-                                AND content IS NOT NULL
-                            ORDER BY id DESC
-                            """,
-                            (house_id,),
+                            (*sorted(application_ids), *sorted(document_ids)),
                         ).fetchall()
                 selected_documents = {row["id"]: row for row in rows}
                 if len(selected_documents) != len(document_ids):
                     raise ApiError(
                         404, "One or more selected SEAI PDFs were not found for this house."
                     )
-                latest_annotated_documents = {}
-                for row in annotated_rows:
-                    key = (
-                        row["category"],
-                        _seai_document_source_stem(row["filename"]).casefold(),
-                    )
-                    latest_annotated_documents.setdefault(key, row)
                 documents = dict(selected_documents)
                 resolved_selections = []
                 resolved_keys = set()
@@ -7208,24 +7402,70 @@ class LegacyRouteHandlers:
                     if selection.get("blank_page"):
                         resolved_selections.append(selection)
                         continue
+                    if selection.get("test_pdf_name"):
+                        test_pdf_name = selection["test_pdf_name"]
+                        test_pdf_path = (
+                            STATIC_DIR
+                            / "oldest-house-test"
+                            / "synthetic"
+                            / "pdfs"
+                            / test_pdf_name
+                        )
+                        try:
+                            content = test_pdf_path.read_bytes()
+                        except OSError as exc:
+                            raise ApiError(404, "Test PDF was not found.") from exc
+                        annotations = selection.get("annotations")
+                        if annotations is not None:
+                            content = _annotate_pdf_document(
+                                content,
+                                annotations,
+                                allow_ventilation_icons=True,
+                            )
+                        if len(content) > SEAI_DOCUMENT_MAX_BYTES:
+                            raise ApiError(
+                                413,
+                                "The selected test PDF exceeds the 20 MB document limit.",
+                            )
+                        resolved_selections.append(
+                            {
+                                "filename": test_pdf_name,
+                                "page": selection["page"],
+                                "pdf_content": content,
+                            }
+                        )
+                        continue
                     selected_document = selected_documents[selection["document_id"]]
-                    source_stem = _seai_document_source_stem(
-                        selected_document["filename"]
-                    ).casefold()
-                    annotated_document = latest_annotated_documents.get(
-                        (selected_document["category"], source_stem)
+                    page_key = (
+                        selected_document["id"],
+                        selection["page"],
                     )
-                    document = annotated_document or selected_document
-                    page_key = (document["id"], selection["page"])
                     if page_key in resolved_keys:
                         raise ApiError(
                             400,
-                            "A page was selected more than once after resolving annotated copies.",
+                            "A SEAI PDF page was selected more than once.",
                         )
                     resolved_keys.add(page_key)
-                    documents[document["id"]] = document
+                    content = selected_document["content"]
+                    annotations = selection.get("annotations")
+                    if annotations is not None:
+                        content = _annotate_pdf_document(
+                            content,
+                            annotations,
+                            allow_ventilation_icons=True,
+                        )
+                    if len(content) > SEAI_DOCUMENT_MAX_BYTES:
+                        raise ApiError(
+                            413,
+                            "The selected SEAI PDF exceeds the 20 MB document limit.",
+                        )
                     resolved_selections.append(
-                        {"document_id": document["id"], "page": selection["page"]}
+                        {
+                            "document_id": selected_document["id"],
+                            "filename": selected_document["filename"],
+                            "page": selection["page"],
+                            "pdf_content": content,
+                        }
                     )
                 shared_pdf = _create_seai_document_share_pdf(
                     resolved_selections,
@@ -7360,6 +7600,37 @@ class LegacyRouteHandlers:
                     },
                 )
                 return
+            test_pdf_annotation_match = re.fullmatch(
+                r"/api/survey-room-test-pdfs/([^/]+)/annotations", path
+            )
+            if test_pdf_annotation_match:
+                if not (
+                    _has_access_profile(user, "admin")
+                    or _has_access_profile(user, "surveyor")
+                ):
+                    raise ApiError(
+                        403,
+                        "Administrator or surveyor access is required to annotate test PDFs.",
+                    )
+                pdf_name = test_pdf_annotation_match.group(1)
+                if pdf_name not in SURVEY_ROOM_TEST_PDFS:
+                    raise ApiError(404, "Test PDF was not found.")
+                payload = self._json_body()
+                if not isinstance(payload, dict):
+                    raise ApiError(400, "PDF annotations must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                with connect_db() as db:
+                    if not db.execute(
+                        "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
+                    ).fetchone():
+                        raise ApiError(404, "House was not found.")
+                    _require_pdf_editable(db, house_id)
+                raise ApiError(
+                    409,
+                    "Test PDF annotations are temporary. Add the page to Review selected pages and save the combined PDF.",
+                )
             seai_annotation_match = re.fullmatch(
                 r"/api/seai-documents/(\d+)/annotations", path
             )
@@ -7371,6 +7642,9 @@ class LegacyRouteHandlers:
                 payload = self._json_body()
                 if not isinstance(payload, dict):
                     raise ApiError(400, "PDF annotations must be a JSON object.")
+                house_id = str(payload.get("house_id") or "").strip()
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
                 document_id = int(seai_annotation_match.group(1))
                 with connect_db() as db:
                     columns = {
@@ -7387,68 +7661,28 @@ class LegacyRouteHandlers:
                         """,
                         (document_id,),
                     ).fetchone()
+                    if source is not None:
+                        if not db.execute(
+                            "SELECT 1 FROM provided_houses WHERE id = ?", (house_id,)
+                        ).fetchone():
+                            raise ApiError(404, "House was not found.")
+                        application_ids = {
+                            house_id,
+                            _seai_application_ids_by_house(db, [house_id]).get(
+                                house_id, ""
+                            ),
+                        }
+                        if source["application_id"] not in application_ids:
+                            raise ApiError(
+                                404, "SEAI PDF was not found for this house."
+                            )
+                        _require_pdf_editable(db, house_id)
                 if source is None:
                     raise ApiError(404, "SEAI PDF was not found.")
-                with connect_db() as db:
-                    _require_pdf_editable(db, source["application_id"])
-                annotated_pdf = _annotate_pdf_document(
-                    source["content"],
-                    payload.get("annotations"),
+                raise ApiError(
+                    409,
+                    "SEAI PDF annotations are temporary. Add the page to Review selected pages and save the combined PDF.",
                 )
-                if len(annotated_pdf) > SEAI_DOCUMENT_MAX_BYTES:
-                    raise ApiError(413, "The annotated SEAI PDF exceeds the 20 MB document limit.")
-                with connect_db() as db:
-                    with db:
-                        db.execute("BEGIN IMMEDIATE")
-                        current_source = db.execute(
-                            """
-                            SELECT 1 FROM seai_documents
-                            WHERE id = ? AND content = ?
-                            """,
-                            (document_id, source["content"]),
-                        ).fetchone()
-                        if current_source is None:
-                            raise ApiError(
-                                409,
-                                "This SEAI PDF changed while you were annotating it. Reopen it before saving.",
-                            )
-                        _require_pdf_editable(db, source["application_id"])
-                        source_stem = Path(source["filename"]).stem
-                        annotated_stem = f"{source_stem}-annotated"
-                        annotated_filename = f"{annotated_stem}.pdf"
-                        suffix = 2
-                        while db.execute(
-                            """
-                            SELECT 1 FROM seai_documents
-                            WHERE application_id = ? AND filename = ? COLLATE NOCASE
-                            """,
-                            (source["application_id"], annotated_filename),
-                        ).fetchone():
-                            annotated_filename = f"{annotated_stem}-{suffix}.pdf"
-                            suffix += 1
-                        cursor = db.execute(
-                            """
-                            INSERT INTO seai_documents
-                                (application_id, category, filename, extension, downloaded, content)
-                            VALUES (?, ?, ?, '.pdf', 1, ?)
-                            """,
-                            (
-                                source["application_id"],
-                                source["category"],
-                                annotated_filename,
-                                sqlite3.Binary(annotated_pdf),
-                            ),
-                        )
-                self._send_json(
-                    201,
-                    {
-                        "id": cursor.lastrowid,
-                        "source_id": document_id,
-                        "filename": annotated_filename,
-                        "size_bytes": len(annotated_pdf),
-                    },
-                )
-                return
             annotation_match = re.fullmatch(
                 r"/api/house-documents/(\d+)/annotations", path
             )
@@ -7790,6 +8024,43 @@ class LegacyRouteHandlers:
                                 409,
                                 "Pre-start work plan is not saved. Save it before recording survey measurements.",
                             )
+                        db.execute(
+                            """
+                            DELETE FROM house_vent_assignments
+                            WHERE house_id = ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM provided_houses
+                                  WHERE id = ? AND plan_vent_required = 1
+                              )
+                            """,
+                            (house_id, house_id),
+                        )
+                        db.execute(
+                            """
+                            DELETE FROM house_role_assignments
+                            WHERE house_id = ? AND role = 'supervisor'
+                              AND EXISTS (
+                                  SELECT 1 FROM app_users assigned_user
+                                  WHERE assigned_user.id = house_role_assignments.user_id
+                                    AND (
+                                        assigned_user.supervisor_specialty = 'Plumbing' COLLATE NOCASE
+                                        OR EXISTS (
+                                            SELECT 1 FROM user_departments memberships
+                                            JOIN departments
+                                              ON departments.id = memberships.department_id
+                                            WHERE memberships.user_id = assigned_user.id
+                                              AND departments.name = 'Plumbing' COLLATE NOCASE
+                                              AND departments.is_active = 1
+                                        )
+                                    )
+                              )
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM provided_houses
+                                  WHERE id = ? AND plan_plumber_required = 1
+                              )
+                            """,
+                            (house_id, house_id),
+                        )
                         if survey.get("perimeter_m") is None:
                             raise ApiError(
                                 400,

@@ -62,6 +62,45 @@ def extract_tour_steps(source):
 
 @unittest.skipUnless(shutil.which("node"), "node is required for navigation logic tests")
 class NavigationFlowTests(unittest.TestCase):
+    def test_assign_house_view_is_restored_per_account(self):
+        helpers_start = APP_JS.index("const ASSIGN_HOUSE_VIEW_STORAGE_PREFIX")
+        helpers_end = APP_JS.index("\nconst state = {", helpers_start)
+        helpers = APP_JS[helpers_start:helpers_end]
+        script = helpers + r"""
+const values = new Map();
+global.localStorage = {
+  getItem(key) { return values.get(key) || null; },
+  setItem(key, value) { values.set(key, value); },
+};
+const initial = readAssignHouseView({id: 14});
+saveAssignHouseView({id: 14}, "ready", "needed");
+const restored = readAssignHouseView({id: 14});
+const otherAccount = readAssignHouseView({id: 15});
+values.set("material-tracker-assign-house-view:14", "{invalid");
+const invalidStoredValue = readAssignHouseView({id: 14});
+console.log(JSON.stringify({initial, restored, otherAccount, invalidStoredValue}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "initial": {"status": "active", "survey": "all"},
+                "restored": {"status": "ready", "survey": "needed"},
+                "otherAccount": {"status": "active", "survey": "all"},
+                "invalidStoredValue": {"status": "active", "survey": "all"},
+            },
+        )
+        self.assertIn(
+            "const assignHouseView = readAssignHouseView(user);",
+            APP_JS,
+        )
+
     def test_navigation_and_shortcut_targets_have_matching_pages(self):
         parser = NavigationMarkupParser()
         parser.feed(HTML)

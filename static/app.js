@@ -3,6 +3,49 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const savedTheme = localStorage.getItem("material-tracker-theme");
 if (savedTheme === "dark") document.documentElement.dataset.theme = "dark";
 
+const ASSIGN_HOUSE_VIEW_STORAGE_PREFIX = "material-tracker-assign-house-view:";
+const ASSIGN_HOUSE_STATUS_FILTERS = new Set([
+  "seai",
+  "not_started",
+  "ready",
+  "active",
+  "closed",
+]);
+const ASSIGN_SURVEY_FILTERS = new Set(["all", "needed", "completed"]);
+
+function readAssignHouseView(user) {
+  const defaultView = { status: "active", survey: "all" };
+  if (!user?.id) return defaultView;
+  const saved = localStorage.getItem(
+    `${ASSIGN_HOUSE_VIEW_STORAGE_PREFIX}${user.id}`,
+  );
+  if (!saved) return defaultView;
+  try {
+    const parsed = JSON.parse(saved);
+    return {
+      status: ASSIGN_HOUSE_STATUS_FILTERS.has(parsed.status)
+        ? parsed.status
+        : defaultView.status,
+      survey: ASSIGN_SURVEY_FILTERS.has(parsed.survey)
+        ? parsed.survey
+        : defaultView.survey,
+    };
+  } catch {
+    return defaultView;
+  }
+}
+
+function saveAssignHouseView(user, status, survey) {
+  if (!user?.id) return;
+  localStorage.setItem(
+    `${ASSIGN_HOUSE_VIEW_STORAGE_PREFIX}${user.id}`,
+    JSON.stringify({
+      status: ASSIGN_HOUSE_STATUS_FILTERS.has(status) ? status : "active",
+      survey: ASSIGN_SURVEY_FILTERS.has(survey) ? survey : "all",
+    }),
+  );
+}
+
 const state = {
   dashboard: null,
   movements: [],
@@ -115,10 +158,88 @@ function setTheme(theme) {
   const isDark = theme === "dark";
   document.documentElement.dataset.theme = isDark ? "dark" : "light";
   localStorage.setItem("material-tracker-theme", isDark ? "dark" : "light");
-  const button = $("#theme-toggle");
-  button.setAttribute("aria-pressed", String(isDark));
-  button.setAttribute("aria-label", `Switch to ${isDark ? "light" : "dark"} mode`);
-  button.innerHTML = `<span aria-hidden="true">${isDark ? "☀" : "☾"}</span> ${isDark ? "Light" : "Dark"} mode`;
+  ["#theme-toggle", "#auth-theme-toggle"].forEach((selector) => {
+    const button = $(selector);
+    button.setAttribute("aria-pressed", String(isDark));
+    button.setAttribute("aria-label", `Switch to ${isDark ? "light" : "dark"} mode`);
+    button.innerHTML =
+      selector === "#auth-theme-toggle"
+        ? `<span aria-hidden="true">${isDark ? "☀" : "☾"}</span>`
+        : `<span aria-hidden="true">${isDark ? "☀" : "☾"}</span> ${isDark ? "Light" : "Dark"} mode`;
+  });
+}
+
+let authBulbIgnitionTimeout = 0;
+
+function setAuthLights(isOn) {
+  const screen = $("#auth-screen");
+  const toggle = $("#auth-lights-toggle");
+  localStorage.setItem("material-tracker-login-lights", isOn ? "on" : "off");
+  screen.dataset.lights = isOn ? "on" : "off";
+  clearTimeout(authBulbIgnitionTimeout);
+  if (isOn) {
+    screen.dataset.igniting = "true";
+    authBulbIgnitionTimeout = window.setTimeout(() => {
+      delete screen.dataset.igniting;
+      authBulbIgnitionTimeout = 0;
+    }, 750);
+  } else {
+    delete screen.dataset.igniting;
+    authBulbIgnitionTimeout = 0;
+  }
+  toggle.setAttribute("aria-pressed", String(isOn));
+  toggle.setAttribute(
+    "aria-label",
+    `Pull the cord to turn lights ${isOn ? "off" : "on"}`,
+  );
+  $$("#auth-form input, #auth-form button").forEach((control) => {
+    control.disabled = !isOn;
+  });
+}
+
+let authCordPullStart = null;
+
+function setAuthCordDistance(distance) {
+  const pull = Math.min(Math.max(distance, 0), 40);
+  const lower = 103 + pull;
+  const end = 111 + pull;
+  const cordPath = `M194 58 C194 75 194 ${88 + pull * 0.45} 194 ${lower} Q194 ${end} 199 ${end}`;
+  $(".auth-lamp-cord").setAttribute("d", cordPath);
+  $(".auth-lamp-cord-twist").setAttribute("d", cordPath);
+  $(".auth-lamp-cord-pull").setAttribute("cy", String(112 + pull));
+}
+
+function handleAuthLightPointerDown(event) {
+  if (!event.target.closest(".auth-lamp-cord-hit")) return;
+  authCordPullStart = { pointerId: event.pointerId, y: event.clientY, distance: 0 };
+  event.currentTarget.dataset.cordPulling = "true";
+  event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+function handleAuthLightPointerMove(event) {
+  if (authCordPullStart?.pointerId !== event.pointerId) return;
+  authCordPullStart.distance = Math.max(0, event.clientY - authCordPullStart.y);
+  const svg = $(".auth-light-fixture");
+  const svgHeight = svg.viewBox.baseVal.height;
+  const screenHeight = svg.getBoundingClientRect().height;
+  setAuthCordDistance(
+    screenHeight ? (authCordPullStart.distance * svgHeight) / screenHeight : 0,
+  );
+}
+
+function handleAuthLightPointerEnd(event) {
+  if (authCordPullStart?.pointerId !== event.pointerId) return;
+  const pulled = event.type === "pointerup" && authCordPullStart.distance >= 20;
+  authCordPullStart = null;
+  delete event.currentTarget.dataset.cordPulling;
+  setAuthCordDistance(0);
+  if (pulled) {
+    setAuthLights($("#auth-screen").dataset.lights !== "on");
+  }
+}
+
+function handleAuthLightClick(event) {
+  if (event.detail === 0) setAuthLights($("#auth-screen").dataset.lights !== "on");
 }
 
 const movementLabels = {
@@ -643,7 +764,7 @@ function houseAuditHtml(house, readyOnly = false) {
         ? `${house.assigned_surveyor_name}${house.assigned_surveyor_is_active === 0 ? " (inactive)" : ""}`
         : "Not assigned",
       house.surveyor_assigned_at,
-      "surveyor-assignment-field",
+      `surveyor-assignment-field${house.has_assigned_surveyor ? "" : " surveyor-assignment-missing"}`,
       "Assigned ",
     ) : ""}
     ${!readyOnly && survey && (survey.changed_by || survey.changed_at)
@@ -660,6 +781,17 @@ function houseAuditHtml(house, readyOnly = false) {
     ${!readyOnly && lastDelivery ? auditField("Last delivery", formatAuditDate(lastDelivery.happened_on)) : ""}
   </div>`;
   return `<div class="house-audit${readyOnly ? " house-audit-ready" : ""}" aria-label="House activity">${highlights}</div>`;
+}
+
+function houseSurveyorAssignmentAlertHtml(house) {
+  if (house.has_assigned_surveyor) return "";
+  const value = house.assigned_surveyor_name
+    ? `${house.assigned_surveyor_name}${house.assigned_surveyor_is_active === 0 ? " (inactive)" : ""}`
+    : "Not assigned";
+  const assignedAt = house.surveyor_assigned_at
+    ? `<small>Last assignment ${escapeHtml(formatAuditDateTime(house.surveyor_assigned_at))}</small>`
+    : "";
+  return `<div class="house-audit-summary house-audit-summary-active" role="status"><div class="house-audit-summary-field surveyor-assignment-field surveyor-assignment-missing"><strong>Assigned Surveyor</strong><span>${escapeHtml(value)}</span>${assignedAt}</div></div>`;
 }
 
 function houseAuditCount(house) {
@@ -776,6 +908,7 @@ function handleAuthCatBlur(event) {
 }
 
 const AUTH_USERNAME_KEY = "material-tracker-username";
+const AUTH_LIGHTS_KEY = "material-tracker-login-lights";
 
 function rememberedUsername() {
   try {
@@ -825,6 +958,7 @@ function showAuthScreen(setupRequired) {
   state.selectedMapHouseId = "";
   state.houseMapCamera = null;
   state.setupRequired = setupRequired;
+  setAuthLights(localStorage.getItem(AUTH_LIGHTS_KEY) !== "off");
   $(".app-shell").classList.add("hidden");
   $("#auth-screen").classList.remove("hidden");
   $("#auth-error").classList.add("hidden");
@@ -834,7 +968,8 @@ function showAuthScreen(setupRequired) {
     : "SECURE WORKSPACE";
   $("#auth-title").textContent = setupRequired
     ? "Set up your administrator account"
-    : "Sign in";
+    : "";
+  $("#auth-title").classList.toggle("hidden", !setupRequired);
   $("#auth-description").classList.toggle("hidden", !setupRequired);
   $("#auth-description").textContent = setupRequired
     ? "Create the first administrator account. Only this account can create employee logins."
@@ -1160,8 +1295,10 @@ function showWorkspace(user) {
     setTab("overview");
   } else if (isAssign) {
     surveyorStatusFilter = "all";
-    state.houseMapMode = false;
-    state.houseStatusFilter = null;
+    const assignHouseView = readAssignHouseView(user);
+    state.houseMapMode = assignHouseView.status === "seai";
+    state.houseStatusFilter = assignHouseView.status;
+    state.assignSurveyFilter = assignHouseView.survey;
     state.viewingHouseId = "";
     state.houseMapData = null;
     $("#houses-page-eyebrow").textContent = "SITE ALLOCATION & RESPONSIBILITY";
@@ -1272,6 +1409,14 @@ function goToHomeView(event) {
   if (event) event.preventDefault();
   if (!state.user) return;
   if (hasAccessProfile(state.user, "surveyor")) {
+    state.surveyRoomReturn = "";
+    state.surveyRoomHouseId = "";
+    state.surveyRoomRequest += 1;
+    state.houseMapMode = false;
+    state.houseStatusFilter = "ready";
+    state.houseTeamFilter = null;
+    state.housesTeamsTab = "houses";
+    showHousesOverview();
     setTab("houses");
     loadSurveyorHouses();
     return;
@@ -2564,7 +2709,7 @@ function renderSurveyorHouses() {
     <div class="house-top"><span class="house-avatar" aria-hidden="true">&#8962;</span><div class="house-meta"><h2>${houseCardTitle(h, escapeHtml(h.id))}</h2><p>${escapeHtml(propertySummary)}</p></div></div>
     ${assignmentCredit}
     <div class="surveyor-house-update"><span class="surveyor-update-indicator ${surveyIsComplete(h) ? "is-complete" : ""}" aria-hidden="true"></span><span>${surveyStatus}</span>${surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at)}</div>
-    <button class="button ${surveyIsComplete(h) ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="Open Surveyor room for ${escapeHtml(h.id)}">${surveyIsComplete(h) ? "Review survey" : "Start survey"} <span aria-hidden="true">→</span></button>
+    <button class="button ${surveyIsComplete(h) ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="${surveyIsComplete(h) ? "Review survey and view your room" : "Start survey and view your room"}">${surveyIsComplete(h) ? "Review survey · View your room" : "Start survey · View your room"} <span aria-hidden="true">→</span></button>
     ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
   </article>`;
   }).join("") : `<div class="surveyor-empty-state"><span class="surveyor-empty-icon" aria-hidden="true">⌂</span><strong>${query ? "No matching houses" : surveyHouses.length ? "No houses in this filter" : "No houses assigned yet"}</strong><p>${query ? "Try a different house ID, owner, address or postcode." : surveyHouses.length ? "Choose another filter to see your other assigned houses." : "When a house is assigned to you and marked Ready for start, it will appear here."}</p></div>`;
@@ -3526,13 +3671,13 @@ function openHouseSurvey(houseId) {
   $("#survey-room-saved-pdfs-list").innerHTML = '<p class="muted">Loading saved PDFs…</p>';
   const seaiDetailsCard = $("#survey-room-seai-details");
   $(".card-heading h2", seaiDetailsCard).textContent = isNotStarted || !hasSeaiDetails
-    ? "SEAI PDFs"
+    ? "Saved combined PDFs"
     : "SEAI application record";
   $(".card-heading p", seaiDetailsCard).textContent = isNotStarted
-    ? "View-only PDFs. Editing, annotations, and sharing are disabled while the house is Not started."
+    ? "Previously saved combined PDFs for this house. These files are view-only while the house is Not started."
     : hasSeaiDetails
       ? "Captured application, property, contractor, measures, tests, variance, notes, and attachment metadata."
-      : "Browse SEAI PDFs or add a temporary annotated blank page for sharing.";
+      : "Combined PDFs selected and saved for this house.";
   $("#survey-room-seai-content").classList.toggle(
     "hidden",
     isNotStarted || !hasSeaiDetails,
@@ -3545,7 +3690,7 @@ function openHouseSurvey(houseId) {
       (link.hasAttribute("data-ready-only") && isNotStarted) ||
       (link.hasAttribute("data-not-started-only") && !isNotStarted);
     if (link.hasAttribute("data-ready-only")) {
-      link.textContent = hasSeaiDetails ? "SEAI record" : "SEAI PDFs";
+      link.textContent = "SEAI record";
     }
     link.classList.toggle(
       "hidden",
@@ -3735,50 +3880,27 @@ async function saveHouseWorkPlan(form, manual = false) {
     if (manual) button.disabled = false;
   }
 }
-async function loadHouseDocuments(houseId, requestId, canModify = true) {
-  const list = $("#house-documents-list");
-  try {
-    const result = await request(
-      `/api/house-documents?house_id=${encodeURIComponent(houseId)}`,
-    );
-    if (requestId !== state.surveyRoomRequest) return;
-    list.innerHTML = result.documents.length
-      ? result.documents.map((document) => `
-        <div class="house-document-entry">
-          <a class="house-document-link" href="/api/house-documents/${document.id}" target="_blank" rel="noreferrer">
-            <span class="house-document-icon" aria-hidden="true">PDF</span>
-            <span class="house-document-copy"><strong>${escapeHtml(document.filename)}</strong><small>Uploaded by ${escapeHtml(document.uploaded_by)} · ${escapeHtml(formatAuditDateTime(document.uploaded_at))} · ${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
-            <span class="house-document-open" aria-hidden="true">↗</span>
-          </a>
-          ${canModify ? `<div class="house-document-actions">
-            <button class="button button-secondary house-document-annotate" type="button" data-document-id="${document.id}" data-document-name="${escapeHtml(document.filename)}">Annotate</button>
-            <button class="button button-secondary house-document-share" type="button" data-document-id="${document.id}" data-document-name="${escapeHtml(document.filename)}">Share PDF</button>
-            <button class="button house-document-delete" type="button" data-document-id="${document.id}" data-document-name="${escapeHtml(document.filename)}">Delete PDF</button>
-          </div>` : ""}
-        </div>`).join("")
-      : '<p class="muted house-documents-empty">No survey PDFs uploaded for this house yet.</p>';
-  } catch (error) {
-    if (requestId === state.surveyRoomRequest) {
-      list.innerHTML = `<p class="house-documents-error">Could not load survey documents: ${escapeHtml(error.message)}</p>`;
-    }
+function openSurveyRoomPdfPreview(button) {
+  const rawUrl = button.dataset.surveyRoomPdfPreview || "";
+  if (!/^\/api\/(?:seai-documents\/\d+\/file|survey-room-test-pdfs\/[a-z0-9-]+\.pdf)$/.test(rawUrl)) {
+    showToast("This PDF link is not available for preview.", true);
+    return;
   }
-}
-async function deleteHouseDocument(button) {
-  const documentId = button.dataset.documentId;
-  const filename = button.dataset.documentName;
-  if (!window.confirm(`Permanently delete "${filename}"? This cannot be undone.`)) return;
-  const houseId = state.surveyRoomHouseId;
-  const requestId = state.surveyRoomRequest;
-  button.disabled = true;
-  try {
-    await request(`/api/house-documents/${documentId}/delete`, { method: "POST" });
-    showToast(`${filename} deleted.`);
-    await loadHouseDocuments(houseId, requestId, true);
-  } catch (error) {
-    showToast(`Could not delete ${filename}: ${error.message}`, true);
-  } finally {
-    button.disabled = false;
+  const url = new URL(rawUrl, window.location.origin);
+  if (url.origin !== window.location.origin) {
+    showToast("This PDF link is not available for preview.", true);
+    return;
   }
+  $("#survey-room-pdf-preview-title").textContent =
+    button.dataset.pdfName || "SEAI PDF";
+  const returnButton = $("#survey-room-pdf-preview-back");
+  const fromVentDashboard = Boolean(button.closest("#vent-survey-pdfs-dialog"));
+  returnButton.textContent = fromVentDashboard
+    ? "Back to dashboard"
+    : "Back to Surveyor room";
+  returnButton.dataset.returnToVentDashboard = String(fromVentDashboard);
+  $("#survey-room-pdf-preview-frame").src = url.href;
+  $("#survey-room-pdf-preview-dialog").showModal();
 }
 async function loadSeaiDocuments(houseId, requestId, canModify = true) {
   const list = $("#survey-room-seai-documents");
@@ -3791,7 +3913,7 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
     );
     if (requestId !== state.surveyRoomRequest) return;
     const savedDocuments = result.documents.filter(
-      (document) => document.is_selected_pdf,
+      (document) => document.is_selected_pdf && !document.is_annotated,
     );
     savedList.innerHTML = savedDocuments.length
       ? `<div class="saved-pdfs-overview"><span class="saved-pdfs-count">${savedDocuments.length} ${savedDocuments.length === 1 ? "PDF" : "PDFs"}</span><span>Saved for this house</span></div>
@@ -3804,21 +3926,36 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
             <span class="saved-pdf-meta">PDF document <span aria-hidden="true">·</span> ${(document.size_bytes / 1_000_000).toFixed(1)} MB</span>
           </div>
           <div class="saved-pdf-actions">
+            <button class="button button-secondary" type="button" data-survey-room-pdf-preview="/api/seai-documents/${Number(document.id)}/file" data-pdf-name="${escapeHtml(document.filename)}">View in room</button>
             <a class="button button-primary saved-pdf-view" href="/api/seai-documents/${Number(document.id)}/file" target="_blank" rel="noreferrer">View PDF</a>
             ${canModify ? `<button class="button saved-pdf-delete" type="button" data-selected-seai-delete="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}">Delete</button>` : ""}
           </div>
         </div>`).join("")}</div>`
       : '<div class="saved-pdfs-empty"><span class="saved-pdfs-empty-icon" aria-hidden="true">PDF</span><div><strong>No saved PDFs yet</strong><p>When a surveyor saves selected pages, they will be available here for this house.</p></div></div>';
     const libraryDocuments = result.documents.filter(
-      (document) => !document.is_selected_pdf,
+      (document) => !document.is_selected_pdf && !document.is_annotated,
     );
+    const testDocuments = [
+      ["Application", "application-letter.pdf"],
+      ["Survey", "survey-report.pdf"],
+      ["Survey", "survey-sketch.pdf"],
+      ["Variation", "floor-plan-1.pdf"],
+      ["Variation", "floor-plan-2.pdf"],
+      ["Variation", "floor-plan-3.pdf"],
+    ].map(([category, filename]) => ({
+      category,
+      filename,
+      is_test_sample: true,
+      file_url: `/api/survey-room-test-pdfs/${filename}`,
+    }));
+    const roomDocuments = [...libraryDocuments, ...testDocuments];
     const categories = ["Application", "Survey", "Variation"];
     const extraCategories = [...new Set(
-      libraryDocuments.map((document) => document.category),
+      roomDocuments.map((document) => document.category),
     )].filter((category) => !categories.includes(category));
     const allCategories = [...categories, ...extraCategories];
     const toolbar = canModify ? `<div class="seai-share-toolbar">
-      <p>Select pages from any PDFs, or add a temporary annotated blank page. Saved annotated copies are used where available.</p>
+      <p>Select pages from linked SEAI or test PDFs. Annotations are included in the review and are saved only with the final selected PDF.</p>
       <div><span class="seai-share-selection-count" data-seai-share-count aria-live="polite">0 pages selected</span>
       <button class="button button-secondary" type="button" data-seai-create-blank>Create blank page</button>
       <button class="button button-primary" type="button" data-seai-share-selected disabled>Review selected pages</button>
@@ -3827,26 +3964,26 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
     const libraryHeader = `<div class="seai-pdf-library-heading">
       <span class="seai-pdf-library-icon" aria-hidden="true">PDF</span>
       <div><span class="seai-pdf-library-eyebrow">DOCUMENT LIBRARY</span><h3>SEAI PDFs</h3>
-      <p>Browse application records, survey plans and variation documents.</p></div>
-      <span class="seai-pdf-library-count">${libraryDocuments.length} ${libraryDocuments.length === 1 ? "file" : "files"}</span>
+      <p>Test PDFs from the provided folder, alongside any SEAI PDFs linked to this house.</p></div>
+      <span class="seai-pdf-library-count">${roomDocuments.length} ${roomDocuments.length === 1 ? "file" : "files"}</span>
     </div>`;
-    list.innerHTML = `${libraryHeader}${toolbar}${libraryDocuments.length
+    list.innerHTML = `${libraryHeader}${toolbar}${roomDocuments.length
       ? allCategories.map((category) => {
-          const documents = libraryDocuments.filter((document) => document.category === category);
+          const documents = roomDocuments.filter((document) => document.category === category);
           if (!documents.length) return "";
           const hint = seaiPdfCategoryHints[category]
             ? `<p class="survey-room-seai-note">${escapeHtml(seaiPdfCategoryHints[category])}</p>`
           : "";
           return `<details class="survey-room-seai-section survey-room-seai-pdfs seai-document-category"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4C4;</span><span class="seai-sec-title">${escapeHtml(category)} PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 record" : `${documents.length} records`}</span></summary>${hint}<div class="seai-document-entries">${documents.map((document) => `
-          <div class="seai-document-entry ${document.is_annotated ? "is-annotated" : "is-original"}">
+          <div class="seai-document-entry ${document.is_annotated ? "is-annotated" : "is-original"}${document.is_test_sample ? " is-test-sample" : ""}">
             <span class="house-document-icon" aria-hidden="true">PDF</span>
-            <span class="seai-document-name"><span class="seai-document-status ${document.is_annotated ? "annotated" : "original"}">${document.is_annotated ? "ANNOTATED COPY" : "ORIGINAL PDF"}</span>${escapeHtml(document.filename)}<small>${(document.size_bytes / 1_000_000).toFixed(1)} MB</small></span>
-            <a class="button button-secondary seai-document-open" href="/api/seai-documents/${Number(document.id)}/file" target="_blank" rel="noreferrer">View PDF</a>
+            <span class="seai-document-name"><span class="seai-document-status ${document.is_test_sample ? "test-sample" : document.is_annotated ? "annotated" : "original"}">${document.is_test_sample ? "TEST PDF" : document.is_annotated ? "ANNOTATED COPY" : "ORIGINAL PDF"}</span>${escapeHtml(document.filename)}${document.is_test_sample ? "<small>Sample from the test PDF folder</small>" : `<small>${(document.size_bytes / 1_000_000).toFixed(1)} MB</small>`}</span>
+            <a class="button button-secondary seai-document-open" href="${document.is_test_sample ? document.file_url : `/api/seai-documents/${Number(document.id)}/file`}" target="_blank" rel="noreferrer">View PDF</a>
+            <button class="button button-primary seai-document-preview" type="button" data-survey-room-pdf-preview="${document.is_test_sample ? document.file_url : `/api/seai-documents/${Number(document.id)}/file`}" data-pdf-name="${escapeHtml(document.filename)}">View in room</button>
             ${canModify && document.is_selected_pdf ? `<button class="button button-secondary seai-document-delete" type="button" data-selected-seai-delete="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}">Delete saved PDF</button>` : ""}
-            ${canModify && document.is_annotated ? `<button class="button button-secondary seai-document-share" type="button" data-seai-document-share="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}">Share annotated PDF</button>` : ""}
             ${canModify
-    ? `<button class="button button-secondary seai-document-view" type="button" data-document-id="${Number(document.id)}" data-document-name="${escapeHtml(document.filename)}" data-document-category="${escapeHtml(category)}">Open &amp; annotate</button>`
-    : `<a class="button button-secondary" href="/api/seai-documents/${Number(document.id)}/file" target="_blank" rel="noreferrer">View PDF</a>`}
+    ? `<button class="button button-secondary seai-document-view" type="button" ${document.is_test_sample ? `data-test-pdf-name="${escapeHtml(document.filename)}"` : `data-document-id="${Number(document.id)}"`} data-document-name="${escapeHtml(document.filename)}" data-document-category="${escapeHtml(category)}">Open &amp; annotate</button>`
+    : ""}
           </div>`).join("")}</div></details>`;
       }).join("")
       : '<p class="muted seai-documents-empty">No SEAI PDF attachments are available for this house.</p>'}`;
@@ -3882,8 +4019,8 @@ async function deleteSavedSelectedSeaiPdf(button) {
     button.disabled = false;
   }
 }
-function seaiSharePageKey(documentId, page) {
-  return `${documentId}:${page}`;
+function seaiSharePageKey(documentId, page, documentType = "seai") {
+  return `${documentType === "seai_test" ? "test:" : ""}${documentId}:${page}`;
 }
 function updateSeaiShareToolbar() {
   const count = state.seaiSharePages.size;
@@ -3895,19 +4032,34 @@ function updateSeaiShareToolbar() {
   if (clearButton) clearButton.disabled = count === 0;
   const selection = $("#pdf-annotator-page-selection");
   const annotator = state.pdfAnnotator;
-  if (selection && annotator?.documentType === "seai") {
+  if (selection && (annotator?.documentType === "seai" ||
+      annotator?.documentType === "seai_test")) {
     selection.checked = state.seaiSharePages.has(
-      seaiSharePageKey(annotator.documentId, annotator.page),
+      seaiSharePageKey(
+        annotator.documentId,
+        annotator.page,
+        annotator.documentType,
+      ),
     );
   }
 }
 function updateSeaiPageSelection(isSelected) {
   const annotator = state.pdfAnnotator;
-  if (!annotator || annotator.documentType !== "seai") return;
-  const key = seaiSharePageKey(annotator.documentId, annotator.page);
+  if (!annotator ||
+      (annotator.documentType !== "seai" &&
+        annotator.documentType !== "seai_test")) return;
+  const key = seaiSharePageKey(
+    annotator.documentId,
+    annotator.page,
+    annotator.documentType,
+  );
   if (isSelected) {
+    const existing = state.seaiSharePages.get(key) || {};
     state.seaiSharePages.set(key, {
-      document_id: Number(annotator.documentId),
+      ...existing,
+      ...(annotator.documentType === "seai_test"
+        ? { test_pdf_name: annotator.documentId }
+        : { document_id: Number(annotator.documentId) }),
       page: annotator.page,
       filename: annotator.filename,
       category: annotator.category,
@@ -3954,7 +4106,13 @@ async function prepareSeaiDocumentShare(button) {
   try {
     const selectedPages = pages.map((page) => page.blank_page
       ? { blank_page: true, annotations: page.annotations }
-      : { document_id: page.document_id, page: page.page });
+      : {
+          ...(page.test_pdf_name
+            ? { test_pdf_name: page.test_pdf_name }
+            : { document_id: page.document_id }),
+          page: page.page,
+          ...(page.annotations?.length ? { annotations: page.annotations } : {}),
+        });
     const response = await fetch("/api/seai-documents/share", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4038,56 +4196,8 @@ async function saveSelectedSeaiPdf() {
     button.disabled = false;
   }
 }
-async function prepareSeaiDocumentFileShare(button) {
-  const documentId = button.dataset.seaiDocumentShare;
-  const filename = button.dataset.documentName;
-  button.disabled = true;
-  try {
-    const response = await fetch(
-      `/api/seai-documents/${documentId}/share?include_survey_note=0`,
-      {
-        method: "POST",
-        cache: "no-store",
-      },
-    );
-    if (!response.ok) {
-      let result = {};
-      try {
-        result = await response.json();
-      } catch {
-        throw new Error(`Could not prepare the annotated PDF (${response.status}).`);
-      }
-      throw new Error(result.error || `Could not prepare the annotated PDF (${response.status}).`);
-    }
-    const file = new File(
-      [await response.blob()],
-      `${state.surveyRoomHouseId}-${filename.replace(/\.pdf$/i, "")}.pdf`,
-      { type: "application/pdf" },
-    );
-    state.preparedHouseShare = {
-      file,
-      houseId: state.surveyRoomHouseId,
-      filename,
-      description: `Annotated SEAI PDF ${filename}, without a survey-notes page.`,
-      ventShare: {
-        url: `/api/seai-documents/${documentId}/share?include_survey_note=0`,
-        method: "POST",
-        filename: `${state.surveyRoomHouseId}-${filename.replace(/\.pdf$/i, "")}.pdf`,
-      },
-      ewiTeamShare: { documentId },
-    };
-    $("#house-document-share-ewi").hidden = false;
-    $("#house-document-share-title").textContent =
-      `${state.surveyRoomHouseId} · ${filename} · Annotated copy`;
-    $("#house-document-share-dialog").showModal();
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-}
 function openSeaiDocument(button) {
-  openPdfAnnotator(button, "seai");
+  openPdfAnnotator(button, button.dataset.testPdfName ? "seai_test" : "seai");
 }
 function closeHouseDocumentAnnotator() {
   const annotator = state.pdfAnnotator;
@@ -4168,6 +4278,43 @@ function wrapPdfAnnotationText(context, text, maxWidth) {
   }
   return lines;
 }
+function pdfTextAnnotationLayout(context, annotation, width, height) {
+  const savedFontSize = Number(annotation.font_size);
+  let fontSize = Number.isFinite(savedFontSize) && savedFontSize > 0
+    ? Math.max(8, savedFontSize * width)
+    : 16;
+  const textWidth = Math.max(
+    32,
+    Math.min(
+      width - 16,
+      width * (annotation.text_width || 0.42),
+      width - annotation.point[0] * width - 8,
+    ),
+  );
+  context.font = `600 ${fontSize}px system-ui, sans-serif`;
+  let lines = wrapPdfAnnotationText(context, annotation.text, textWidth);
+  let lineHeight = fontSize * 1.25;
+  let noteHeight = Math.max(lineHeight, lines.length * lineHeight);
+  if (noteHeight > height - 16) {
+    fontSize *= (height - 16) / noteHeight;
+    context.font = `600 ${fontSize}px system-ui, sans-serif`;
+    lines = wrapPdfAnnotationText(context, annotation.text, textWidth);
+    lineHeight = fontSize * 1.25;
+    noteHeight = Math.max(lineHeight, lines.length * lineHeight);
+  }
+  const x = Math.max(8, Math.min(annotation.point[0] * width, width - textWidth - 8));
+  const y = Math.max(8, Math.min(annotation.point[1] * height, height - noteHeight - 8));
+  return { x, y, width: textWidth, height: noteHeight, fontSize, lineHeight, lines };
+}
+function pdfTextAnnotationDisplayScale(annotator) {
+  const fitWidth = Number(annotator.fitWidth);
+  const zoom = Number(annotator.zoom);
+  return Math.max(
+    1,
+    (Number.isFinite(fitWidth) ? fitWidth : 1) *
+      (Number.isFinite(zoom) && zoom > 0 ? zoom : 1),
+  );
+}
 function drawPdfAnnotations() {
   const annotator = state.pdfAnnotator;
   const canvas = $("#pdf-annotator-canvas");
@@ -4216,61 +4363,91 @@ function drawPdfAnnotations() {
           context.drawImage(iconImage, -iconWidth / 2, -iconHeight / 2, iconWidth, iconHeight);
         }
         if (annotator.selectedIconId === annotation.id) {
-          context.strokeStyle = "#16865a";
-          context.fillStyle = "#fff";
-          context.lineWidth = 2;
-          context.setLineDash([6, 4]);
+          context.strokeStyle = "#173d2b";
+          context.lineWidth = 6;
+          context.setLineDash([]);
+          context.strokeRect(-iconWidth / 2, -iconHeight / 2, iconWidth, iconHeight);
+          context.strokeStyle = "#67d99a";
+          context.lineWidth = 3;
+          context.setLineDash([8, 4]);
           context.strokeRect(-iconWidth / 2, -iconHeight / 2, iconWidth, iconHeight);
           context.setLineDash([]);
-          const handleSize = 9;
+          const handleRadius = 12;
           for (const [handleX, handleY] of [
             [-iconWidth / 2, -iconHeight / 2],
             [iconWidth / 2, -iconHeight / 2],
             [-iconWidth / 2, iconHeight / 2],
             [iconWidth / 2, iconHeight / 2],
           ]) {
-            context.fillRect(handleX - handleSize / 2, handleY - handleSize / 2, handleSize, handleSize);
-            context.strokeRect(handleX - handleSize / 2, handleY - handleSize / 2, handleSize, handleSize);
+            context.beginPath();
+            context.arc(handleX, handleY, handleRadius, 0, Math.PI * 2);
+            context.fillStyle = "#f4fbf7";
+            context.fill();
+            context.strokeStyle = "#218354";
+            context.lineWidth = 3;
+            context.stroke();
           }
           context.beginPath();
           context.moveTo(0, -iconHeight / 2);
           context.lineTo(0, -iconHeight / 2 - 22);
+          context.strokeStyle = "#173d2b";
+          context.lineWidth = 6;
           context.stroke();
           context.beginPath();
-          context.arc(0, -iconHeight / 2 - 25, 6, 0, Math.PI * 2);
+          context.moveTo(0, -iconHeight / 2);
+          context.lineTo(0, -iconHeight / 2 - 22);
+          context.strokeStyle = "#67d99a";
+          context.lineWidth = 3;
+          context.stroke();
+          context.beginPath();
+          context.arc(0, -iconHeight / 2 - 25, handleRadius, 0, Math.PI * 2);
+          context.fillStyle = "#f4fbf7";
           context.fill();
+          context.strokeStyle = "#218354";
+          context.lineWidth = 3;
           context.stroke();
         }
       } else if (annotation.tool === "text") {
         context.textBaseline = "top";
-        context.font = `600 ${Math.max(14, annotation.font_size * width)}px system-ui, sans-serif`;
-        if (annotation.wrap) {
-          const x = Math.min(annotation.point[0] * width, width * 0.62);
-          const maxWidth = Math.max(24, width - x - 8);
-          let fontSize = Math.max(8, annotation.font_size * width);
-          context.font = `600 ${fontSize}px system-ui, sans-serif`;
-          let lines = wrapPdfAnnotationText(context, annotation.text, maxWidth);
-          let lineHeight = fontSize * 1.25;
-          const availableHeight = height - 16;
-          if (lines.length * fontSize * 1.6 > availableHeight) {
-            fontSize *= availableHeight / (lines.length * fontSize * 1.6);
-            context.font = `600 ${fontSize}px system-ui, sans-serif`;
-            lines = wrapPdfAnnotationText(context, annotation.text, maxWidth);
-            lineHeight = fontSize * 1.25;
-          }
-          const y = Math.min(
-            annotation.point[1] * height,
-            height - 8 - lines.length * fontSize * 1.6,
+        const layout = pdfTextAnnotationLayout(context, annotation, width, height);
+        layout.lines.forEach((line, index) => {
+          context.fillText(line, layout.x, layout.y + index * layout.lineHeight);
+        });
+        if (annotation.id === annotator.selectedTextId) {
+          context.save();
+          context.strokeStyle = "#173d2b";
+          context.lineWidth = 6;
+          context.setLineDash([]);
+          context.strokeRect(
+            layout.x - 4,
+            layout.y - 4,
+            layout.width + 8,
+            layout.height + 8,
           );
-          lines.forEach((line, index) => {
-            context.fillText(line, x, y + index * lineHeight);
-          });
-        } else {
-          context.fillText(
-            annotation.text,
-            annotation.point[0] * width,
-            annotation.point[1] * height,
+          context.strokeStyle = "#67d99a";
+          context.lineWidth = 3;
+          context.setLineDash([6, 4]);
+          context.strokeRect(
+            layout.x - 4,
+            layout.y - 4,
+            layout.width + 8,
+            layout.height + 8,
           );
+          context.setLineDash([]);
+          context.beginPath();
+          context.arc(
+            layout.x + layout.width - 2,
+            layout.y + layout.height - 2,
+            12,
+            0,
+            Math.PI * 2,
+          );
+          context.fillStyle = "#f4fbf7";
+          context.fill();
+          context.strokeStyle = "#218354";
+          context.lineWidth = 3;
+          context.stroke();
+          context.restore();
         }
       } else {
         context.globalAlpha = annotation.tool === "highlighter" ? 0.38 : 1;
@@ -4299,11 +4476,58 @@ function drawPdfAnnotations() {
   $("#pdf-annotator-save").disabled =
     annotator.annotations.length === 0 || annotator.saving;
   const selectedIcon = annotator.annotations.find(
-    (annotation) => annotation.id === annotator.selectedIconId,
+    (annotation) =>
+      annotation.id === annotator.selectedIconId &&
+      annotation.tool === "ventilation_icon" &&
+      annotation.page === annotator.page,
   );
   $("#pdf-annotator-icon-edit").hidden = !selectedIcon;
   if (selectedIcon) {
     $("#pdf-annotator-selected-icon-name").textContent = selectedIcon.label;
+  }
+  const selectedText = annotator.annotations.find(
+    (annotation) =>
+      annotation.id === annotator.selectedTextId &&
+      annotation.tool === "text" &&
+      annotation.page === annotator.page,
+  );
+  const textPanel = $("#pdf-annotator-text-panel");
+  textPanel.classList.toggle(
+    "hidden",
+    annotator.tool !== "text" && !selectedText,
+  );
+  const textResize = $("#pdf-annotator-text-resize");
+  const textResizeValue = $("#pdf-annotator-text-resize-value");
+  textResize.disabled = !selectedText;
+  if (selectedText) {
+    const displayScale = pdfTextAnnotationDisplayScale(annotator);
+    const fontSize = Number(selectedText.font_size);
+    const rawDisplaySize = fontSize * displayScale;
+    const displaySize = Number.isFinite(rawDisplaySize) && rawDisplaySize > 0
+      ? rawDisplaySize
+      : 16;
+    if (!Number.isFinite(rawDisplaySize) || rawDisplaySize <= 0) {
+      selectedText.font_size = displaySize / displayScale;
+    }
+    const sliderSize = Math.max(8, Math.min(48, Math.round(displaySize)));
+    textResize.value = String(sliderSize);
+    textResize.style.setProperty(
+      "--pdf-resize-progress",
+      `${((sliderSize - 8) / 40) * 100}%`,
+    );
+    textResizeValue.value = `${sliderSize} px`;
+    textResizeValue.textContent = textResizeValue.value;
+    const textSize = $("#pdf-annotator-text-size");
+    textSize.value = [...textSize.options].reduce((closest, option) =>
+      Math.abs(Number(option.value) - displaySize) <
+        Math.abs(Number(closest.value) - displaySize)
+        ? option
+        : closest,
+    ).value;
+  } else {
+    textResize.style.setProperty("--pdf-resize-progress", "20%");
+    textResizeValue.value = `${textResize.value} px`;
+    textResizeValue.textContent = textResizeValue.value;
   }
   $("#pdf-annotator-page-count").textContent =
     annotator.loading
@@ -4405,10 +4629,10 @@ async function loadHouseDocumentPage(pageNumber) {
         ? "house-vent-documents"
         : "house-documents";
     const previewDocumentId = annotator.previewDocumentId || annotator.documentId;
-    const response = await fetch(
-      `/api/${documentPath}/${previewDocumentId}/preview?page=${pageNumber}`,
-      { cache: "no-store" },
-    );
+    const previewRequestUrl = previewType === "seai_test"
+      ? `/api/survey-room-test-pdfs/${encodeURIComponent(previewDocumentId)}/preview?house_id=${encodeURIComponent(annotator.houseId)}&page=${pageNumber}`
+      : `/api/${documentPath}/${previewDocumentId}/preview?page=${pageNumber}`;
+    const response = await fetch(previewRequestUrl, { cache: "no-store" });
     if (!response.ok) {
       let result = {};
       try {
@@ -4517,13 +4741,16 @@ const VENT_ANNOTATION_ICONS = [
   { key: "axial-fan", label: "Axial exhaust fan", filename: "D Series Axial Fan.svg" },
   { key: "core-drill", label: "5-inch core-drill ventilator", filename: "5” Core Drill Ventilator.svg", urlName: "core-drill-ventilator.svg" },
 ];
-function isVentAnnotationDocumentType(documentType) {
-  return documentType === "vent" || documentType === "vent_seai";
+function supportsVentilationIcons(documentType) {
+  return documentType === "vent" ||
+    documentType === "vent_seai" ||
+    documentType === "seai" ||
+    documentType === "seai_test";
 }
 function openPdfAnnotator(button, documentType) {
   state.pdfAnnotator = {
-    documentId: button.dataset.documentId,
-    previewDocumentId: button.dataset.documentId,
+    documentId: button.dataset.testPdfName || button.dataset.documentId,
+    previewDocumentId: button.dataset.testPdfName || button.dataset.documentId,
     filename: button.dataset.documentName,
     category: button.dataset.documentCategory || "",
     documentType,
@@ -4532,7 +4759,7 @@ function openPdfAnnotator(button, documentType) {
     pageCount: 1,
     tool: "pen",
     penSize: 2.5,
-    zoom: 1,
+    zoom: 1.75,
     fitScale: 1,
     fitWidth: 1,
     annotations: [],
@@ -4543,7 +4770,9 @@ function openPdfAnnotator(button, documentType) {
     iconDrag: null,
     placementIcon: null,
     selectedIconId: null,
+    selectedTextId: null,
     nextIconId: 1,
+    nextTextId: 1,
     iconImages: new Map(),
     wheelDelta: 0,
     wheelLocked: false,
@@ -4551,11 +4780,17 @@ function openPdfAnnotator(button, documentType) {
   $("#pdf-annotator-title").textContent = button.dataset.documentName;
   $("#pdf-annotator-page-selection-label").classList.toggle(
     "hidden",
-    documentType !== "seai",
+    documentType !== "seai" && documentType !== "seai_test",
   );
-  $("#pdf-annotator-page-selection").checked = false;
+  $("#pdf-annotator-page-selection").checked = state.seaiSharePages.has(
+    seaiSharePageKey(
+      state.pdfAnnotator.documentId,
+      state.pdfAnnotator.page,
+      documentType,
+    ),
+  );
   $(".pdf-annotator-title .eyebrow").textContent =
-    documentType === "seai"
+    documentType === "seai" || documentType === "seai_test"
       ? "SEAI PDF · ORIGINAL PRESERVED"
       : documentType === "vent"
         ? "VENT TEAM PDF · ORIGINAL PRESERVED"
@@ -4567,11 +4802,16 @@ function openPdfAnnotator(button, documentType) {
   $("#pdf-annotator-save").textContent =
     documentType === "blank"
       ? "Add blank page to selection"
+      : documentType === "seai" || documentType === "seai_test"
+        ? "Add to selected pages"
       : documentType === "vent" && button.dataset.annotationsEditable === "true"
         ? "Save changes"
         : "Save annotated copy";
-  $("#pdf-annotator-help").textContent = documentType === "seai"
-    ? "The original SEAI PDF stays unchanged. Your annotations will be saved as a separate PDF in this category."
+  $("#pdf-annotator-help").textContent =
+    documentType === "seai_test"
+    ? "This test PDF stays unchanged. Save annotations to add this page to Review selected pages; only the final combined PDF is saved."
+    : documentType === "seai"
+    ? "The original SEAI PDF stays unchanged. Save annotations to add this page to Review selected pages; only the final combined PDF is saved."
     : documentType === "vent"
     ? button.dataset.annotationsEditable === "true"
       ? "Adjust the saved annotations and icons, then save to update this copy. The Surveyor-shared original stays unchanged."
@@ -4587,11 +4827,11 @@ function openPdfAnnotator(button, documentType) {
   $("#pdf-annotator-text").value = "";
   $("#pdf-annotator-text-size").value = "16";
   $("#pdf-annotator-text-panel").classList.add("hidden");
-  const isVentAnnotator = isVentAnnotationDocumentType(documentType);
+  const supportsIcons = supportsVentilationIcons(documentType);
   const iconPalette = $("#pdf-annotator-icon-palette");
-  iconPalette.hidden = !isVentAnnotator;
+  iconPalette.hidden = !supportsIcons;
   $("#pdf-annotator-icon-edit").hidden = true;
-  if (isVentAnnotator) {
+  if (supportsIcons) {
     const iconList = $("#pdf-annotator-icon-list");
     iconList.replaceChildren();
     for (const asset of VENT_ANNOTATION_ICONS) {
@@ -4686,25 +4926,46 @@ async function saveHouseDocumentAnnotations() {
       showToast("Annotated blank page added to the selected pages. It is temporary until you share or clear the selection.");
       return;
     }
-    const isSeaiDocument = annotator.documentType === "seai";
+    const isTestSeaiDocument = annotator.documentType === "seai_test";
+    if (annotator.documentType === "seai" || isTestSeaiDocument) {
+      const key = seaiSharePageKey(
+        annotator.documentId,
+        annotator.page,
+        annotator.documentType,
+      );
+      const existing = state.seaiSharePages.get(key) || {};
+      state.seaiSharePages.set(key, {
+        ...existing,
+        ...(isTestSeaiDocument
+          ? { test_pdf_name: annotator.documentId }
+          : { document_id: Number(annotator.documentId) }),
+        page: annotator.page,
+        filename: annotator.filename,
+        category: annotator.category,
+        annotations: [...annotator.annotations],
+      });
+      closeHouseDocumentAnnotator();
+      updateSeaiShareToolbar();
+      showToast("Annotated page added to Review selected pages. Save the combined PDF to keep it in the house.");
+      return;
+    }
     const isVentDocument = annotator.documentType === "vent" ||
       annotator.documentType === "vent_seai";
     const annotationUrl = annotator.documentType === "vent_seai"
-      ? `/api/seai-documents/${annotator.documentId}/vent-annotations`
-      : `/api/${isSeaiDocument ? "seai-documents" : isVentDocument ? "house-vent-documents" : "house-documents"}/${annotator.documentId}/annotations`;
+        ? `/api/seai-documents/${annotator.documentId}/vent-annotations`
+        : `/api/${isVentDocument ? "house-vent-documents" : "house-documents"}/${annotator.documentId}/annotations`;
     const result = await request(
       annotationUrl,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ annotations: annotator.annotations }),
+        body: JSON.stringify({
+          annotations: annotator.annotations,
+        }),
       },
     );
     closeHouseDocumentAnnotator();
-    if (isSeaiDocument) {
-      await loadSeaiDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
-      showToast(`Annotated copy saved as ${result.filename}. The original is unchanged.`);
-    } else if (isVentDocument) {
+    if (isVentDocument) {
       try {
         state.dashboard = await request("/api/dashboard");
         renderOverview();
@@ -4909,39 +5170,6 @@ async function whatsappPreparedHouseShare() {
   );
   $("#house-document-share-dialog").close();
   showToast("Combined PDF downloaded. Attach it in WhatsApp before sending.");
-}
-async function submitHouseDocument(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const file = $("#house-document-file").files[0];
-  if (!file) {
-    showToast("Choose a PDF file to upload.", true);
-    return;
-  }
-  if (!file.name.toLocaleLowerCase().endsWith(".pdf")) {
-    showToast("House documents must be PDF files.", true);
-    return;
-  }
-  if (file.size > 8_000_000) {
-    showToast("PDF files must be 8 MB or smaller.", true);
-    return;
-  }
-  const button = $("button[type='submit']", form);
-  button.disabled = true;
-  const payload = new FormData();
-  payload.append("house_id", state.surveyRoomHouseId);
-  payload.append("file", file);
-  try {
-    await request("/api/house-documents", { method: "POST", body: payload });
-    $("#house-document-file").value = "";
-    $("#house-document-file-name").textContent = "No file selected";
-    await loadHouseDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
-    showToast("Survey PDF uploaded and shared with the surveyor.");
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
 }
 function closeSurveyorRoom() {
   $("#surveyor-room").classList.add("hidden");
@@ -5278,7 +5506,9 @@ async function renderNotStartedHouses(query, mode = "not_started") {
               .filter(Boolean)
               .join(" · ");
             const isReadyArrival = isAssign && isReady && state.readyHouseArrivalId === h.id;
-            return `<article class="card house-card ${isAssign ? "assign-house-card " : ""}${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}${isReadyArrival ? " assign-ready-arrival" : ""}" data-house-id="${id}"${isReadyArrival ? ' data-ready-arrival="true"' : ""}>
+            const needsSurveyorAssignment = isAssign && isReady && !h.has_assigned_surveyor;
+            return `<article class="card house-card ${isAssign ? "assign-house-card " : ""}${isReady ? "house-ready house-plan-ready" : "house-pending house-plan-pending"}${needsSurveyorAssignment ? " needs-surveyor-assignment" : ""}${isReadyArrival ? " assign-ready-arrival" : ""}" data-house-id="${id}"${isReadyArrival ? ' data-ready-arrival="true"' : ""}>
+          ${needsSurveyorAssignment ? '<div class="surveyor-assignment-alert" role="status"><span aria-hidden="true">!</span><div><strong>Surveyor assignment needed</strong><small>Assign a Surveyor before this house can be activated.</small></div></div>' : ""}
           <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(h, id)}</h2>${applicationIdLabelHtml(h, locationDetails || "No address recorded")}${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${isReady ? houseAuditHtml(h, true) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at) : ""}</div></div>
           <div class="house-body" data-house-id="${id}"${!isReady ? ' tabindex="0" role="region" aria-label="House status"' : ""}>
             ${houseWorkflowHtml(workflowStep, !isReady)}
@@ -5530,6 +5760,8 @@ async function markAssignSeaiHouseReady() {
       status.classList.remove("active");
       status.classList.add("ready");
       status.classList.remove("hidden");
+      $("#assign-seai-house-actions").classList.remove("not-started", "active");
+      $("#assign-seai-house-actions").classList.add("ready");
     }
   } finally {
     button.disabled = false;
@@ -6214,7 +6446,7 @@ function renderHouses() {
     const assignedTeams = houseTeams.get(house.id) || [];
     return `
       <article class="card house-card ${isAssign ? "assign-house-card " : ""}${house.is_finished ? "house-finished" : "house-active"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${isAssign ? houseSurveyorAssignmentAlertHtml(house) : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-body" data-house-id="${escapeHtml(house.id)}">${houseWorkflowHtml(house.is_finished ? 4 : 3)}${canViewMaterials ? `<div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) || house.is_finished ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${!house.is_finished && held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>` : ""}
@@ -6687,28 +6919,70 @@ const seaiPdfCategoryHints = {
   Survey: "Surveyor report and sketches.",
   Variation: "Installer plans supporting variations.",
 };
+const assignTestPdfDocuments = [
+  ["Application", "application-letter.pdf"],
+  ["Survey", "survey-report.pdf"],
+  ["Survey", "survey-sketch.pdf"],
+  ["Variation", "floor-plan-1.pdf"],
+  ["Variation", "floor-plan-2.pdf"],
+  ["Variation", "floor-plan-3.pdf"],
+].map(([category, filename]) => ({
+  category,
+  filename,
+  is_test_sample: true,
+  file_url: `/api/survey-room-test-pdfs/${filename}`,
+}));
 function seaiPdfSectionsHtml(documents) {
   const hints = seaiPdfCategoryHints;
-  return ["Application", "Survey", "Variation"].map((category) => {
-    const items = documents.filter((document) => document.category === category);
-    if (!items.length) return "";
-    return `<details class="survey-room-seai-section survey-room-seai-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4C4;</span><span class="seai-sec-title">${escapeHtml(category)} PDFs</span><span class="seai-sec-count">${items.length === 1 ? "1 record" : `${items.length} records`}</span></summary><p class="survey-room-seai-note">${escapeHtml(hints[category])}</p><ul class="survey-room-seai-pdf-list">${items.map((document) => {
-      const url = `/api/seai-documents/${Number(document.id)}/file`;
-      const name = escapeHtml(document.filename);
-      const badge = document.is_annotated ? '<span class="seai-document-status annotated">ANNOTATED COPY</span>' : "";
-      return `<li><span class="house-document-icon" aria-hidden="true">PDF</span><span class="seai-document-name" title="${name}">${badge}<strong>${name}</strong><small>${seaiPdfSize(document.size_bytes)}</small></span><span class="seai-pdf-actions"><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer" aria-label="View ${name}">View</a><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}">Download</a></span></li>`;
-    }).join("")}</ul></details>`;
+  const originalDocuments = documents.filter(
+    (document) => !document.is_annotated && !document.is_selected_pdf,
+  );
+  const normalizeCategory = (value) => String(value || "Other")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ")
+    .replace(/s$/, "");
+  const categories = ["Application", "Survey", "Variation"];
+  const categoryKeys = new Set(categories.map(normalizeCategory));
+  const extraCategories = [...new Set(
+    originalDocuments
+      .map((document) => String(document.category || "").trim())
+      .filter((category) => category && !categoryKeys.has(normalizeCategory(category))),
+  )];
+  return [...categories, ...extraCategories].map((category) => {
+    const categoryKey = normalizeCategory(category);
+    const linkedItems = originalDocuments.filter(
+      (document) => normalizeCategory(document.category) === categoryKey,
+    );
+    const items = linkedItems.length
+      ? linkedItems
+      : assignTestPdfDocuments.filter(
+        (document) => normalizeCategory(document.category) === categoryKey,
+      );
+    const records = items.length
+      ? `<ul class="survey-room-seai-pdf-list">${items.map((document) => {
+        const url = document.file_url || `/api/seai-documents/${Number(document.id)}/file`;
+        const name = escapeHtml(document.filename);
+        const typeLabel = document.is_test_sample ? "TEST PDF" : "ORIGINAL PDF";
+        const fileDetail = document.is_test_sample
+          ? "Sample PDF for testing"
+          : seaiPdfSize(document.size_bytes);
+        return `<li><span class="house-document-icon" aria-hidden="true">PDF</span><span class="seai-document-name" title="${name}"><strong>${typeLabel} · ${name}</strong><small>${fileDetail}</small></span><span class="seai-pdf-actions"><a class="button button-primary" href="${url}" target="_blank" rel="noreferrer" aria-label="View ${name}">View</a><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}">Download</a></span></li>`;
+      }).join("")}</ul>`
+      : `<p class="survey-room-seai-note">${escapeHtml(`No ${category.toLowerCase()} PDFs are available for this house yet.`)}</p>`;
+    const categoryHint = hints[category] || "";
+    return `<details class="survey-room-seai-section survey-room-seai-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4C4;</span><span class="seai-sec-title">${escapeHtml(category)} PDFs</span><span class="seai-sec-count">${items.length ? items.length === 1 ? "1 record" : `${items.length} records` : "No records"}</span></summary>${categoryHint ? `<p class="survey-room-seai-note">${escapeHtml(categoryHint)}</p>` : ""}${records}</details>`;
   }).join("");
 }
-function assignHousePdfSectionHtml(houseDocuments, selectedDocuments = [], description = "Selected and annotated survey PDFs saved for this house.") {
+function assignHousePdfSectionHtml(houseDocuments, selectedDocuments = [], description = "Saved PDFs for this house.") {
   const documents = [
-    ...houseDocuments.map((document) => ({
+    ...houseDocuments.filter((document) => !document.is_annotated).map((document) => ({
       ...document,
       fileUrl: `/api/house-documents/${Number(document.id)}`,
       savedBy: document.uploaded_by,
       savedAt: document.uploaded_at,
     })),
-    ...selectedDocuments.map((document) => ({
+    ...selectedDocuments.filter((document) => !document.is_annotated).map((document) => ({
       ...document,
       fileUrl: `/api/seai-documents/${Number(document.id)}/file`,
       savedBy: document.saved_by,
@@ -6735,7 +7009,7 @@ function assignHousePdfSectionHtml(houseDocuments, selectedDocuments = [], descr
       </div>
     </div>`;
   }).join("")}</div>`
-    : '<div class="saved-pdfs-empty"><span class="saved-pdfs-empty-icon" aria-hidden="true">PDF</span><div><strong>No saved PDFs yet</strong><p>Saved or annotated survey PDFs for this house will appear here.</p></div></div>';
+    : '<div class="saved-pdfs-empty"><span class="saved-pdfs-empty-icon" aria-hidden="true">PDF</span><div><strong>No saved PDFs yet</strong><p>Saved PDFs for this house will appear here.</p></div></div>';
   return `<section class="survey-room-saved-pdfs assign-house-pdfs" aria-label="Saved PDFs">
     <div class="survey-room-saved-pdfs-heading"><div><h3>Saved PDFs</h3><p>${escapeHtml(description)}</p></div></div>
     <div class="survey-room-saved-pdfs-list">${entries}</div>
@@ -6782,20 +7056,20 @@ async function sendPreparedPdfToEwiTeam() {
   }
 }
 function ventPdfSectionHtml(documents, houseId = "") {
-  if (!documents.length) return "";
   const canAnnotate = isVentilationUser(state.user);
-  return `<details class="survey-room-seai-section survey-room-seai-pdfs ventilation-shared-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><span class="seai-sec-title">Vent team PDFs</span><span class="seai-sec-count">${documents.length === 1 ? "1 PDF" : `${documents.length} PDFs`}</span></summary><ul class="survey-room-seai-pdf-list ventilation-shared-pdf-list">${documents.map((document) => {
-    const url = `/api/house-vent-documents/${Number(document.id)}/file`;
-    const name = escapeHtml(document.filename);
-    const sharedBy = String(document.shared_by || "Vent team");
-    const isAnnotated = Boolean(document.annotations_editable);
-    const author = escapeHtml(
-      isAnnotated ? sharedBy.replace(/^Vent annotated by\s*/i, "") : sharedBy,
-    );
-    const timestamp = formatAuditDateTime(document.shared_at);
-    const savedAt = timestamp ? escapeHtml(timestamp) : "";
-    const authorLabel = isAnnotated ? "Annotated by" : "Shared by";
-    return `<li class="ventilation-pdf-card${isAnnotated ? " is-annotated" : ""}">
+  const entries = documents.length
+    ? `<ul class="survey-room-seai-pdf-list ventilation-shared-pdf-list">${documents.map((document) => {
+      const url = `/api/house-vent-documents/${Number(document.id)}/file`;
+      const name = escapeHtml(document.filename);
+      const sharedBy = String(document.shared_by || "Vent team");
+      const isAnnotated = Boolean(document.annotations_editable);
+      const author = escapeHtml(
+        isAnnotated ? sharedBy.replace(/^Vent annotated by\s*/i, "") : sharedBy,
+      );
+      const timestamp = formatAuditDateTime(document.shared_at);
+      const savedAt = timestamp ? escapeHtml(timestamp) : "";
+      const authorLabel = isAnnotated ? "Annotated by" : "Shared by";
+      return `<li class="ventilation-pdf-card${isAnnotated ? " is-annotated" : ""}">
       <span class="ventilation-pdf-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M6 2.75h8l4.25 4.3v14.2H6a2 2 0 0 1-2-2v-14.5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4.5h4.5M7.5 12h7M7.5 15.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
       <span class="seai-document-name ventilation-pdf-name" title="${name}"><strong>${name}</strong><small><span class="ventilation-pdf-size">${seaiPdfSize(document.size_bytes)}</span><span class="ventilation-pdf-audit"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.3"/><path d="M3.7 13c.3-2.3 1.8-3.5 4.3-3.5s4 1.2 4.3 3.5"/></svg>${authorLabel} ${author}${savedAt ? `<span class="ventilation-pdf-audit-date"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M8 4.8V8l2.2 1.4"/></svg>${savedAt}</span>` : ""}</span></small></span>
       <span class="seai-pdf-actions ventilation-pdf-actions">
@@ -6803,7 +7077,9 @@ function ventPdfSectionHtml(documents, houseId = "") {
         <a class="button button-secondary vent-pdf-download-button" href="${url}" download="${name}" aria-label="Download ${name}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5v9m0 0 3.5-3.5M10 11.5 6.5 8M3.5 13.5v3h13v-3"/></svg>Download</a>
       </span>
     </li>`;
-  }).join("")}</ul></details>`;
+    }).join("")}</ul>`
+    : '<p class="survey-room-seai-note">No Vent team PDFs are available for this house yet.</p>';
+  return `<details class="survey-room-seai-section survey-room-seai-pdfs ventilation-shared-pdfs"><summary><span class="seai-sec-icon" aria-hidden="true">&#x1F4E8;</span><span class="seai-sec-title">Vent team PDFs</span><span class="seai-sec-count">${documents.length ? documents.length === 1 ? "1 PDF" : `${documents.length} PDFs` : "No PDFs"}</span></summary>${entries}</details>`;
 }
 let ventSurveyPdfsRequestId = 0;
 function renderVentSurveyPdfs(documents) {
@@ -6820,7 +7096,7 @@ function renderVentSurveyPdfs(documents) {
     return `<article class="vent-survey-pdf-entry">
       <span class="vent-survey-pdf-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M6 2.75h8l4.25 4.3v14.2H6a2 2 0 0 1-2-2v-14.5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4.5h4.5M7.5 12h7M7.5 15.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
       <div class="vent-survey-pdf-entry-copy"><strong title="${name}">${name}</strong><span>Combined PDF by ${savedBy}${savedAt ? ` · ${savedAt}` : ""} · ${seaiPdfSize(document.size_bytes)}</span></div>
-      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-vent-survey-pdf-view data-document-id="${Number(document.id)}" data-document-name="${name}" data-pdf-url="${url}" data-pdf-name="${name}" data-document-type="vent_seai" data-house-id="${escapeHtml(document.application_id || "")}" data-audit-label="Combined PDF by" data-audit-name="${savedBy}" data-audit-at="${savedAt}" data-annotations-editable="false" aria-label="Open and annotate ${name}" aria-pressed="false">Open &amp; annotate</button><a class="button button-secondary" href="${url}" download="${name}">Download</a></div>
+      <div class="vent-survey-pdf-entry-actions"><button class="button button-primary" type="button" data-survey-room-pdf-preview="${url}" data-pdf-name="${name}" aria-label="View ${name}">View PDF</button><a class="button button-secondary" href="${url}" download="${name}" aria-label="Download ${name}">Download</a></div>
     </article>`;
   }).join("");
 }
@@ -6976,10 +7252,11 @@ async function openVentSurveyPdfs(houseId) {
   }
 }
 async function loadAssignSeaiPdfSections(houseId, requestId) {
+  const pdfSections = $("#assign-seai-house-pdf-sections");
+  pdfSections.innerHTML = '<p class="muted" role="status">Loading original and saved PDFs…</p>';
   try {
-    const [result, ventResult, houseResult] = await Promise.all([
+    const [result, houseResult] = await Promise.all([
       request(`/api/seai-documents?house_id=${encodeURIComponent(houseId)}`),
-      request(`/api/house-vent-documents?house_id=${encodeURIComponent(houseId)}`).catch(() => ({ documents: [] })),
       request(`/api/house-documents?house_id=${encodeURIComponent(houseId)}`).catch(() => ({ documents: [] })),
     ]);
     if (
@@ -6990,14 +7267,20 @@ async function loadAssignSeaiPdfSections(houseId, requestId) {
     }
     const html = assignHousePdfSectionHtml(
       houseResult.documents || [],
-      (result.documents || []).filter((document) => document.is_selected_pdf),
-    ) +
-      ventPdfSectionHtml(ventResult.documents || []) +
-      seaiPdfSectionsHtml(result.documents || []);
+      (result.documents || []).filter(
+        (document) => document.is_selected_pdf && !document.is_annotated,
+      ),
+    ) + seaiPdfSectionsHtml(result.documents || []);
     if (!html) return;
-    $("#assign-seai-house-record").insertAdjacentHTML("beforeend", html);
-  } catch {
-    // PDFs are limited to administrators and surveyors; other users just see the details.
+    pdfSections.innerHTML = html;
+  } catch (error) {
+    if (
+      requestId !== state.assignSeaiHouseRequest ||
+      state.assignSeaiHouseViewId !== houseId
+    ) {
+      return;
+    }
+    pdfSections.innerHTML = `<p class="house-documents-error" role="alert">Could not load original or saved PDFs: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -7014,6 +7297,13 @@ async function loadAssignSeaiHouseRecord(houseId, requestId) {
     }
     const readyButton = $("#assign-seai-house-ready");
     const status = $("#assign-seai-house-status");
+    const actions = $("#assign-seai-house-actions");
+    actions.classList.toggle("active", result.is_active);
+    actions.classList.toggle("ready", !result.is_active && result.ready_for_start);
+    actions.classList.toggle(
+      "not-started",
+      !result.is_active && !result.ready_for_start,
+    );
     readyButton.classList.toggle(
       "hidden",
       result.ready_for_start || result.is_active,
@@ -7059,6 +7349,7 @@ function openAssignSeaiHouseRecord(houseId) {
     "Loading saved application details…";
   $("#assign-seai-house-record").innerHTML =
     '<p class="muted">Loading imported SEAI information…</p>';
+  $("#assign-seai-house-pdf-sections").innerHTML = "";
   $("#assign-seai-house-empty").classList.add("hidden");
   $("#assign-seai-toolbar").classList.add("hidden");
   loadAssignSeaiHouseRecord(houseId, requestId);
@@ -8360,8 +8651,10 @@ async function submitAuthentication(event) {
   };
   if (setup) payload.display_name = values.get("display_name");
   const button = $("#auth-submit");
+  const lightsToggle = $("#auth-lights-toggle");
   const idleLabel = button.textContent;
   button.disabled = true;
+  lightsToggle.disabled = true;
   button.textContent = setup ? "Creating account…" : "Signing in…";
   $("#auth-error").classList.add("hidden");
   try {
@@ -8407,6 +8700,7 @@ async function submitAuthentication(event) {
     $("#auth-pin").focus();
   } finally {
     button.disabled = false;
+    lightsToggle.disabled = false;
     button.textContent = idleLabel;
   }
 }
@@ -8882,6 +9176,15 @@ function bindEvents() {
   $("#theme-toggle").addEventListener("click", () =>
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"),
   );
+  $("#auth-theme-toggle").addEventListener("click", () =>
+    setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"),
+  );
+  const authLightsToggle = $("#auth-lights-toggle");
+  authLightsToggle.addEventListener("click", handleAuthLightClick);
+  authLightsToggle.addEventListener("pointerdown", handleAuthLightPointerDown);
+  authLightsToggle.addEventListener("pointermove", handleAuthLightPointerMove);
+  authLightsToggle.addEventListener("pointerup", handleAuthLightPointerEnd);
+  authLightsToggle.addEventListener("pointercancel", handleAuthLightPointerEnd);
   $("#assign-weather-refresh").addEventListener("click", loadCountyWeather);
   setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   $$("dialog").forEach((dialog) =>
@@ -9066,6 +9369,11 @@ function bindEvents() {
       if (state.houseStatusFilter !== "ready") {
         state.assignSurveyFilter = "all";
       }
+      saveAssignHouseView(
+        state.user,
+        state.houseStatusFilter,
+        state.assignSurveyFilter,
+      );
       state.housesTeamsTab = "houses";
       $("#house-search").value = "";
       if (state.houseStatusFilter === "seai") {
@@ -9083,6 +9391,11 @@ function bindEvents() {
     const button = event.target.closest("[data-assign-survey-filter]");
     if (!button) return;
     state.assignSurveyFilter = button.dataset.assignSurveyFilter;
+    saveAssignHouseView(
+      state.user,
+      state.houseStatusFilter || "active",
+      state.assignSurveyFilter,
+    );
     renderHouses();
   });
   $$("[data-goto]").forEach((button) =>
@@ -9142,17 +9455,13 @@ function bindEvents() {
     $(".import-card").scrollIntoView({ behavior: "smooth", block: "center" });
   });
   $$(".close-dialog").forEach((button) =>
-    button.addEventListener("click", () => button.closest("dialog").close()),
+    button.addEventListener("click", () => {
+      button.closest("dialog").close();
+      if (button.dataset.returnToVentDashboard === "true") {
+        $("#vent-survey-pdfs-dialog").close();
+      }
+    }),
   );
-  $("#vent-survey-pdfs-dialog").addEventListener("click", (event) => {
-    const previewButton = event.target.closest("[data-vent-survey-pdf-view]");
-    if (!previewButton) return;
-    $("#vent-survey-pdfs-dialog").close();
-    openPdfAnnotator(
-      previewButton,
-      previewButton.dataset.documentType,
-    );
-  });
   $("#vent-survey-pdfs-dialog").addEventListener("close", () => {
     ventSurveyPdfsRequestId += 1;
     ewiHousePdfsRequestId += 1;
@@ -9305,6 +9614,17 @@ function bindEvents() {
       event.currentTarget.files[0]?.name || "No file selected";
   });
   $("#back-from-surveyor-room").addEventListener("click", closeSurveyorRoom);
+  $("#surveyor-room").addEventListener("click", (event) => {
+    const previewButton = event.target.closest("[data-survey-room-pdf-preview]");
+    if (previewButton) openSurveyRoomPdfPreview(previewButton);
+  });
+  $("#vent-survey-pdfs-dialog").addEventListener("click", (event) => {
+    const previewButton = event.target.closest("[data-survey-room-pdf-preview]");
+    if (previewButton) openSurveyRoomPdfPreview(previewButton);
+  });
+  $("#survey-room-pdf-preview-dialog").addEventListener("close", () => {
+    $("#survey-room-pdf-preview-frame").src = "about:blank";
+  });
   $("#surveyor-house-notes-form").addEventListener("submit", submitSurveyorHouseNotes);
   $("#survey-room-seai-documents").addEventListener("click", (event) => {
     const deleteSelectedPdf = event.target.closest("[data-selected-seai-delete]");
@@ -9314,11 +9634,6 @@ function bindEvents() {
     }
     if (event.target.closest("[data-seai-create-blank]")) {
       openBlankSeaiPage();
-      return;
-    }
-    const documentShareButton = event.target.closest("[data-seai-document-share]");
-    if (documentShareButton) {
-      prepareSeaiDocumentFileShare(documentShareButton);
       return;
     }
     const shareButton = event.target.closest("[data-seai-share-selected]");
@@ -9372,6 +9687,8 @@ function bindEvents() {
       if (!annotator) return;
       annotator.tool = button.dataset.pdfTool;
       annotator.placementIcon = null;
+      annotator.selectedIconId = null;
+      annotator.selectedTextId = null;
       $$(".pdf-annotator-icon-card", $("#pdf-annotator-icon-list")).forEach(
         (card) => {
           card.classList.remove("active");
@@ -9386,8 +9703,9 @@ function bindEvents() {
       const textTool = annotator.tool === "text";
       $("#pdf-annotator-text-panel").classList.toggle("hidden", !textTool);
       $("#pdf-annotator-help").textContent = textTool
-        ? "Choose your note size, type the text, then tap the page to place it."
-        : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark. Select a product icon to place another.";
+        ? "Choose a size, type your note, and tap the page. Tap a note to select it, then drag its large green corner handle to resize and wrap the text."
+        : "Draw with a finger, Apple Pencil, mouse, or trackpad. Choose a size and zoom in for detail; use Undo to remove the last mark. Tap or drag a product icon onto the page, then tap it and drag a green corner handle to resize.";
+      drawPdfAnnotations();
       if (textTool) $("#pdf-annotator-text").focus();
     }),
   );
@@ -9405,6 +9723,32 @@ function bindEvents() {
     if (state.pdfAnnotator) {
       state.pdfAnnotator.penSize = Number(event.currentTarget.value);
     }
+  });
+  const resizeSelectedPdfText = (size) => {
+    const annotator = state.pdfAnnotator;
+    const selectedText = annotator?.annotations.find(
+      (annotation) =>
+        annotation.id === annotator.selectedTextId &&
+        annotation.tool === "text",
+    );
+    if (!annotator || !selectedText) return;
+    const displayScale = pdfTextAnnotationDisplayScale(annotator);
+    const safeSize = Number.isFinite(size) ? Math.max(8, Math.min(48, size)) : 16;
+    selectedText.font_size = safeSize / displayScale;
+    drawPdfAnnotations();
+  };
+  $("#pdf-annotator-text-size").addEventListener("change", (event) => {
+    resizeSelectedPdfText(Number(event.currentTarget.value));
+  });
+  $("#pdf-annotator-text-resize").addEventListener("input", (event) => {
+    const size = Number(event.currentTarget.value);
+    event.currentTarget.style.setProperty(
+      "--pdf-resize-progress",
+      `${((size - 8) / 40) * 100}%`,
+    );
+    $("#pdf-annotator-text-resize-value").value = `${size} px`;
+    $("#pdf-annotator-text-resize-value").textContent = `${size} px`;
+    resizeSelectedPdfText(size);
   });
   $("#pdf-annotator-zoom-in").addEventListener("click", () => {
     const annotator = state.pdfAnnotator;
@@ -9450,7 +9794,15 @@ function bindEvents() {
       rotation: 0,
     };
     annotator.annotations.push(annotation);
+    annotator.tool = "pen";
     annotator.selectedIconId = annotation.id;
+    annotator.selectedTextId = null;
+    $$(".pdf-tool-button").forEach((toolButton) => {
+      const active = toolButton.dataset.pdfTool === annotator.tool;
+      toolButton.classList.toggle("active", active);
+      toolButton.setAttribute("aria-pressed", String(active));
+    });
+    $("#pdf-annotator-text-panel").classList.add("hidden");
     drawPdfAnnotations();
   };
   const ventIconAt = (annotator, point) => {
@@ -9468,43 +9820,108 @@ function bindEvents() {
     });
   };
   const selectedIconHandle = (annotator, point) => {
-    const annotation = annotator.annotations.find(
-      (item) => item.id === annotator.selectedIconId && item.page === annotator.page,
+    const selected = annotator.annotations.find(
+      (item) => item.id === annotator.selectedIconId &&
+        item.tool === "ventilation_icon" &&
+        item.page === annotator.page,
     );
-    if (!annotation) return null;
+    const candidates = [
+      ...(selected ? [selected] : []),
+      ...[...annotator.annotations].reverse().filter(
+        (item) =>
+          item.tool === "ventilation_icon" &&
+          item.page === annotator.page &&
+          item.id !== annotator.selectedIconId,
+      ),
+    ];
     const width = pdfCanvas.clientWidth;
     const height = pdfCanvas.clientHeight;
-    const dx = (point[0] - annotation.point[0]) * width;
-    const dy = (point[1] - annotation.point[1]) * height;
-    const radians = (-annotation.rotation * Math.PI) / 180;
-    const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
-    const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
-    const tolerance = 14;
-    if (Math.hypot(localX, localY + annotation.height * height / 2 + 25) <= tolerance) {
-      return { annotation, mode: "rotate" };
-    }
-    for (const [handleX, handleY] of [
-      [-1, -1], [1, -1], [-1, 1], [1, 1],
-    ]) {
-      if (
-        Math.hypot(
-          localX - handleX * annotation.width * width / 2,
-          localY - handleY * annotation.height * height / 2,
-        ) <= tolerance
-      ) {
-        return { annotation, mode: "resize" };
+    const tolerance = 32;
+    for (const annotation of candidates) {
+      const dx = (point[0] - annotation.point[0]) * width;
+      const dy = (point[1] - annotation.point[1]) * height;
+      const radians = (-annotation.rotation * Math.PI) / 180;
+      const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
+      const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
+      if (Math.hypot(localX, localY + annotation.height * height / 2 + 25) <= tolerance) {
+        return { annotation, mode: "rotate" };
+      }
+      for (const [handleX, handleY] of [
+        [-1, -1], [1, -1], [-1, 1], [1, 1],
+      ]) {
+        if (
+          Math.hypot(
+            localX - handleX * annotation.width * width / 2,
+            localY - handleY * annotation.height * height / 2,
+          ) <= tolerance
+        ) {
+          return { annotation, mode: "resize" };
+        }
       }
     }
     return null;
   };
+  const textAnnotationAt = (annotator, point) => {
+    const width = pdfCanvas.clientWidth;
+    const height = pdfCanvas.clientHeight;
+    const x = point[0] * width;
+    const y = point[1] * height;
+    return [...annotator.annotations].reverse().find((annotation) => {
+      if (annotation.tool !== "text" || annotation.page !== annotator.page) return false;
+      const layout = pdfTextAnnotationLayout(
+        pdfCanvas.getContext("2d"),
+        annotation,
+        width,
+        height,
+      );
+      return x >= layout.x - 6 && x <= layout.x + layout.width + 6 &&
+        y >= layout.y - 6 && y <= layout.y + layout.height + 6;
+    });
+  };
+  const textResizeHandleAt = (annotator, annotation, point) => {
+    const layout = pdfTextAnnotationLayout(
+      pdfCanvas.getContext("2d"),
+      annotation,
+      pdfCanvas.clientWidth,
+      pdfCanvas.clientHeight,
+    );
+    const handleX = layout.x + layout.width - 2;
+    const handleY = layout.y + layout.height - 2;
+    return Math.hypot(
+      point[0] * pdfCanvas.clientWidth - handleX,
+      point[1] * pdfCanvas.clientHeight - handleY,
+    ) <= 26;
+  };
+  const selectedTextHandle = (annotator, point) => {
+    const annotation = annotator.annotations.find(
+      (item) =>
+        item.id === annotator.selectedTextId &&
+        item.tool === "text" &&
+        item.page === annotator.page,
+    );
+    return annotation && textResizeHandleAt(annotator, annotation, point)
+      ? annotation
+      : null;
+  };
   const iconList = $("#pdf-annotator-icon-list");
+  const clearVentIconPlacement = (annotator) => {
+    annotator.placementIcon = null;
+    $$(".pdf-annotator-icon-card", iconList).forEach((card) => {
+      card.classList.remove("active");
+      card.setAttribute("aria-pressed", "false");
+    });
+    $("#pdf-annotator-help").textContent =
+      "Tap a placed icon to select it; drag it to move or drag a large green corner handle to resize.";
+  };
   iconList.addEventListener("click", (event) => {
     const card = event.target.closest(".pdf-annotator-icon-card");
     const annotator = state.pdfAnnotator;
-    if (!card || !annotator || !isVentAnnotationDocumentType(annotator.documentType)) return;
+    if (!card || !annotator || !supportsVentilationIcons(annotator.documentType)) return;
     const iconKey = card.dataset.iconKey;
     annotator.placementIcon = annotator.placementIcon === iconKey ? null : iconKey;
     annotator.tool = "pen";
+    annotator.selectedIconId = null;
+    annotator.selectedTextId = null;
     $$(".pdf-tool-button").forEach((toolButton) => {
       const active = toolButton.dataset.pdfTool === annotator.tool;
       toolButton.classList.toggle("active", active);
@@ -9517,62 +9934,93 @@ function bindEvents() {
       item.setAttribute("aria-pressed", String(active));
     });
     $("#pdf-annotator-help").textContent = annotator.placementIcon
-      ? "Drag the selected product onto the plan or tap the page to place it. Tap a placed icon to select it."
-      : "Drag a placed icon to move it. Select a product to add another one.";
+      ? "Drag the selected product onto the page or tap to place it. Tap a placed icon, then drag a large green corner handle to resize it."
+      : "Tap an icon to select it; drag it to move or drag a large green corner handle to resize. Select a product to place another.";
+    drawPdfAnnotations();
   });
   iconList.addEventListener("dragstart", (event) => {
     const card = event.target.closest(".pdf-annotator-icon-card");
     if (!card || !event.dataTransfer) return;
     event.dataTransfer.setData("application/x-ventilation-icon", card.dataset.iconKey);
-    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.effectAllowed = "move";
+    const annotator = state.pdfAnnotator;
+    if (annotator) clearVentIconPlacement(annotator);
+  });
+  iconList.addEventListener("dragend", () => {
+    const annotator = state.pdfAnnotator;
+    if (annotator) clearVentIconPlacement(annotator);
   });
   pdfCanvas.addEventListener("dragover", (event) => {
     if (event.dataTransfer?.types.includes("application/x-ventilation-icon")) {
       event.preventDefault();
-      event.dataTransfer.dropEffect = "copy";
+      event.dataTransfer.dropEffect = "move";
     }
   });
   pdfCanvas.addEventListener("drop", (event) => {
     const annotator = state.pdfAnnotator;
     const iconKey = event.dataTransfer?.getData("application/x-ventilation-icon");
-    if (!annotator || !isVentAnnotationDocumentType(annotator.documentType) || !iconKey) return;
+    if (!annotator || !supportsVentilationIcons(annotator.documentType) || !iconKey) return;
     event.preventDefault();
     placeVentIcon(annotator, iconKey, pdfCanvasPoint(event));
+    clearVentIconPlacement(annotator);
   });
   pdfCanvas.addEventListener("pointerdown", (event) => {
     const annotator = state.pdfAnnotator;
     if (!annotator || annotator.loading || !pdfCanvas.clientWidth) return;
     const point = pdfCanvasPoint(event);
-    if (annotator.tool === "text") {
+    const textHit = textAnnotationAt(annotator, point);
+    const textHandle = selectedTextHandle(annotator, point) ||
+      [...annotator.annotations].reverse().find(
+        (annotation) =>
+          annotation.tool === "text" &&
+          annotation.page === annotator.page &&
+          textResizeHandleAt(annotator, annotation, point),
+      );
+    if (textHandle || textHit) {
       event.preventDefault();
-      const text = $("#pdf-annotator-text").value.trim();
-      const textSize = Number($("#pdf-annotator-text-size").value);
-      if (!text) {
-        $("#pdf-annotator-text").focus();
-        showToast("Type a note before tapping the PDF.", true);
-        return;
+      const annotation = textHandle || textHit;
+      annotator.selectedTextId = annotation.id;
+      annotator.selectedIconId = null;
+      const textSize = $("#pdf-annotator-text-size");
+      const displayScale = pdfTextAnnotationDisplayScale(annotator);
+      const fontSize = Number(annotation.font_size);
+      const displaySize = Number.isFinite(fontSize) && fontSize > 0
+        ? fontSize * displayScale
+        : 16;
+      if (!Number.isFinite(fontSize) || fontSize <= 0) {
+        annotation.font_size = displaySize / displayScale;
       }
-      if (!Number.isFinite(textSize) || textSize < 12 || textSize > 32) {
-        showToast("Choose a text size between 12 and 32.", true);
-        return;
-      }
-      annotator.annotations.push({
-        page: annotator.page,
-        tool: "text",
-        color: $("#pdf-annotator-color").value,
-        point,
-        text,
-        wrap: annotator.documentType === "blank",
-        font_size: textSize / annotator.fitWidth,
-      });
+      const closestSize = [...textSize.options].reduce((closest, option) =>
+        Math.abs(Number(option.value) - displaySize) <
+          Math.abs(Number(closest.value) - displaySize)
+          ? option
+          : closest,
+      );
+      textSize.value = closestSize.value;
+      annotator.textDrag = {
+        pointerId: event.pointerId,
+        annotation,
+        mode: textHandle ? "resize" : "move",
+        start: point,
+        startPixels: [
+          point[0] * pdfCanvas.clientWidth,
+          point[1] * pdfCanvas.clientHeight,
+        ],
+        origin: [...annotation.point],
+        textWidth: annotation.text_width || 0.42,
+        fontSize: annotation.font_size,
+      };
+      pdfCanvas.setPointerCapture(event.pointerId);
       drawPdfAnnotations();
       return;
     }
-    if (isVentAnnotationDocumentType(annotator.documentType)) {
+    annotator.selectedTextId = null;
+    if (supportsVentilationIcons(annotator.documentType)) {
       const handle = selectedIconHandle(annotator, point);
       const hit = ventIconAt(annotator, point);
       if (handle || hit) {
         event.preventDefault();
+        clearVentIconPlacement(annotator);
         const annotation = handle?.annotation || hit;
         annotator.selectedIconId = annotation.id;
         const center = annotation.point;
@@ -9597,8 +10045,43 @@ function bindEvents() {
       if (annotator.placementIcon) {
         event.preventDefault();
         placeVentIcon(annotator, annotator.placementIcon, point);
+        clearVentIconPlacement(annotator);
         return;
       }
+    }
+    if (annotator.tool === "text") {
+      event.preventDefault();
+      const text = $("#pdf-annotator-text").value.trim();
+      const textSize = Number($("#pdf-annotator-text-size").value);
+      if (!text) {
+        $("#pdf-annotator-text").focus();
+        showToast("Type a note before tapping the PDF.", true);
+        return;
+      }
+      if (!Number.isFinite(textSize) || textSize < 12 || textSize > 32) {
+        showToast("Choose a text size between 12 and 32.", true);
+        return;
+      }
+      const annotation = {
+        id: annotator.nextTextId++,
+        page: annotator.page,
+        tool: "text",
+        color: $("#pdf-annotator-color").value,
+        point,
+        text,
+        wrap: true,
+        font_size: Math.max(
+          0.005,
+          Math.min(0.1, textSize / pdfTextAnnotationDisplayScale(annotator)),
+        ),
+        text_width: 0.42,
+      };
+      annotator.annotations.push(annotation);
+      annotator.selectedTextId = annotation.id;
+      annotator.selectedIconId = null;
+      $("#pdf-annotator-text").value = "";
+      drawPdfAnnotations();
+      return;
     }
     event.preventDefault();
     const color = $("#pdf-annotator-color").value;
@@ -9619,6 +10102,42 @@ function bindEvents() {
   });
   pdfCanvas.addEventListener("pointermove", (event) => {
     const annotator = state.pdfAnnotator;
+    const textDrag = annotator?.textDrag;
+    if (textDrag?.pointerId === event.pointerId) {
+      event.preventDefault();
+      const point = pdfCanvasPoint(event);
+      const annotation = textDrag.annotation;
+      if (textDrag.mode === "move") {
+        annotation.point = [
+          Math.max(0, Math.min(1, textDrag.origin[0] + point[0] - textDrag.start[0])),
+          Math.max(0, Math.min(1, textDrag.origin[1] + point[1] - textDrag.start[1])),
+        ];
+      } else {
+        const dx = point[0] * pdfCanvas.clientWidth - textDrag.startPixels[0];
+        const dy = point[1] * pdfCanvas.clientHeight - textDrag.startPixels[1];
+        const displayScale = pdfTextAnnotationDisplayScale(annotator);
+        annotation.text_width = Math.max(
+          0.1,
+          Math.min(0.95, textDrag.textWidth + dx / pdfCanvas.clientWidth),
+        );
+        const rawStartSize = Number(textDrag.fontSize) * displayScale;
+        const startSize = Number.isFinite(rawStartSize) && rawStartSize > 0
+          ? rawStartSize
+          : 16;
+        const currentSize = Math.max(8, Math.min(48, startSize + dy));
+        annotation.font_size = currentSize / displayScale;
+        $("#pdf-annotator-text-resize").value = String(Math.round(currentSize));
+        $("#pdf-annotator-text-resize").style.setProperty(
+          "--pdf-resize-progress",
+          `${((currentSize - 8) / 40) * 100}%`,
+        );
+        $("#pdf-annotator-text-resize-value").value = `${Math.round(currentSize)} px`;
+        $("#pdf-annotator-text-resize-value").textContent =
+          $("#pdf-annotator-text-resize-value").value;
+      }
+      drawPdfAnnotations();
+      return;
+    }
     const iconDrag = annotator?.iconDrag;
     if (iconDrag?.pointerId === event.pointerId) {
       event.preventDefault();
@@ -9667,6 +10186,10 @@ function bindEvents() {
   });
   const finishPdfStroke = (event) => {
     const annotator = state.pdfAnnotator;
+    if (annotator?.textDrag?.pointerId === event.pointerId) {
+      annotator.textDrag = null;
+      drawPdfAnnotations();
+    }
     if (annotator?.iconDrag?.pointerId === event.pointerId) {
       annotator.iconDrag = null;
       drawPdfAnnotations();
@@ -9681,7 +10204,10 @@ function bindEvents() {
   const adjustSelectedVentIcon = (update) => {
     const annotator = state.pdfAnnotator;
     const annotation = annotator?.annotations.find(
-      (item) => item.id === annotator.selectedIconId,
+      (item) =>
+        item.id === annotator.selectedIconId &&
+        item.tool === "ventilation_icon" &&
+        item.page === annotator.page,
     );
     if (!annotation) return;
     update(annotation);
@@ -9709,7 +10235,10 @@ function bindEvents() {
     const annotator = state.pdfAnnotator;
     if (!annotator) return;
     const index = annotator.annotations.findIndex(
-      (item) => item.id === annotator.selectedIconId,
+      (item) =>
+        item.id === annotator.selectedIconId &&
+        item.tool === "ventilation_icon" &&
+        item.page === annotator.page,
     );
     if (index < 0) return;
     annotator.annotations.splice(index, 1);
