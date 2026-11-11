@@ -6780,6 +6780,111 @@ class UiWiringTests(unittest.TestCase):
             raise AssertionError(result.stderr)
         self.assertIn("PDF scroll navigation passed", result.stdout)
 
+    def test_seai_page_selection_tracks_pdf_page_navigation(self):
+        self.assertIn(
+            "annotator.page = pageNumber;\n  updateSeaiShareToolbar();",
+            APP_JS,
+        )
+        start = APP_JS.index("function seaiSharePageKey")
+        end = APP_JS.index("function openBlankSeaiPage", start)
+        script = """
+          const nodes = {
+            countLabel: { textContent: "" },
+            shareButton: { disabled: true },
+            clearButton: { disabled: true },
+            selection: { checked: false }
+          };
+          const $ = selector => ({
+            "[data-seai-share-count]": nodes.countLabel,
+            "[data-seai-share-selected]": nodes.shareButton,
+            "[data-seai-share-clear]": nodes.clearButton,
+            "#pdf-annotator-page-selection": nodes.selection
+          })[selector];
+          const state = {
+            seaiSharePages: new Map([["17:1", { page: 1 }]]),
+            pdfAnnotator: {
+              documentType: "seai", documentId: "17", page: 1
+            }
+          };
+        """ + APP_JS[start:end] + """
+          updateSeaiShareToolbar();
+          if (!nodes.selection.checked || nodes.countLabel.textContent !== "1 page selected")
+            throw new Error("The selected current page was not shown as selected.");
+          state.pdfAnnotator.page = 2;
+          updateSeaiShareToolbar();
+          if (nodes.selection.checked)
+            throw new Error("The checkbox remained checked on an unselected page.");
+          state.pdfAnnotator.page = 1;
+          updateSeaiShareToolbar();
+          if (!nodes.selection.checked)
+            throw new Error("The checkbox did not restore the page's selected state.");
+          console.log("SEAI page selection navigation passed");
+        """;
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        self.assertIn("SEAI page selection navigation passed", result.stdout)
+
+    def test_seai_review_preserves_pdf_selection_order_including_blank_page(self):
+        start = APP_JS.index("async function prepareSeaiDocumentShare")
+        end = APP_JS.index("function clearSeaiShareSelection", start)
+        script = """
+          const state = {
+            surveyRoomHouseId: "ORDER-TEST",
+            preparedHouseShare: null,
+            seaiSharePages: new Map([
+              ["1:1", { document_id: 1, page: 1, category: "Variation", filename: "first.pdf", annotations: [{ text: "1" }] }],
+              ["2:1", { document_id: 2, page: 1, category: "Application", filename: "second.pdf", annotations: [{ text: "2" }] }],
+              ["3:1", { document_id: 3, page: 1, category: "Survey", filename: "third.pdf", annotations: [{ text: "3" }] }],
+              ["blank:4", { blank_page: true, filename: "blank.pdf", annotations: [{ text: "4" }] }]
+            ])
+          };
+          const elements = {
+            "#selected-pdf-preview": {},
+            "#selected-pdf-preview-title": {},
+            "#selected-pdf-preview-description": {},
+            "#selected-pdf-preview-dialog": { showModal() {} }
+          };
+          const $ = selector => elements[selector];
+          let postedPages;
+          const fetch = async (_url, options) => {
+            postedPages = JSON.parse(options.body).pages;
+            return { ok: true, blob: async () => ({}) };
+          };
+          const clearSelectedPdfPreview = () => {};
+          class File {
+            constructor() {}
+          }
+          URL.createObjectURL = () => "blob:order-test";
+          URL.revokeObjectURL = () => {};
+          const showToast = message => { throw new Error(message); };
+        """ + APP_JS[start:end] + """
+          (async () => {
+            await prepareSeaiDocumentShare({ disabled: false });
+            const order = postedPages.map(page => page.annotations[0].text).join(",");
+            if (order !== "1,2,3,4")
+              throw new Error(`Selected page order changed: ${order}`);
+            console.log("SEAI review selection order passed");
+          })().catch(error => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+        """;
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        self.assertIn("SEAI review selection order passed", result.stdout)
+
     def test_insulation_card_shows_both_seai_reported_quantities(self):
         start = APP_JS.index("const SEAI_INSULATION_GROUPS")
         end = APP_JS.index("async function loadSurveyorHouses", start)

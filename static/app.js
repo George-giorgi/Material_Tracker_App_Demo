@@ -4091,16 +4091,7 @@ function clearSelectedPdfPreview() {
   }
 }
 async function prepareSeaiDocumentShare(button) {
-  const categoryOrder = new Map(["Application", "Survey", "Variation"]
-    .map((category, index) => [category, index]));
-  const pages = [...state.seaiSharePages.values()].sort((first, second) => {
-    if (first.blank_page !== second.blank_page) return first.blank_page ? 1 : -1;
-    return (categoryOrder.get(first.category) ?? 3) -
-        (categoryOrder.get(second.category) ?? 3) ||
-      first.category.localeCompare(second.category) ||
-      first.filename.localeCompare(second.filename, undefined, { numeric: true }) ||
-      first.page - second.page;
-  });
+  const pages = [...state.seaiSharePages.values()];
   if (!pages.length || button.disabled) return;
   button.disabled = true;
   try {
@@ -4577,6 +4568,7 @@ async function loadHouseDocumentPage(pageNumber) {
   if (!annotator) return;
   if (pageNumber < 1 || pageNumber > annotator.pageCount || annotator.loading) return;
   annotator.page = pageNumber;
+  updateSeaiShareToolbar();
   annotator.loading = true;
   setPdfPageLoading(true, `Loading page ${pageNumber} of ${annotator.pageCount}…`);
   $("#pdf-annotator-page-count").textContent =
