@@ -6262,6 +6262,14 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('context.strokeStyle = "#67d99a"', APP_JS)
         self.assertIn("function pdfTextAnnotationDisplayScale(annotator)", APP_JS)
         self.assertIn("pdfTextAnnotationDisplayScale(annotator)", APP_JS)
+        self.assertIn(
+            'new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-dialog"))',
+            APP_JS,
+        )
+        self.assertNotIn(
+            'new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-viewport"))',
+            APP_JS,
+        )
         place_icon_start = APP_JS.index("const placeVentIcon =")
         place_icon_end = APP_JS.index("const ventIconAt =", place_icon_start)
         place_icon_handler = APP_JS[place_icon_start:place_icon_end]

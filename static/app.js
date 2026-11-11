@@ -10245,7 +10245,7 @@ function bindEvents() {
     annotator.selectedIconId = null;
     drawPdfAnnotations();
   });
-  new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-viewport"));
+  new ResizeObserver(() => updatePdfPageZoom()).observe($("#pdf-annotator-dialog"));
   const mapCanvas = $("#house-map-canvas");
   let mapDrag = null;
   mapCanvas.addEventListener("pointerdown", (event) => {
