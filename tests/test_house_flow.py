@@ -140,12 +140,21 @@ class HttpBase(FlowBase):
         connection.close()
         return status, result, set_cookie
 
-    def call_multipart(self, path, house_id, filename, content, cookie=None):
+    def call_multipart(
+        self, path, house_id, filename, content, cookie=None, fields=None
+    ):
         boundary = "----MaterialTrackerTestBoundary"
+        extra_fields = "".join(
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n"
+            for name, value in (fields or {}).items()
+        )
         body = (
             f"--{boundary}\r\n"
             'Content-Disposition: form-data; name="house_id"\r\n\r\n'
             f"{house_id}\r\n"
+            f"{extra_fields}"
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
             "Content-Type: application/pdf\r\n\r\n"
@@ -1423,6 +1432,11 @@ class SurveyorHouseNotesTests(HttpBase):
                 "esb_required": False,
                 "plumber_required": False,
                 "vent_required": False,
+                "ceramic_fuse_board": False,
+                "solar_pv_required": False,
+                "pir_required": False,
+                "order_variations": False,
+                "windows_required": False,
             },
             cookie=self.surveyor_cookie,
         )
@@ -1549,7 +1563,12 @@ class SurveyorHouseNotesTests(HttpBase):
                 UPDATE provided_houses
                 SET plan_scaffolding_required = 0,
                     plan_esb_required = 0,
-                    plan_plumber_required = 0
+                    plan_plumber_required = 0,
+                    plan_ceramic_fuse_board = 1,
+                    plan_solar_pv_required = 0,
+                    plan_pir_required = 1,
+                    plan_order_variations = 0,
+                    plan_windows_required = 0
                 WHERE id = 'NOTES-READY'
                 """
             )
@@ -1749,6 +1768,9 @@ class MigrationTests(unittest.TestCase):
                     refs = [r["table"] for r in db.execute("PRAGMA foreign_key_list(material_requests)")]
                     request = db.execute("SELECT * FROM material_requests").fetchall()
                     provided = db.execute("SELECT * FROM provided_houses").fetchall()
+                    provided_columns = {
+                        row["name"] for row in db.execute("PRAGMA table_info(provided_houses)")
+                    }
                     leftover = db.execute(
                         "SELECT name FROM sqlite_master WHERE name = 'material_requests_old'"
                     ).fetchall()
@@ -1757,6 +1779,15 @@ class MigrationTests(unittest.TestCase):
                                  [(1, "WH9", "Tommy", '{"a": 1}')])
                 self.assertEqual([(r["id"], r["owner_name"], r["source"]) for r in provided],
                                  [("WH9", "Old Owner", "tracker")])
+                self.assertTrue(
+                    {
+                        "plan_ceramic_fuse_board",
+                        "plan_solar_pv_required",
+                        "plan_pir_required",
+                        "plan_order_variations",
+                        "plan_windows_required",
+                    }.issubset(provided_columns)
+                )
                 self.assertEqual(leftover, [])
             finally:
                 server.DB_PATH = original
@@ -3385,6 +3416,11 @@ class EndToEndFlowTests(HttpBase):
                     "esb_required": False,
                     "plumber_required": False,
                     "vent_required": False,
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
             )[0],
             200,
@@ -3461,6 +3497,11 @@ class EndToEndFlowTests(HttpBase):
                     "esb_required": False,
                     "plumber_required": False,
                     "vent_required": False,
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
             )[0],
             200,
@@ -3561,6 +3602,11 @@ class EndToEndFlowTests(HttpBase):
                     "scaffolding_required": False,
                     "esb_required": False,
                     "plumber_required": False,
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                     "vent_required": False,
                 },
             )[0],
@@ -4942,6 +4988,11 @@ class ReadyForStartAndNotesTests(HttpBase):
                     "scaffolding_required": False,
                     "esb_required": False,
                     "plumber_required": False,
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
             )[0],
             200,
@@ -5030,6 +5081,11 @@ class ReadyForStartAndNotesTests(HttpBase):
                     "scaffolding_required": False,
                     "esb_required": False,
                     "plumber_required": False,
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
             )[0],
             200,
@@ -5729,6 +5785,550 @@ class HouseRoleAssignmentTests(HttpBase):
         )
 
 
+class VentHousePhotoTests(HttpBase):
+    def login(self, username, display_name, role, pin="345678", **details):
+        with server.connect_db() as db:
+            server._insert_user(db, username, display_name, pin, role, **details)
+        return self.call(
+            "POST", "/api/auth/login", {"username": username, "pin": pin}
+        )[2]
+
+    def upload(self, cookie, house_id="PHOTO-1", filename="vent-photo.png", content=None):
+        if content is None:
+            image_bytes = BytesIO()
+            Image.new("RGB", (4, 3), "green").save(image_bytes, format="PNG")
+            content = image_bytes.getvalue()
+        return self.call_multipart(
+            "/api/house-vent-photos",
+            house_id,
+            filename,
+            content,
+            cookie=cookie,
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.provide("PHOTO-1", "T1", "1 Elm", "Photo Owner")
+        self.vent_cookie = self.login(
+            "krystian.stelmach",
+            "Krystian Stelmach",
+            "teamlead",
+            team_name="Ventilation",
+        )
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1, plan_vent_required = 1
+                WHERE id = 'PHOTO-1'
+                """
+            )
+            vent_user_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'krystian.stelmach'"
+            ).fetchone()["id"]
+            db.execute(
+                """
+                INSERT INTO house_vent_assignments
+                    (house_id, teamlead_user_id, assigned_by, assigned_at)
+                VALUES ('PHOTO-1', ?, 'Vent Coordinator', '2026-11-12T10:00:00')
+                """,
+                (vent_user_id,),
+            )
+
+    def test_photo_upload_is_assigned_only_and_completion_requires_a_photo(self):
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": "PHOTO-1", "trade": "vent", "done": True},
+            cookie=self.vent_cookie,
+        )
+        self.assertEqual(status, 409, result)
+        self.assertIn("at least one Vent team photo", result["error"])
+
+        other_vent = self.login(
+            "other-vent", "Other Vent Lead", "teamlead", team_name="Ventilation"
+        )
+        self.assertEqual(self.upload(other_vent)[0], 403)
+
+        status, result = self.upload(self.vent_cookie)
+        self.assertEqual(status, 201, result)
+        photo_id = result["id"]
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.vent_cookie
+        )
+        self.assertEqual(status, 200)
+        photos = dashboard["ventilation_houses"][0]["vent_photos"]
+        self.assertEqual([photo["id"] for photo in photos], [photo_id])
+
+        status, details, _ = self.call(
+            "GET", "/api/houses/PHOTO-1", cookie=self.vent_cookie
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(details["house"]["can_view_vent_photos"])
+        self.assertEqual(details["house"]["vent_photos"][0]["id"], photo_id)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": "PHOTO-1", "trade": "vent", "done": True},
+            cookie=self.vent_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, content_type, _disposition, content = self.call_raw(
+            "GET",
+            f"/api/house-vent-photos/{photo_id}/file",
+            cookie=self.vent_cookie,
+        )
+        self.assertEqual((status, content_type, content[:8]), (200, "image/png", b"\x89PNG\r\n\x1a\n"))
+
+    def test_photo_view_permission_is_required_and_upload_requires_a_valid_image(self):
+        viewer = self.login("photo-viewer", "Photo Viewer", "assign")
+        self.assertEqual(self.upload(self.vent_cookie, filename="bad.png", content=b"not an image")[0], 400)
+        status, result = self.upload(self.vent_cookie, house_id="OTHER-HOUSE")
+        self.assertEqual(status, 404, result)
+
+        status, result = self.upload(self.vent_cookie)
+        self.assertEqual(status, 201, result)
+        denied = self.call(
+            "GET",
+            f"/api/house-vent-photos/{result['id']}/file",
+            cookie=viewer,
+        )[0]
+        self.assertEqual(denied, 403)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO app_role_permissions
+                    (role_key, permission_key, is_allowed)
+                VALUES ('assign', 'access.vent_photos', 1)
+                """
+            )
+        viewer = self.login("photo-viewer-authorized", "Authorized Viewer", "assign")
+        status, details, _ = self.call(
+            "GET", "/api/houses/PHOTO-1", cookie=viewer
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(details["house"]["photo_view_only"])
+        self.assertNotIn("notes", details["house"])
+        status, content_type, _disposition, content = self.call_raw(
+            "GET",
+            f"/api/house-vent-photos/{result['id']}/file",
+            cookie=viewer,
+        )
+        self.assertEqual((status, content_type, content[:8]), (200, "image/png", b"\x89PNG\r\n\x1a\n"))
+
+    def test_photo_upload_accepts_webp_and_converts_heif_for_browser_display(self):
+        webp_bytes = BytesIO()
+        Image.new("RGB", (4, 3), "green").save(webp_bytes, format="WEBP")
+        status, webp_result = self.upload(
+            self.vent_cookie,
+            filename="vent-photo.webp",
+            content=webp_bytes.getvalue(),
+        )
+        self.assertEqual(status, 201, webp_result)
+        status, content_type, _disposition, content = self.call_raw(
+            "GET",
+            f"/api/house-vent-photos/{webp_result['id']}/file",
+            cookie=self.vent_cookie,
+        )
+        self.assertEqual((status, content_type), (200, "image/webp"))
+        self.assertTrue(content.startswith(b"RIFF"))
+
+        heif_bytes = BytesIO()
+        Image.new("RGB", (4, 3), "blue").save(heif_bytes, format="HEIF")
+        status, heif_result = self.upload(
+            self.vent_cookie,
+            filename="vent-photo.heic",
+            content=heif_bytes.getvalue(),
+        )
+        self.assertEqual(status, 201, heif_result)
+        self.assertEqual(heif_result["filename"], "vent-photo.jpg")
+        status, content_type, _disposition, content = self.call_raw(
+            "GET",
+            f"/api/house-vent-photos/{heif_result['id']}/file",
+            cookie=self.vent_cookie,
+        )
+        self.assertEqual((status, content_type), (200, "image/jpeg"))
+        self.assertTrue(content.startswith(b"\xff\xd8\xff"))
+
+    def test_photo_delete_requires_the_assigned_vent_uploader(self):
+        status, result = self.upload(self.vent_cookie)
+        self.assertEqual(status, 201, result)
+        photo_id = result["id"]
+        other_vent = self.login(
+            "other-vent-delete", "Other Vent Lead", "teamlead", team_name="Ventilation"
+        )
+
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/house-vent-photos/{photo_id}/delete",
+                {},
+                cookie=other_vent,
+            )[0],
+            403,
+        )
+        status, result, _ = self.call(
+            "POST",
+            f"/api/house-vent-photos/{photo_id}/delete",
+            {},
+            cookie=self.vent_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["remaining_count"], 0)
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/house-vent-photos/{photo_id}/delete",
+                {},
+                cookie=self.vent_cookie,
+            )[0],
+            404,
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_vent_photos WHERE id = ?",
+                    (photo_id,),
+                ).fetchone()[0],
+                0,
+            )
+
+
+class PlumbingHousePhotoTests(HttpBase):
+    def setUp(self):
+        super().setUp()
+        self.provide("PLUMBING-PHOTO-1", "D02 B2", "2 Pipe Lane", "Photo Owner")
+        status, supervisor, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "plumbing-supervisor",
+                "display_name": "Gerry Boland",
+                "pin": "567890",
+                "role": "supervisor",
+                "supervisor_specialty": "Plumbing",
+            },
+        )
+        self.assertEqual(status, 201, supervisor)
+        self.supervisor_id = supervisor["user"]["id"]
+        status, viewer, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "plumbing-photo-viewer",
+                "display_name": "Plumbing Photo Viewer",
+                "pin": "567891",
+                "role": "employee",
+            },
+        )
+        self.assertEqual(status, 201, viewer)
+        self.viewer_id = viewer["user"]["id"]
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1, plan_plumber_required = 1
+                WHERE id = 'PLUMBING-PHOTO-1'
+                """
+            )
+            server._upsert_house(db, "PLUMBING-PHOTO-1", owner_name="Photo Owner")
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('PLUMBING-PHOTO-1', 'supervisor', ?,
+                        'Plumbing Coordinator', '2026-11-12T10:00:00')
+                """,
+                (self.supervisor_id,),
+            )
+        _, _, self.supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "plumbing-supervisor", "pin": "567890"},
+        )
+        _, _, self.viewer_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "plumbing-photo-viewer", "pin": "567891"},
+        )
+
+    def upload(
+        self,
+        cookie,
+        filename="plumbing-photo.png",
+        content=None,
+        activity="Plumbing maintenance",
+    ):
+        if content is None:
+            image_bytes = BytesIO()
+            Image.new("RGB", (4, 3), "blue").save(image_bytes, format="PNG")
+            content = image_bytes.getvalue()
+        return self.call_multipart(
+            "/api/house-plumbing-photos",
+            "PLUMBING-PHOTO-1",
+            filename,
+            content,
+            cookie=cookie,
+            fields={} if activity is None else {"activity": activity},
+        )
+
+    def test_plumbing_photo_upload_accepts_common_image_formats(self):
+        image_cases = [
+            ("plumbing-photo.jpg", "JPEG", "image/jpeg", "plumbing-photo.jpg"),
+            ("plumbing-photo.jpeg", "JPEG", "image/jpeg", "plumbing-photo.jpeg"),
+            ("plumbing-photo.png", "PNG", "image/png", "plumbing-photo.png"),
+            ("plumbing-photo.webp", "WEBP", "image/webp", "plumbing-photo.webp"),
+            ("plumbing-photo.gif", "GIF", "image/gif", "plumbing-photo.gif"),
+            ("plumbing-photo.bmp", "BMP", "image/bmp", "plumbing-photo.bmp"),
+            ("plumbing-photo.tif", "TIFF", "image/jpeg", "plumbing-photo.jpg"),
+            ("plumbing-photo.tiff", "TIFF", "image/jpeg", "plumbing-photo.jpg"),
+        ]
+        for filename, image_format, expected_mime, expected_filename in image_cases:
+            with self.subTest(filename=filename):
+                image_bytes = BytesIO()
+                Image.new("RGB", (4, 3), "blue").save(
+                    image_bytes,
+                    format=image_format,
+                )
+                status, result = self.upload(
+                    self.supervisor_cookie,
+                    filename=filename,
+                    content=image_bytes.getvalue(),
+                )
+                self.assertEqual(status, 201, result)
+                self.assertEqual(result["filename"], expected_filename)
+                self.assertEqual(result["house_id"], "PLUMBING-PHOTO-1")
+                self.assertEqual(result["uploaded_by"], "Gerry Boland")
+                self.assertTrue(result["uploaded_at"])
+                self.assertEqual(result["activity"], "Plumbing maintenance")
+
+                status, mime_type, _, content = self.call_raw(
+                    "GET",
+                    f"/api/house-plumbing-photos/{result['id']}/file",
+                    cookie=self.supervisor_cookie,
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(mime_type, expected_mime)
+                with Image.open(BytesIO(content)) as uploaded_image:
+                    expected_format = "JPEG" if image_format == "TIFF" else image_format
+                    self.assertEqual(uploaded_image.format, expected_format)
+
+        invalid_status, invalid_result = self.upload(
+            self.supervisor_cookie,
+            filename="plumbing-photo.exe",
+        )
+        self.assertEqual(invalid_status, 400, invalid_result)
+        missing_activity_status, missing_activity_result = self.upload(
+            self.supervisor_cookie,
+            activity=None,
+        )
+        self.assertEqual(missing_activity_status, 201, missing_activity_result)
+        self.assertEqual(
+            missing_activity_result["activity"],
+            "Plumbing team photo",
+        )
+        blank_activity_status, blank_activity_result = self.upload(
+            self.supervisor_cookie,
+            activity="   ",
+        )
+        self.assertEqual(blank_activity_status, 201, blank_activity_result)
+        self.assertEqual(
+            blank_activity_result["activity"],
+            "Plumbing team photo",
+        )
+
+    def test_plumbing_photos_gate_completion_and_individual_view_access(self):
+        status, result, _ = self.call(
+            "POST",
+            "/api/plumbing-status",
+            {"house_id": "PLUMBING-PHOTO-1", "plumber_status": "done"},
+            cookie=self.supervisor_cookie,
+        )
+        self.assertEqual(status, 409, result)
+
+        self.assertEqual(self.call(
+            "GET", "/api/houses/PLUMBING-PHOTO-1", cookie=self.viewer_cookie
+        )[0], 403)
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/users/{self.viewer_id}/plumbing-photo-access",
+                {"can_view": True},
+                cookie=self.viewer_cookie,
+            )[0],
+            403,
+        )
+        status, upload_result = self.upload(
+            self.supervisor_cookie,
+            activity="Boiler service and inspection",
+        )
+        self.assertEqual(status, 201, upload_result)
+        photo_id = upload_result["id"]
+        second_status, second_upload = self.upload(
+            self.supervisor_cookie, filename="plumbing-photo-2.png"
+        )
+        self.assertEqual(second_status, 201, second_upload)
+        second_photo_id = second_upload["id"]
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.supervisor_cookie
+        )
+        self.assertEqual(status, 200)
+        house = next(
+            item for item in dashboard["house_list"]
+            if item["id"] == "PLUMBING-PHOTO-1"
+        )
+        self.assertTrue(house["can_view_plumbing_photos"])
+        self.assertTrue(house["can_upload_plumbing_photos"])
+        self.assertEqual(
+            {photo["id"] for photo in house["plumbing_photos"]},
+            {photo_id, second_photo_id},
+        )
+        first_photo = next(
+            photo for photo in house["plumbing_photos"] if photo["id"] == photo_id
+        )
+        self.assertEqual(first_photo["house_id"], "PLUMBING-PHOTO-1")
+        self.assertEqual(first_photo["uploaded_by"], "Gerry Boland")
+        self.assertTrue(first_photo["uploaded_at"])
+        self.assertEqual(first_photo["activity"], "Boiler service and inspection")
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/plumbing-status",
+            {"house_id": "PLUMBING-PHOTO-1", "plumber_status": "done"},
+            cookie=self.supervisor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, result, _ = self.call(
+            "POST",
+            f"/api/users/{self.viewer_id}/plumbing-photo-access",
+            {"can_view": True},
+        )
+        self.assertEqual(status, 200, result)
+        status, users, _ = self.call("GET", "/api/users")
+        self.assertEqual(status, 200)
+        viewer = next(user for user in users["users"] if user["id"] == self.viewer_id)
+        self.assertTrue(viewer["can_view_plumbing_photos"])
+
+        status, details, _ = self.call(
+            "GET", "/api/houses/PLUMBING-PHOTO-1", cookie=self.viewer_cookie
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(details["house"]["photo_view_only"])
+        detail_photo = next(
+            photo
+            for photo in details["house"]["plumbing_photos"]
+            if photo["id"] == photo_id
+        )
+        self.assertEqual(detail_photo["house_id"], "PLUMBING-PHOTO-1")
+        self.assertEqual(detail_photo["uploaded_by"], "Gerry Boland")
+        self.assertTrue(detail_photo["uploaded_at"])
+        self.assertEqual(
+            detail_photo["activity"], "Boiler service and inspection"
+        )
+        self.assertNotIn("notes", details["house"])
+        status, content_type, _disposition, content = self.call_raw(
+            "GET",
+            f"/api/house-plumbing-photos/{photo_id}/file",
+            cookie=self.viewer_cookie,
+        )
+        self.assertEqual(
+            (status, content_type, content[:8]),
+            (200, "image/png", b"\x89PNG\r\n\x1a\n"),
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            f"/api/users/{self.viewer_id}/plumbing-photo-access",
+            {"can_view": False},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(
+            self.call(
+                "GET",
+                f"/api/house-plumbing-photos/{photo_id}/file",
+                cookie=self.viewer_cookie,
+            )[0],
+            403,
+        )
+
+    def test_assigned_supervisor_can_delete_photos_and_last_delete_reopens_work(self):
+        status, upload_result = self.upload(self.supervisor_cookie)
+        self.assertEqual(status, 201, upload_result)
+        photo_id = upload_result["id"]
+        status, result, _ = self.call(
+            "POST",
+            "/api/plumbing-status",
+            {"house_id": "PLUMBING-PHOTO-1", "plumber_status": "done"},
+            cookie=self.supervisor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, other_supervisor, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "other-plumbing-photo-supervisor",
+                "display_name": "Other Plumbing Supervisor",
+                "pin": "567892",
+                "role": "supervisor",
+                "supervisor_specialty": "Plumbing",
+            },
+        )
+        self.assertEqual(status, 201, other_supervisor)
+        _, _, other_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {
+                "username": "other-plumbing-photo-supervisor",
+                "pin": "567892",
+            },
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                f"/api/house-plumbing-photos/{photo_id}/delete",
+                cookie=other_cookie,
+            )[0],
+            404,
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            f"/api/house-plumbing-photos/{photo_id}/delete",
+            cookie=self.supervisor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["plumbing_reopened"])
+        self.assertEqual(result["remaining_count"], 0)
+        with server.connect_db() as db:
+            checklist = db.execute(
+                "SELECT plumber_status FROM house_checklists "
+                "WHERE house_id = 'PLUMBING-PHOTO-1'"
+            ).fetchone()
+            completion = db.execute(
+                "SELECT plan_plumber_done_by, plan_plumber_done_at "
+                "FROM provided_houses WHERE id = 'PLUMBING-PHOTO-1'"
+            ).fetchone()
+        self.assertEqual(checklist["plumber_status"], "not_done")
+        self.assertEqual(
+            (completion["plan_plumber_done_by"], completion["plan_plumber_done_at"]),
+            ("", ""),
+        )
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/plumbing-status",
+                {"house_id": "PLUMBING-PHOTO-1", "plumber_status": "done"},
+                cookie=self.supervisor_cookie,
+            )[0],
+            409,
+        )
+
+
 class WorkPlanCompletionTests(HttpBase):
     def login(self, username, display_name, role, pin="234567", **details):
         with server.connect_db() as db:
@@ -5764,9 +6364,49 @@ class WorkPlanCompletionTests(HttpBase):
         cathy = self.login("cathy-vent", "Cathy", "assign")
         surveyor = self.login("surveyor-vent", "Surveyor", "surveyor")
         vent_lead = self.login("vent-lead", "Vent Lead", "teamlead", team_name="Ventilation")
-        payload = {"house_id": "PLAN-1", "vent_required": True, "vent_notes": "Fit trickle vents"}
+        payload = {
+            "house_id": "PLAN-1",
+            "vent_required": True,
+            "vent_notes": "Fit trickle vents",
+            "ceramic_fuse_board": True,
+            "solar_pv_required": False,
+            "pir_required": True,
+            "order_variations": False,
+            "windows_required": True,
+        }
         for trade in ("scaffolding", "esb", "plumber"):
             payload[f"{trade}_required"] = False
+        invalid_payload = {**payload, "windows_required": "yes"}
+        invalid_status, invalid_result, _ = self.call(
+            "POST", "/api/house-work-plan", invalid_payload, cookie=surveyor
+        )
+        self.assertEqual(invalid_status, 400, invalid_result)
+        incomplete_payload = {**payload, "windows_required": None}
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan",
+                incomplete_payload,
+                cookie=surveyor,
+            )[0],
+            200,
+        )
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-survey",
+            {
+                "house_id": "PLAN-1",
+                "survey": {
+                    "windows": [],
+                    "doors": [],
+                    "house_corners": [],
+                    "perimeter_m": 42.5,
+                    "notes": "",
+                },
+            },
+            cookie=surveyor,
+        )
+        self.assertEqual(status, 409, result)
         self.assertEqual(
             self.call("POST", "/api/house-work-plan", payload, cookie=surveyor)[0], 200
         )
@@ -5783,8 +6423,30 @@ class WorkPlanCompletionTests(HttpBase):
                 unpublished_house["plan_esb_required"],
                 unpublished_house["plan_plumber_required"],
                 unpublished_house["plan_vent_required"],
+                unpublished_house["plan_ceramic_fuse_board"],
+                unpublished_house["plan_solar_pv_required"],
+                unpublished_house["plan_pir_required"],
+                unpublished_house["plan_order_variations"],
+                unpublished_house["plan_windows_required"],
             ),
-            (1, 1, 1, None),
+            (1, 1, 1, None, None, None, None, None, None),
+        )
+        _, admin_before_save_survey, _ = self.call(
+            "GET", "/api/calculator/houses?status=ready", cookie=self.cookie
+        )
+        draft_house = next(
+            house for house in admin_before_save_survey["houses"]
+            if house["id"] == "PLAN-1"
+        )
+        self.assertEqual(
+            (
+                draft_house["draft_plan_ceramic_fuse_board"],
+                draft_house["draft_plan_solar_pv_required"],
+                draft_house["draft_plan_pir_required"],
+                draft_house["draft_plan_order_variations"],
+                draft_house["draft_plan_windows_required"],
+            ),
+            (True, False, True, False, True),
         )
         status, survey_result, _ = self.call(
             "POST",
@@ -5806,6 +6468,16 @@ class WorkPlanCompletionTests(HttpBase):
         status, result, _ = self.call("GET", "/api/calculator/houses?status=ready", cookie=vent_lead)
         house = next(item for item in result["houses"] if item["id"] == "PLAN-1")
         self.assertEqual((house["plan_vent_required"], house["plan_vent_notes"]), (1, "Fit trickle vents"))
+        self.assertEqual(
+            (
+                house["plan_ceramic_fuse_board"],
+                house["plan_solar_pv_required"],
+                house["plan_pir_required"],
+                house["plan_order_variations"],
+                house["plan_windows_required"],
+            ),
+            (1, 0, 1, 0, 1),
+        )
         self.assertTrue(house["work_plan_permissions"]["vent"])
         self.assertEqual(self.complete(cathy, "vent")[0], 403)
         self.assertEqual(self.complete(self.cookie, "vent")[0], 403)
@@ -5855,11 +6527,39 @@ class WorkPlanCompletionTests(HttpBase):
         status, result, _ = self.complete(vent_lead, "vent", done=True)
         self.assertEqual((status, result["done_by"]), (200, "Vent Lead"))
         with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_ceramic_fuse_board = 1,
+                    plan_solar_pv_required = 1,
+                    plan_pir_required = 1,
+                    plan_order_variations = 1,
+                    plan_windows_required = 1
+                WHERE id = 'PLAN-1'
+                """
+            )
             server._clear_house_survey_records(db, "PLAN-1")
             row = db.execute(
-                "SELECT plan_vent_required, plan_vent_done_by FROM provided_houses WHERE id = 'PLAN-1'"
+                """
+                SELECT plan_vent_required, plan_vent_done_by,
+                       plan_ceramic_fuse_board, plan_solar_pv_required,
+                       plan_pir_required, plan_order_variations,
+                       plan_windows_required
+                FROM provided_houses WHERE id = 'PLAN-1'
+                """
             ).fetchone()
-        self.assertEqual((row["plan_vent_required"], row["plan_vent_done_by"]), (None, ""))
+        self.assertEqual(
+            (
+                row["plan_vent_required"],
+                row["plan_vent_done_by"],
+                row["plan_ceramic_fuse_board"],
+                row["plan_solar_pv_required"],
+                row["plan_pir_required"],
+                row["plan_order_variations"],
+                row["plan_windows_required"],
+            ),
+            (None, "", None, None, None, None, None),
+        )
 
     def test_only_permitted_roles_can_check_each_item(self):
         cathy = self.login("cathy-plan", "Cathy", "assign")
@@ -5894,6 +6594,57 @@ class WorkPlanCompletionTests(HttpBase):
             )
         self.assertEqual(self.complete(teamlead, "esb", False)[0], 200)
 
+    def test_assign_can_check_published_survey_questions(self):
+        cathy = self.login("cathy-question-check", "Cathy", "assign")
+        surveyor = self.login("surveyor-question-check", "Surveyor", "surveyor")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_ceramic_fuse_board = 1,
+                    plan_solar_pv_required = 0,
+                    plan_pir_required = 1
+                WHERE id = 'PLAN-1'
+                """
+            )
+
+        self.assertEqual(
+            self.complete(surveyor, "ceramic_fuse_board")[0],
+            403,
+        )
+        self.assertEqual(
+            self.complete(cathy, "windows_required")[0],
+            409,
+        )
+
+        status, result, _ = self.complete(cathy, "ceramic_fuse_board")
+        self.assertEqual((status, result["done_by"]), (200, "Cathy"))
+        self.assertEqual(result["item"], "ceramic_fuse_board")
+        self.assertTrue(result["done_at"])
+        status, result, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=ready",
+            cookie=cathy,
+        )
+        self.assertEqual(status, 200)
+        house = next(item for item in result["houses"] if item["id"] == "PLAN-1")
+        self.assertEqual(house["plan_ceramic_fuse_board"], 1)
+        self.assertEqual(house["plan_ceramic_fuse_board_done_by"], "Cathy")
+        self.assertTrue(house["plan_ceramic_fuse_board_done_at"])
+
+        status, result, _ = self.complete(
+            cathy, "ceramic_fuse_board", done=False
+        )
+        self.assertEqual((status, result["done_by"], result["done_at"]), (200, "", ""))
+        with server.connect_db() as db:
+            completion = db.execute(
+                "SELECT plan_ceramic_fuse_board_done_by, "
+                "plan_ceramic_fuse_board_done_at "
+                "FROM provided_houses WHERE id = 'PLAN-1'"
+            ).fetchone()
+        self.assertEqual(tuple(completion), ("", ""))
+        self.assertEqual(self.complete(cathy, "solar_pv_required")[0], 409)
+
     def test_checked_by_is_listed_and_cleared_when_unchecked_or_not_required(self):
         cathy = self.login("cathy-plan", "Cathy", "assign")
         self.assertEqual(self.complete(cathy, "scaffolding")[0], 200)
@@ -5905,7 +6656,17 @@ class WorkPlanCompletionTests(HttpBase):
         self.assertTrue(house["plan_scaffolding_done_at"])
         self.assertEqual(
             house["work_plan_permissions"],
-            {"scaffolding": True, "esb": True, "plumber": False, "vent": False},
+            {
+                "scaffolding": True,
+                "esb": True,
+                "plumber": False,
+                "vent": False,
+                "ceramic_fuse_board": True,
+                "solar_pv_required": True,
+                "pir_required": True,
+                "order_variations": True,
+                "windows_required": True,
+            },
         )
 
         self.assertEqual(self.complete(cathy, "scaffolding", False)[0], 200)
@@ -6215,6 +6976,93 @@ class SnagTests(HttpBase):
 
 
 class UiWiringTests(unittest.TestCase):
+    def test_selected_pdf_approval_defers_persistence_to_survey_save(self):
+        start = APP_JS.index("function approveSelectedSeaiPdf()")
+        end = APP_JS.index("async function saveApprovedSelectedPdf", start)
+        script = """
+          const prepared = {
+            houseId: "APPROVAL-TEST",
+            file: { name: "approved.pdf" },
+            previewUrl: "blob:approval-test"
+          };
+          const state = {
+            preparedHouseShare: prepared,
+            approvedSeaiPdfs: new Map(),
+            seaiSharePages: new Map([["page", {}]])
+          };
+          const elements = {
+            "#selected-pdf-preview-continue": { disabled: false },
+            "#selected-pdf-preview-dialog": { close() {} }
+          };
+          const $ = selector => elements[selector];
+          const clearSelectedPdfPreview = () => {
+            prepared.previewUrl = "";
+          };
+          const clearSeaiShareSelection = () => state.seaiSharePages.clear();
+          const updateSeaiShareToolbar = () => {};
+          const showToast = message => { state.toast = message; };
+          let fetchCalls = 0;
+          const fetch = async () => { fetchCalls++; };
+        """ + APP_JS[start:end] + """
+          approveSelectedSeaiPdf();
+          if (state.approvedSeaiPdfs.get(prepared.houseId) !== prepared)
+            throw new Error("Approval was not retained for the survey.");
+          if (state.preparedHouseShare !== null || state.seaiSharePages.size)
+            throw new Error("The review selection was not cleared after approval.");
+          if (!state.toast.toLowerCase().includes("save the completed survey"))
+            throw new Error("Approval did not explain when the PDF will be saved.");
+          if (fetchCalls !== 0)
+            throw new Error("Approving the PDF made a persistence request.");
+          console.log("Selected PDF approval defers persistence passed");
+        """;
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        self.assertIn("Selected PDF approval defers persistence passed", result.stdout)
+        survey_start = APP_JS.index("async function submitHouseSurvey")
+        survey_end = APP_JS.index("function houseWorkflowHtml", survey_start)
+        survey_submit = APP_JS[survey_start:survey_end]
+        survey_save = survey_submit.index('request("/api/house-survey"')
+        completion_check = survey_submit.index("!result.survey_completed")
+        pdf_save = survey_submit.index("await saveApprovedSelectedPdf")
+        self.assertLess(survey_save, completion_check)
+        self.assertLess(completion_check, pdf_save)
+
+    def test_assign_current_status_tab_is_visually_emphasized(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            '.assign-house-kpis .kpi[aria-pressed="true"] {',
+            css,
+        )
+        self.assertIn(
+            '.assign-house-kpis .kpi[aria-pressed="true"] .kpi-label,',
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] .assign-house-kpis .kpi.seai '
+            '{ --assign-tab-accent: #9cc4d5;',
+            css,
+        )
+
+    def test_assign_empty_status_hides_global_empty_state_and_movement_action(self):
+        self.assertIn(
+            "isAssign || data.house_list.length > 0 || teams.length > 0,",
+            APP_JS,
+        )
+        self.assertIn(
+            'noResultsTitle.textContent = `No ${stageLabel.toLowerCase()} houses`;',
+            APP_JS,
+        )
+        self.assertIn(
+            "There are no houses currently in the ${stageLabel} stage.",
+            APP_JS,
+        )
+
     def test_dropped_ventilation_icons_do_not_receive_an_ink_colour(self):
         start = APP_JS.index("const placeVentIcon =")
         end = APP_JS.index("const ventIconAt =", start)
@@ -8184,6 +9032,24 @@ class PlumbingCoordinatorTests(HttpBase):
             "/api/auth/login",
             {"username": "plumbing-supervisor", "pin": "567890"},
         )
+        plumbing_photo = BytesIO()
+        Image.new("RGB", (4, 3), "blue").save(plumbing_photo, format="PNG")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_plumbing_photos
+                    (house_id, filename, mime_type, content, size_bytes,
+                     uploaded_by, uploaded_at, activity)
+                VALUES (?, 'plumbing-photo.png', 'image/png', ?, ?,
+                        'Plumbing Supervisor', '2026-11-12T10:00:00',
+                        'Completion audit test')
+                """,
+                (
+                    house_id,
+                    plumbing_photo.getvalue(),
+                    len(plumbing_photo.getvalue()),
+                ),
+            )
         status, result, _ = self.call(
             "POST",
             "/api/plumbing-status",
@@ -8209,6 +9075,77 @@ class PlumbingCoordinatorTests(HttpBase):
             completed_house["plumber_done_at"],
             result["plumber_done_at"],
         )
+
+    def test_plumbing_coordinator_can_open_scoped_photo_house_detail(self):
+        house_id = "PLUMBING-PHOTO-DETAIL"
+        photo_content = b"plumbing-photo-content"
+        self.provide(house_id, "D02 B2", "2 Pipe Lane", "Photo Owner")
+        self.provide("OUTSIDE-PLUMBING-QUEUE")
+        with server.connect_db() as db:
+            db.execute(
+                "UPDATE provided_houses SET plan_plumber_required = 1 WHERE id = ?",
+                (house_id,),
+            )
+            photo_ids = []
+            for filename in ("after.png", "before.png"):
+                cursor = db.execute(
+                    """
+                    INSERT INTO house_plumbing_photos
+                        (house_id, filename, mime_type, content, size_bytes,
+                         uploaded_by, uploaded_at, activity)
+                    VALUES (?, ?, 'image/png', ?, ?, 'Plumbing Supervisor',
+                            '2026-11-12T10:00:00', 'Leak repair')
+                    """,
+                    (house_id, filename, photo_content, len(photo_content)),
+                )
+                photo_ids.append(cursor.lastrowid)
+
+        status, result, _ = self.call(
+            "GET",
+            f"/api/houses/{house_id}",
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["house"]["photo_view_only"])
+        self.assertEqual(
+            [photo["filename"] for photo in result["house"]["plumbing_photos"]],
+            ["before.png", "after.png"],
+        )
+        self.assertEqual(
+            set(result["house"]),
+            {
+                "id",
+                "postcode",
+                "owner_name",
+                "address",
+                "status",
+                "can_view_plumbing_photos",
+                "photo_view_only",
+                "plumbing_photos",
+            },
+        )
+        self.assertEqual(result["movements"], [])
+        status, _, _ = self.call(
+            "GET",
+            "/api/houses/OUTSIDE-PLUMBING-QUEUE",
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 403)
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.httpd.server_address[1],
+            timeout=5,
+        )
+        connection.request(
+            "GET",
+            f"/api/house-plumbing-photos/{photo_ids[0]}/file",
+            headers={"Cookie": self.coordinator_cookie},
+        )
+        photo_response = connection.getresponse()
+        self.assertEqual(photo_response.status, 200)
+        self.assertEqual(photo_response.read(), photo_content)
+        connection.close()
 
 
 if __name__ == "__main__":

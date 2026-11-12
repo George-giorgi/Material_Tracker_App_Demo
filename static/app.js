@@ -90,6 +90,7 @@ const state = {
   weatherLoading: false,
   preparedHouseShare: null,
   seaiSharePages: new Map(),
+  approvedSeaiPdfs: new Map(),
   pdfAnnotator: null,
   user: null,
   users: [],
@@ -111,6 +112,10 @@ const isVentilationUser = (user) =>
   ) ||
   user?.team_name?.trim().toLocaleLowerCase() === "ventilation" ||
   user?.supervisor_specialty?.trim().toLocaleLowerCase() === "ventilation";
+const isVentTeamPdfHiddenUser = (user) =>
+  user?.username?.trim().toLocaleLowerCase() === "krystian.stelmach";
+const isVentPhotoUploader = (user) =>
+  user?.username?.trim().toLocaleLowerCase() === "krystian.stelmach";
 const isPlumbingSupervisorUser = (user) =>
   hasAccessProfile(user, "supervisor") &&
   (user?.supervisor_specialty?.trim().toLocaleLowerCase() === "plumbing" ||
@@ -637,7 +642,7 @@ function formatAuditDateTime(value) {
 }
 
 function plumbingIconMarkup() {
-  return `<span class="plumbing-trade-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M5 3v5a4 4 0 0 0 4 4h6a4 4 0 0 1 4 4v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3h4M3 1v4M17 21h4M19 19v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13 3.5c-1.3 1.6-2 2.5-2 3.5a2 2 0 1 0 4 0c0-1-.7-1.9-2-3.5Z" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span>`;
+  return `<span class="plumbing-trade-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M4 11h13.5a2.5 2.5 0 0 1 2.5 2.5V15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 11V8a4 4 0 0 1 4-4h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13.5 4V2.5m-2 1.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M18 17c-1.25 1.55-1.8 2.25-1.8 3.05a1.8 1.8 0 1 0 3.6 0c0-.8-.55-1.5-1.8-3.05Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span>`;
 }
 
 function formatElapsedTime(startValue, endValue) {
@@ -1421,6 +1426,18 @@ function goToHomeView(event) {
     loadSurveyorHouses();
     return;
   }
+  if (hasAccessProfile(state.user, "assign")) {
+    state.houseMapMode = false;
+    state.houseStatusFilter = "active";
+    state.assignSurveyFilter = "all";
+    state.houseTeamFilter = null;
+    state.housesTeamsTab = "houses";
+    saveAssignHouseView(state.user, "active", "all");
+    showHousesOverview();
+    setTab("houses");
+    renderHouses();
+    return;
+  }
   setTab("overview");
   showHousesOverview();
 }
@@ -1749,6 +1766,405 @@ function movementStatusClass(item) {
   return "";
 }
 
+const ventHousePhotoUploadStates = new Map();
+const ventHousePhotoDeleteInProgress = new Set();
+const VENT_HOUSE_PHOTO_MAX_COUNT = 25;
+let ventHousePhotoUploadInProgress = false;
+
+function ventHousePhotoUploadState(houseId) {
+  const upload = ventHousePhotoUploadStates.get(houseId);
+  return typeof upload === "string"
+    ? { status: upload, progress: 0, total: 0 }
+    : upload || { status: "", progress: 0, total: 0 };
+}
+
+function ventHousePhotoCount(house) {
+  const upload = ventHousePhotoUploadState(house.id);
+  return Number.isInteger(upload.attachedCount)
+    ? upload.attachedCount
+    : (house.vent_photos || []).length;
+}
+
+function updateVentHousePhotoCount(houseId) {
+  const house = state.dashboard.ventilation_houses?.find(
+    (item) => item.id === houseId,
+  );
+  if (!house) return;
+  const count = ventHousePhotoCount(house);
+  $$("[data-vent-photo-count]").forEach((element) => {
+    if (element.dataset.houseId !== houseId) return;
+    element.setAttribute(
+      "aria-label",
+      `${count} attached ${count === 1 ? "photo" : "photos"}`,
+    );
+    const value = element.querySelector("[data-vent-photo-count-value]");
+    const label = element.querySelector("[data-vent-photo-count-label]");
+    if (value) value.textContent = String(count);
+    if (label) label.textContent = count === 1 ? "photo" : "photos";
+  });
+}
+
+function ventHousePhotoLink(photo, compact = false) {
+  const url = `/api/house-vent-photos/${encodeURIComponent(photo.id)}/file`;
+  return `
+    <a class="vent-house-photo${compact ? " is-compact" : ""}" href="${url}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(photo.filename)}">
+      <img src="${url}" alt="${escapeHtml(photo.filename)}" loading="lazy">
+      ${compact ? "" : `<span>${escapeHtml(photo.filename)}</span><small>${escapeHtml(photo.uploaded_by || "Vent team")} · ${escapeHtml(formatAuditDateTime(photo.uploaded_at))}</small>`}
+    </a>`;
+}
+
+function ventHousePhotoUpload(houseId) {
+  const upload = ventHousePhotoUploadState(houseId);
+  const isUploading = upload.status === "uploading";
+  const isDeleting = ventHousePhotoDeleteInProgress.has(houseId);
+  const isLocked = ventHousePhotoUploadInProgress || isDeleting;
+  const isComplete = upload.status === "complete";
+  const isDisabled = isUploading || isLocked;
+  const buttonLabel = isUploading
+    ? `Uploading ${upload.progress} of ${upload.total}…`
+    : isDeleting
+      ? "Deleting photos…"
+      : isLocked
+        ? isComplete
+          ? "Finishing upload…"
+          : "Upload in progress…"
+        : isComplete
+          ? "Attach more photos"
+          : "Attach photos";
+  const buttonAriaLabel = isUploading
+    ? `Uploading ${upload.progress} of ${upload.total} photos`
+    : buttonLabel;
+  return `
+    <span class="vent-photo-uploader">
+      <button class="vent-photo-upload-button vent-photo-upload-button--vent${isUploading || isLocked ? " is-uploading" : ""}${isComplete && !isDisabled ? " is-complete" : ""}" type="button" data-vent-photo-trigger data-house-id="${escapeHtml(houseId)}" aria-label="${escapeHtml(buttonAriaLabel)}" aria-busy="${isDisabled}"${isDisabled ? " disabled" : ""}>
+        <span class="vent-photo-attach-icon" aria-hidden="true">
+          <svg class="vent-photo-attach-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3"/></svg>
+          <span class="vent-photo-spinner"></span>
+          <svg class="vent-photo-attach-success" viewBox="0 0 20 20" fill="none"><path d="m5 10 3.2 3.2L15.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+          <span data-vent-photo-upload-label aria-live="polite">${isUploading ? "" : buttonLabel}</span>
+      </button>
+      <input class="vent-photo-input" type="file" data-vent-photo-upload data-house-id="${escapeHtml(houseId)}" accept="image/*" multiple${isDisabled ? " disabled" : ""} tabindex="-1" aria-hidden="true">
+    </span>`;
+}
+
+function ventHousePhotoUploadStatus(houseId) {
+  const { status, progress, total } = ventHousePhotoUploadState(houseId);
+  const indicator = status === "uploading"
+    ? `<span class="vent-photo-spinner" aria-hidden="true"></span><span>Uploading ${progress} of ${total} photos</span>`
+    : status === "complete"
+      ? `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 10 3.2 3.2L15.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>${total} ${total === 1 ? "photo" : "photos"} attached</span>`
+      : "";
+  return `<span class="vent-photo-upload-status${status ? ` is-${status}` : ""}" data-vent-photo-upload-status data-house-id="${escapeHtml(houseId)}" aria-live="polite">${indicator}</span>`;
+}
+
+function setVentHousePhotoUploadStatus(
+  houseId,
+  status,
+  progress = 0,
+  total = 0,
+  attachedCount,
+) {
+  if (status) {
+    ventHousePhotoUploadStates.set(houseId, {
+      status,
+      progress,
+      total,
+      attachedCount,
+    });
+  } else if (Number.isInteger(attachedCount)) {
+    ventHousePhotoUploadStates.set(houseId, { status: "", attachedCount });
+  } else {
+    ventHousePhotoUploadStates.delete(houseId);
+  }
+  updateVentHousePhotoCount(houseId);
+  $$("[data-vent-photo-upload-status]").forEach((element) => {
+    if (element.dataset.houseId === houseId) {
+      element.outerHTML = ventHousePhotoUploadStatus(houseId);
+    }
+  });
+  $$("[data-vent-photo-upload]").forEach((input) => {
+    if (input.dataset.houseId === houseId) {
+      updateVentHousePhotoUploadControl(input);
+    }
+  });
+}
+
+function updateVentHousePhotoUploadControl(input) {
+  const upload = ventHousePhotoUploadState(input.dataset.houseId);
+  const isUploading = upload.status === "uploading";
+  const isDeleting = ventHousePhotoDeleteInProgress.has(input.dataset.houseId);
+  const isLocked = ventHousePhotoUploadInProgress || isDeleting;
+  const isComplete = upload.status === "complete";
+  const isDisabled = isUploading || isLocked;
+  const button = input.parentElement?.querySelector("[data-vent-photo-trigger]");
+  const label = button?.querySelector("[data-vent-photo-upload-label]");
+  input.disabled = isDisabled;
+  if (!button || !label) return;
+  button.disabled = isDisabled;
+  button.setAttribute(
+    "aria-label",
+    isUploading
+      ? `Uploading ${upload.progress} of ${upload.total} photos`
+      : isDeleting
+        ? "Deleting photos"
+        : isLocked
+          ? "Upload in progress"
+          : isComplete
+            ? "Attach more photos"
+            : "Attach photos",
+  );
+  button.setAttribute("aria-busy", String(isDisabled));
+  button.classList.toggle("is-uploading", isDisabled);
+  button.classList.toggle("is-complete", isComplete && !isDisabled);
+  label.textContent = isUploading
+    ? ""
+    : isDeleting
+      ? "Deleting photos…"
+      : isLocked
+        ? isComplete
+          ? "Finishing upload…"
+          : "Upload in progress…"
+        : isComplete
+          ? "Attach more photos"
+          : "Attach photos";
+}
+
+function openVentHousePhotoPicker(event) {
+  const button = event.target.closest("[data-vent-photo-trigger]");
+  if (
+    !button ||
+    button.disabled ||
+    ventHousePhotoUploadInProgress ||
+    ventHousePhotoDeleteInProgress.has(button.dataset.houseId)
+  ) return;
+  const input = button.parentElement?.querySelector("[data-vent-photo-upload]");
+  if (input instanceof HTMLInputElement && !input.disabled) {
+    input.click();
+  }
+}
+
+function setVentHousePhotoUploadLock(locked) {
+  ventHousePhotoUploadInProgress = locked;
+  $$("[data-vent-photo-upload]").forEach((input) => {
+    updateVentHousePhotoUploadControl(input);
+  });
+  $$("[data-vent-photo-delete-all]").forEach((button) => {
+    button.disabled =
+      locked || ventHousePhotoDeleteInProgress.has(button.dataset.houseId);
+  });
+  $$("[data-vent-photo-delete]").forEach((button) => {
+    button.disabled =
+      locked || ventHousePhotoDeleteInProgress.has(button.dataset.houseId);
+  });
+}
+
+function setVentHousePhotoDeleteState(houseId, deleting) {
+  if (deleting) {
+    ventHousePhotoDeleteInProgress.add(houseId);
+  } else {
+    ventHousePhotoDeleteInProgress.delete(houseId);
+  }
+  $$("[data-vent-photo-delete-all]").forEach((button) => {
+    button.disabled =
+      ventHousePhotoUploadInProgress ||
+      ventHousePhotoDeleteInProgress.has(button.dataset.houseId);
+  });
+  $$("[data-vent-photo-delete]").forEach((button) => {
+    button.disabled =
+      ventHousePhotoUploadInProgress ||
+      ventHousePhotoDeleteInProgress.has(button.dataset.houseId);
+  });
+  $$("[data-vent-photo-upload]").forEach((input) => {
+    if (input.dataset.houseId === houseId) {
+      updateVentHousePhotoUploadControl(input);
+    }
+  });
+}
+
+function ventHousePhotoThumbnail(photo, houseId, canDelete) {
+  const isDeleting = ventHousePhotoDeleteInProgress.has(houseId);
+  return `
+    <div class="vent-house-photo-thumb">
+      ${ventHousePhotoLink(photo, true)}
+      ${canDelete
+        ? `<button class="vent-photo-delete" type="button" data-vent-photo-delete data-photo-id="${Number(photo.id)}" data-house-id="${escapeHtml(houseId)}" data-filename="${escapeHtml(photo.filename)}" aria-label="Delete ${escapeHtml(photo.filename)}" title="Delete photo"${isDeleting ? " disabled" : ""}>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6h11M8 6V4.5h4V6m2.8 0-.6 10H5.8L5.2 6m2.5 2.5v5m4.6-5v5"/></svg>
+          </button>`
+        : ""}
+    </div>`;
+}
+
+const plumbingHousePhotoUploadStates = new Map();
+const plumbingHousePhotoDeleteInProgress = new Set();
+const PLUMBING_HOUSE_PHOTO_MAX_COUNT = 25;
+const PLUMBING_HOUSE_PHOTO_ACTIVITY = "Plumbing team photo";
+let plumbingHousePhotoUploadInProgress = false;
+
+function plumbingHousePhotoUploadState(houseId) {
+  const upload = plumbingHousePhotoUploadStates.get(houseId);
+  return typeof upload === "string"
+    ? { status: upload, progress: 0, total: 0 }
+    : upload || { status: "", progress: 0, total: 0 };
+}
+
+function plumbingHousePhotoLink(photo, compact = false) {
+  const url = `/api/house-plumbing-photos/${encodeURIComponent(photo.id)}/file`;
+  const activity = photo.activity || "Activity not recorded";
+  const uploadedBy = photo.uploaded_by || "Plumbing team";
+  const uploadedAt = formatAuditDateTime(photo.uploaded_at);
+  const houseId = photo.house_id || "House";
+  const photoDetails = `${activity}; uploaded by ${uploadedBy} at ${uploadedAt} for house ${houseId}`;
+  return `
+    <a class="vent-house-photo${compact ? " is-compact" : ""}" href="${url}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(photo.filename)}; ${escapeHtml(photoDetails)}" title="${escapeHtml(photo.filename)}; ${escapeHtml(photoDetails)}">
+      <img src="${url}" alt="${escapeHtml(photo.filename)}" loading="lazy">
+      ${compact ? "" : `<span>${escapeHtml(photo.filename)}</span><small>${escapeHtml(activity)}</small><small>Uploaded by ${escapeHtml(uploadedBy)} · ${escapeHtml(uploadedAt)} · House ${escapeHtml(houseId)}</small>`}
+    </a>`;
+}
+
+function plumbingHousePhotoUpload(houseId) {
+  const upload = plumbingHousePhotoUploadState(houseId);
+  const isUploading = upload.status === "uploading";
+  const isLocked = plumbingHousePhotoUploadInProgress;
+  const isDeleting = plumbingHousePhotoDeleteInProgress.has(houseId);
+  const isBusy = isUploading || isLocked || isDeleting;
+  const buttonLabel = isUploading
+    ? "Uploading photos…"
+    : isDeleting
+      ? "Deleting photos…"
+      : isLocked
+        ? "Upload in progress…"
+        : "Add photos";
+  return `
+    <div class="plumbing-photo-upload-control">
+      <span class="vent-photo-uploader">
+        <button class="vent-photo-upload-button${isBusy ? " is-uploading" : ""}" type="button" data-plumbing-photo-trigger data-house-id="${escapeHtml(houseId)}" title="${escapeHtml(buttonLabel)}" aria-busy="${isBusy}"${isBusy ? " disabled" : ""}>
+            <span class="vent-photo-attach-icon" aria-hidden="true">
+              <svg class="vent-photo-attach-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3"/></svg>
+              <span class="vent-photo-spinner"></span>
+              <svg class="vent-photo-attach-success" viewBox="0 0 20 20" fill="none"><path d="m5 10 3.2 3.2L15.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <span data-plumbing-photo-upload-label aria-live="polite">${buttonLabel}</span>
+        </button>
+        <input class="vent-photo-input" type="file" data-plumbing-photo-upload data-house-id="${escapeHtml(houseId)}" accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff" multiple${isBusy ? " disabled" : ""} tabindex="-1" aria-hidden="true">
+      </span>
+    </div>`;
+}
+
+function plumbingHousePhotoUploadStatus(houseId) {
+  const { status, progress, total } = plumbingHousePhotoUploadState(houseId);
+  const indicator = status === "uploading"
+    ? `<span class="vent-photo-spinner" aria-hidden="true"></span><span>Uploading ${progress} of ${total} photos</span>`
+    : status === "complete"
+      ? '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 10 3.2 3.2L15.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Photos attached</span>'
+      : "";
+  return `<span class="vent-photo-upload-status plumbing-photo-upload-status${status ? ` is-${status}` : ""}" data-plumbing-photo-upload-status data-house-id="${escapeHtml(houseId)}" aria-live="polite">${indicator}</span>`;
+}
+
+function setPlumbingHousePhotoUploadStatus(houseId, status, progress = 0, total = 0) {
+  if (status === "uploading" || status === "complete") {
+    plumbingHousePhotoUploadStates.set(houseId, { status, progress, total });
+  } else if (status) {
+    plumbingHousePhotoUploadStates.set(houseId, status);
+  } else {
+    plumbingHousePhotoUploadStates.delete(houseId);
+  }
+  $$("[data-plumbing-photo-upload-status]").forEach((element) => {
+    if (element.dataset.houseId === houseId) {
+      element.outerHTML = plumbingHousePhotoUploadStatus(houseId);
+    }
+  });
+  $$("[data-plumbing-photo-upload]").forEach((input) => {
+    updatePlumbingHousePhotoUploadControl(input);
+  });
+}
+
+function setPlumbingHousePhotoUploadLock(locked) {
+  plumbingHousePhotoUploadInProgress = locked;
+  $$("[data-plumbing-photo-upload]").forEach((input) => {
+    updatePlumbingHousePhotoUploadControl(input);
+  });
+  $$("[data-plumbing-photo-delete-all]").forEach((button) => {
+    button.disabled =
+      Number(button.dataset.photoCount) === 0 ||
+      plumbingHousePhotoUploadInProgress ||
+      plumbingHousePhotoDeleteInProgress.has(button.dataset.houseId);
+  });
+}
+
+function updatePlumbingHousePhotoUploadControl(input) {
+  const upload = plumbingHousePhotoUploadState(input.dataset.houseId);
+  const isUploading = upload.status === "uploading";
+  const isLocked = plumbingHousePhotoUploadInProgress;
+  const isDeleting = plumbingHousePhotoDeleteInProgress.has(input.dataset.houseId);
+  const isBusy = isUploading || isLocked || isDeleting;
+  const button = input.parentElement?.querySelector("[data-plumbing-photo-trigger]");
+  const label = button?.querySelector("[data-plumbing-photo-upload-label]");
+  input.disabled = isBusy;
+  if (!button || !label) return;
+  button.disabled = isBusy;
+  button.setAttribute("aria-busy", String(isBusy));
+  button.classList.toggle("is-uploading", isBusy);
+  label.textContent = isUploading
+    ? "Uploading photos…"
+    : isDeleting
+      ? "Deleting photos…"
+      : isLocked
+        ? "Upload in progress…"
+        : "Add photos";
+  button.title = label.textContent;
+}
+
+function openPlumbingHousePhotoPicker(event) {
+  const button = event.target.closest("[data-plumbing-photo-trigger]");
+  if (
+    !button ||
+    button.disabled ||
+    plumbingHousePhotoUploadInProgress ||
+    plumbingHousePhotoDeleteInProgress.has(button.dataset.houseId)
+  ) return;
+  const input = button.parentElement?.querySelector("[data-plumbing-photo-upload]");
+  if (input instanceof HTMLInputElement && !input.disabled) input.click();
+}
+
+function plumbingHousePhotoThumbnail(photo, houseId, canDelete) {
+  const isDeleting = plumbingHousePhotoDeleteInProgress.has(houseId);
+  return `
+    <div class="vent-house-photo-thumb">
+      ${plumbingHousePhotoLink(photo, true)}
+      ${canDelete
+        ? `<button class="vent-photo-delete" type="button" data-plumbing-photo-delete data-photo-id="${Number(photo.id)}" data-house-id="${escapeHtml(houseId)}" data-filename="${escapeHtml(photo.filename)}" aria-label="Delete ${escapeHtml(photo.filename)}" title="Delete photo"${isDeleting ? " disabled" : ""}>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6h11M8 6V4.5h4V6m2.8 0-.6 10H5.8L5.2 6m2.5 2.5v5m4.6-5v5"/></svg>
+          </button>`
+        : ""}
+    </div>`;
+}
+
+function plumbingHousePhotoSummary(house) {
+  if (!house.can_view_plumbing_photos) return "";
+  const photos = house.plumbing_photos || [];
+  return `
+    <section class="vent-house-photo-summary plumbing-house-photo-summary" aria-label="Plumbing team photos">
+      <div class="vent-house-photo-summary-heading">
+        <strong>Plumbing team photos</strong>
+        <span class="vent-house-photo-count" aria-label="${photos.length} attached ${photos.length === 1 ? "photo" : "photos"}">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="8" r="1.3" fill="currentColor"/><path d="m4 14 4-3 2.5 2 2.5-3 3 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <strong>${photos.length}</strong><span>${photos.length === 1 ? "photo" : "photos"}</span>
+        </span>
+      </div>
+      ${photos.length
+        ? `<div class="vent-house-photo-thumbnails is-vent-scrollable">${photos.map((photo) => plumbingHousePhotoThumbnail(photo, house.id, house.can_upload_plumbing_photos)).join("")}</div>`
+        : '<p class="muted">No photos uploaded yet.</p>'}
+      <div class="vent-house-photo-actions">
+        ${house.can_upload_plumbing_photos ? plumbingHousePhotoUpload(house.id) : ""}
+        ${house.can_upload_plumbing_photos && photos.length
+          ? `<button class="vent-photo-delete-all" type="button" data-plumbing-photo-delete-all data-house-id="${escapeHtml(house.id)}" data-photo-count="${photos.length}" aria-live="polite"${!photos.length || plumbingHousePhotoUploadInProgress || plumbingHousePhotoDeleteInProgress.has(house.id) ? " disabled" : ""}>Delete all (${photos.length})</button>`
+          : ""}
+        ${plumbingHousePhotoUploadStatus(house.id)}
+      </div>
+    </section>`;
+}
+
 function renderOverview() {
   const data = state.dashboard;
   const materials = data.materials;
@@ -1826,6 +2242,32 @@ function renderOverview() {
           const canUpdateCompletion =
             house.status === "ready" || house.status === "active";
           const address = [house.address, house.postcode].filter(Boolean).join(" · ");
+          const ventPhotos = house.vent_photos || [];
+          const ventPhotoCount = ventHousePhotoCount(house);
+          const needsVentPhoto =
+            isVentPhotoUploader(state.user) && !ventPhotos.length;
+          const photoSummary = house.can_view_vent_photos
+            ? `
+              <section class="vent-house-photo-summary" aria-label="Vent team photos">
+                <div class="vent-house-photo-summary-heading">
+                  <strong>Vent team photos</strong>
+                  <span class="vent-house-photo-count" data-vent-photo-count data-house-id="${escapeHtml(house.id)}" aria-label="${ventPhotoCount} attached ${ventPhotoCount === 1 ? "photo" : "photos"}">
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="8" r="1.3" fill="currentColor"/><path d="m4 14 4-3 2.5 2 2.5-3 3 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <strong data-vent-photo-count-value>${ventPhotoCount}</strong><span data-vent-photo-count-label>${ventPhotoCount === 1 ? "photo" : "photos"}</span>
+                  </span>
+                </div>
+                ${ventPhotos.length
+                  ? `<div class="vent-house-photo-thumbnails is-vent-scrollable">${ventPhotos.map((photo) => ventHousePhotoThumbnail(photo, house.id, isVentPhotoUploader(state.user))).join("")}</div>`
+                  : `<p class="muted">${isVentPhotoUploader(state.user) ? "No photos uploaded yet." : "No Vent team photos available."}</p>`}
+                <div class="vent-house-photo-actions">
+                  ${isVentPhotoUploader(state.user) ? ventHousePhotoUpload(house.id) : ""}
+                  ${ventHousePhotoUploadStatus(house.id)}
+                  ${isVentPhotoUploader(state.user) && ventPhotos.length
+                    ? `<button class="vent-photo-delete-all" type="button" data-vent-photo-delete-all data-house-id="${escapeHtml(house.id)}"${ventHousePhotoUploadInProgress || ventHousePhotoDeleteInProgress.has(house.id) ? " disabled" : ""}>Delete all (${ventPhotos.length})</button>`
+                    : ""}
+                </div>
+              </section>`
+            : "";
           return `
             <article class="card surveyor-house-card ventilation-house-card${isComplete ? " is-complete" : ""}">
               <div class="ventilation-house-top">
@@ -1843,14 +2285,15 @@ function renderOverview() {
               ${house.notes ? `<p class="ventilation-house-notes">${escapeHtml(house.notes)}</p>` : ""}
               ${house.assignment_assigned_by ? `<p class="ventilation-house-notes"><strong>Assigned by:</strong> ${escapeHtml(house.assignment_assigned_by)}</p>` : ""}
               ${isComplete ? `<p class="ventilation-house-audit">${escapeHtml(workPlanDoneLabel(house.done_by || "Vent team", house.done_at, "vent"))}</p>` : ""}
-              ${ventPdfSectionHtml(house.documents || [], house.id)}
+              ${photoSummary}
+              ${isVentTeamPdfHiddenUser(state.user) ? "" : ventPdfSectionHtml(house.documents || [], house.id)}
               <button class="vent-survey-pdfs-button" type="button" data-vent-survey-pdfs data-house-id="${escapeHtml(house.id)}" aria-label="View combined PDFs by Surveyor for ${escapeHtml(house.id)}">
                 <span class="vent-survey-pdfs-icon" aria-hidden="true">PDF</span>
                 <span class="vent-survey-pdfs-button-copy"><strong>Combined PDFs by Surveyor</strong><small>Selected survey pages for this house</small></span>
                 <span class="vent-survey-pdfs-count">${(house.survey_documents || []).length}</span>
                 <span class="vent-survey-pdfs-arrow" aria-hidden="true">›</span>
               </button>
-              ${canUpdateCompletion ? `<div class="ventilation-house-actions"><button class="ventilation-complete-button${isComplete ? " is-undo" : ""}" type="button" data-ventilation-complete data-house-id="${escapeHtml(house.id)}" data-done="${!isComplete}" aria-label="${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}"><span aria-hidden="true">${isComplete ? "↶" : "✓"}</span> ${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}</button></div>` : ""}
+              ${canUpdateCompletion ? `<div class="ventilation-house-actions">${needsVentPhoto && !isComplete ? `<p class="vent-house-photo-required">Attach at least one photo before marking Vent work done.</p>` : ""}<button class="ventilation-complete-button${isComplete ? " is-undo" : ""}" type="button" data-ventilation-complete data-house-id="${escapeHtml(house.id)}" data-done="${!isComplete}" aria-label="${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}"${needsVentPhoto && !isComplete ? " disabled" : ""}><span aria-hidden="true">${isComplete ? "↶" : "✓"}</span> ${isComplete ? "Mark Vent work outstanding" : "Mark Vent work done"}</button></div>` : ""}
             </article>`;
         }).join("")
       : `<div class="ventilation-house-empty"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No Vent work assigned yet</strong><p>When the Vent Coordinator assigns Vent work to your team, it will appear here.</p></div>`;
@@ -1971,6 +2414,7 @@ function renderOverview() {
               <strong>Requested plumbing work</strong>
               <p>${escapeHtml(house.notes || "Plumbing work is required. No extra survey notes were added.")}</p>
             </div>
+            <button class="button button-secondary plumbing-house-detail-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View house details</button>
             ${isCompleted
               ? `<div class="plumbing-completion-detail"><strong>Plumbing work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.plumber_done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.plumber_done_at ? ` datetime="${escapeHtml(house.plumber_done_at)}"` : ""}>${escapeHtml(house.plumber_done_at ? formatAuditDateTime(house.plumber_done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.plumber_done_at))}</b></span></div></div>`
               : hasSupervisor
@@ -2217,6 +2661,75 @@ let planCache = {};
 const planStale = new Set();
 const workPlanSaveStates = new WeakMap();
 const WORK_PLAN_TRADES = ["scaffolding", "esb", "plumber", "vent"];
+const WORK_PLAN_SURVEY_QUESTIONS = [
+  ["ceramic_fuse_board", "Is there a ceramic fuse board?"],
+  ["solar_pv_required", "Is solar PV required?"],
+  ["pir_required", "Is PIR required?"],
+  ["order_variations", "Are there any variations to the order?"],
+  ["windows_required", "Are windows required?"],
+];
+function closeWorkPlanDropdown(dropdown, restoreFocus = false) {
+  const trigger = dropdown.querySelector("[data-work-plan-dropdown-trigger]");
+  const list = dropdown.querySelector("[data-work-plan-dropdown-list]");
+  trigger.setAttribute("aria-expanded", "false");
+  list.hidden = true;
+  if (restoreFocus) trigger.focus();
+}
+function closeWorkPlanDropdowns(form) {
+  for (const dropdown of form.querySelectorAll("[data-work-plan-dropdown]")) {
+    if (dropdown.querySelector("[data-work-plan-dropdown-list]").hidden) continue;
+    closeWorkPlanDropdown(dropdown);
+  }
+}
+function syncWorkPlanDropdowns(form) {
+  for (const [question] of WORK_PLAN_SURVEY_QUESTIONS) {
+    const valueInput = form.elements[question];
+    const dropdown = valueInput.closest("[data-work-plan-dropdown]");
+    const value = valueInput.value;
+    dropdown.querySelector("[data-work-plan-dropdown-label]").textContent =
+      value === "true" ? "Yes" : value === "false" ? "No" : "Choose an answer";
+    const trigger = dropdown.querySelector("[data-work-plan-dropdown-trigger]");
+    trigger.setAttribute("aria-invalid", String(dropdown.classList.contains("is-invalid")));
+    if (value === "true" || value === "false") {
+      trigger.dataset.selectedValue = value;
+    } else {
+      delete trigger.dataset.selectedValue;
+    }
+    for (const option of dropdown.querySelectorAll("[data-work-plan-dropdown-option]")) {
+      option.setAttribute("aria-selected", String(option.dataset.value === value));
+    }
+  }
+}
+function openWorkPlanDropdown(dropdown) {
+  const form = dropdown.closest("form");
+  closeWorkPlanDropdowns(form);
+  const trigger = dropdown.querySelector("[data-work-plan-dropdown-trigger]");
+  const list = dropdown.querySelector("[data-work-plan-dropdown-list]");
+  const options = [...list.querySelectorAll("[data-work-plan-dropdown-option]")];
+  const selected = options.find((option) => option.getAttribute("aria-selected") === "true");
+  trigger.setAttribute("aria-expanded", "true");
+  list.hidden = false;
+  (selected || options[0]).focus();
+}
+function selectWorkPlanDropdownOption(option) {
+  const dropdown = option.closest("[data-work-plan-dropdown]");
+  const input = dropdown.querySelector("[data-work-plan-dropdown-value]");
+  input.value = option.dataset.value;
+  dropdown.classList.remove("is-invalid");
+  syncWorkPlanDropdowns(dropdown.closest("form"));
+  closeWorkPlanDropdown(dropdown, true);
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function setWorkPlanQuestionValidation(form, showErrors) {
+  for (const [question] of WORK_PLAN_SURVEY_QUESTIONS) {
+    const dropdown = form.elements[question].closest("[data-work-plan-dropdown]");
+    const invalid = showErrors && !form.elements[question].value;
+    dropdown.classList.toggle("is-invalid", invalid);
+    dropdown
+      .querySelector("[data-work-plan-dropdown-trigger]")
+      .setAttribute("aria-invalid", String(invalid));
+  }
+}
 function syncWorkPlanCards(form) {
   let chosen = 0;
   for (const card of form.querySelectorAll(".work-plan-trade")) {
@@ -2248,21 +2761,37 @@ function syncWorkPlanCards(form) {
     card.querySelector(".work-plan-trade-state").textContent =
       stateName === "required" ? "Required" : stateName === "clear" ? "Not required" : "Not chosen";
   }
-  $("#surveyor-work-plan-progress").textContent = `${chosen} of ${WORK_PLAN_TRADES.length} chosen`;
+  syncWorkPlanDropdowns(form);
+  const answered = WORK_PLAN_SURVEY_QUESTIONS.filter(
+    ([question]) => Boolean(form.elements[question].value),
+  ).length;
+  $("#surveyor-work-plan-progress").textContent =
+    `Trades ${chosen}/${WORK_PLAN_TRADES.length} · Questions ${answered}/${WORK_PLAN_SURVEY_QUESTIONS.length}`;
 }
 function workPlanSnapshot(form) {
   const values = new FormData(form);
   return JSON.stringify(
-    WORK_PLAN_TRADES.map((trade) => [
-      trade,
-      values.get(`${trade}_required`) || null,
-      String(values.get(`${trade}_notes`) || "").trim(),
-    ]),
+    {
+      trades: WORK_PLAN_TRADES.map((trade) => [
+        trade,
+        values.get(`${trade}_required`) || null,
+        String(values.get(`${trade}_notes`) || "").trim(),
+      ]),
+      questions: WORK_PLAN_SURVEY_QUESTIONS.map(([question]) => [
+        question,
+        values.get(question) || null,
+      ]),
+    },
   );
 }
 function workPlanHasRequiredChoices(form) {
-  return ["scaffolding", "esb", "plumber"].every(
-    (trade) => Boolean(form.elements[`${trade}_required`].value),
+  return (
+    ["scaffolding", "esb", "plumber"].every(
+      (trade) => Boolean(form.elements[`${trade}_required`].value),
+    ) &&
+    WORK_PLAN_SURVEY_QUESTIONS.every(([question]) =>
+      Boolean(form.elements[question].value),
+    )
   );
 }
 function updateWorkPlanSaveStatus(form) {
@@ -3247,6 +3776,10 @@ function renderSupervisorHouses() {
             : isPlumbingOutstanding(house)
               ? "is-needed"
               : "";
+          const plumbingPhotos = house.plumbing_photos || [];
+          const canMarkPlumbingComplete =
+            isPlumbingComplete(house) || plumbingPhotos.length > 0;
+          const plumbingPhotoSummary = plumbingHousePhotoSummary(house);
           const supervisorAssignmentCredit =
             isPlumbingSupervisor && house.supervisor_assigned_by
               ? `<div class="supervisor-house-assignment-credit">
@@ -3270,8 +3803,9 @@ function renderSupervisorHouses() {
               <div class="house-status-stack">${isPlumbingSupervisor && house.plumbing_assignment_pending_activation ? "" : `<span class="status-pill ${house.is_finished ? "closed" : "active"}">${status}</span>`}${isPlumbingSupervisor ? `<span class="plumbing-job-status ${plumbingStatusClass}">${plumbingStatus}</span>` : ""}</div>
             </div>
             ${supervisorAssignmentCredit}
+            ${plumbingPhotoSummary}
             ${isPlumbingSupervisor ? plumbingSurveyPdfsHtml(house.survey_documents) : ""}
-            ${isPlumbingSupervisor && Number(house.plan_plumber_required) === 1 ? `<button class="plumbing-completion-toggle${isPlumbingComplete(house) ? " is-complete" : ""}" type="button" data-house-id="${houseId}" data-plumber-status="${isPlumbingComplete(house) ? "not_done" : "done"}" aria-label="${isPlumbingComplete(house) ? "Reopen plumbing work" : "Mark plumbing complete"} for ${houseId}" aria-pressed="${isPlumbingComplete(house)}">${isPlumbingComplete(house) ? '<span aria-hidden="true">↶</span> Reopen plumbing work' : '<span aria-hidden="true">✓</span> Mark plumbing complete'}</button>` : ""}
+            ${isPlumbingSupervisor && Number(house.plan_plumber_required) === 1 ? `<div class="plumbing-card-completion">${!canMarkPlumbingComplete ? '<p class="vent-house-photo-required">Upload at least one Plumbing team photo before marking this work complete.</p>' : ""}<button class="plumbing-completion-toggle${isPlumbingComplete(house) ? " is-complete" : ""}" type="button" data-house-id="${houseId}" data-plumber-status="${isPlumbingComplete(house) ? "not_done" : "done"}" aria-label="${isPlumbingComplete(house) ? "Reopen plumbing work" : "Mark plumbing complete"} for ${houseId}" aria-pressed="${isPlumbingComplete(house)}"${canMarkPlumbingComplete ? "" : " disabled"}>${isPlumbingComplete(house) ? '<span aria-hidden="true">↶</span> Reopen plumbing work' : '<span aria-hidden="true">✓</span> Mark plumbing complete'}</button></div>` : ""}
             ${ewiSeaiDetails}
             ${canAssignEwiWork
               ? `<div class="supervisor-ewi-card-actions">
@@ -3605,6 +4139,8 @@ function openHouseSurvey(houseId) {
   form.dataset.houseId = houseId;
   const workPlanForm = $("#surveyor-work-plan-form");
   workPlanForm.dataset.houseId = houseId;
+  closeWorkPlanDropdowns(workPlanForm);
+  setWorkPlanQuestionValidation(workPlanForm, false);
   const workPlanStatus = $("#surveyor-work-plan-save-status");
   const isReady = house.status === "ready";
   const isNotStarted = house.status === "not_started";
@@ -3626,6 +4162,13 @@ function openHouseSurvey(houseId) {
       (house.work_plan_draft_saved_at
         ? house[`draft_plan_${trade}_notes`]
         : house[`plan_${trade}_notes`]) || "";
+  }
+  for (const [question] of WORK_PLAN_SURVEY_QUESTIONS) {
+    const answer = house.work_plan_draft_saved_at
+      ? house[`draft_plan_${question}`]
+      : house[`plan_${question}`];
+    workPlanForm.elements[question].value =
+      answer === null || answer === undefined ? "" : String(Boolean(answer));
   }
   workPlanSaveStates.set(workPlanForm, {
     revision: 0,
@@ -3797,9 +4340,12 @@ async function submitHouseWorkPlan(event) {
 async function saveHouseWorkPlan(form, manual = false) {
   const button = $("button[type='submit']", form);
   const status = $("#surveyor-work-plan-save-status");
-  if (!form.reportValidity() || !workPlanHasRequiredChoices(form)) {
+  const nativeFieldsValid = form.reportValidity();
+  const choicesValid = workPlanHasRequiredChoices(form);
+  if (!nativeFieldsValid || !choicesValid) {
+    setWorkPlanQuestionValidation(form, true);
     status.textContent =
-      "Choose a requirement for Scaffolding, ESB work, and Plumber work before saving the work plan.";
+      "Choose the required trade options and answer all five survey questions before saving the work plan.";
     status.classList.add("save-error");
     return;
   }
@@ -3810,6 +4356,10 @@ async function saveHouseWorkPlan(form, manual = false) {
     const required = values.get(`${trade}_required`);
     payload[`${trade}_required`] = required === "" ? null : required === "true";
     payload[`${trade}_notes`] = values.get(`${trade}_notes`);
+  }
+  for (const [question] of WORK_PLAN_SURVEY_QUESTIONS) {
+    const answer = values.get(question);
+    payload[question] = answer === "" ? null : answer === "true";
   }
   const saveState = workPlanSaveStates.get(form) || { revision: 0, pending: Promise.resolve() };
   const revision = ++saveState.revision;
@@ -3851,6 +4401,16 @@ async function saveHouseWorkPlan(form, manual = false) {
         } else {
           house[`draft_plan_${trade}_required`] = required;
           house[`draft_plan_${trade}_notes`] = notes;
+        }
+      }
+      for (const [question] of WORK_PLAN_SURVEY_QUESTIONS) {
+        const answer = payload[question];
+        if (result.published) {
+          house[`plan_${question}`] =
+            answer === null ? null : Number(answer);
+          delete house[`draft_plan_${question}`];
+        } else {
+          house[`draft_plan_${question}`] = answer;
         }
       }
       if (result.published) {
@@ -3955,7 +4515,8 @@ async function loadSeaiDocuments(houseId, requestId, canModify = true) {
     )].filter((category) => !categories.includes(category));
     const allCategories = [...categories, ...extraCategories];
     const toolbar = canModify ? `<div class="seai-share-toolbar">
-      <p>Select pages from linked SEAI or test PDFs. Annotations are included in the review and are saved only with the final selected PDF.</p>
+      <p>Select and approve pages from linked SEAI or test PDFs. Approved PDFs are saved when you save the completed survey.</p>
+      <p class="helper-text" data-seai-approved-status aria-live="polite" hidden></p>
       <div><span class="seai-share-selection-count" data-seai-share-count aria-live="polite">0 pages selected</span>
       <button class="button button-secondary" type="button" data-seai-create-blank>Create blank page</button>
       <button class="button button-primary" type="button" data-seai-share-selected disabled>Review selected pages</button>
@@ -4027,9 +4588,17 @@ function updateSeaiShareToolbar() {
   const countLabel = $("[data-seai-share-count]");
   const shareButton = $("[data-seai-share-selected]");
   const clearButton = $("[data-seai-share-clear]");
+  const approvedStatus = $("[data-seai-approved-status]");
+  const approvedPdf = state.approvedSeaiPdfs.get(state.surveyRoomHouseId);
   if (countLabel) countLabel.textContent = `${count} ${count === 1 ? "page" : "pages"} selected`;
-  if (shareButton) shareButton.disabled = count === 0;
+  if (shareButton) shareButton.disabled = count === 0 || Boolean(approvedPdf);
   if (clearButton) clearButton.disabled = count === 0;
+  if (approvedStatus) {
+    approvedStatus.hidden = !approvedPdf;
+    approvedStatus.textContent = approvedPdf
+      ? "PDF approved. It will be saved when you save this completed survey."
+      : "";
+  }
 }
 function openBlankSeaiPage() {
   openPdfAnnotator(
@@ -4111,7 +4680,7 @@ async function prepareSeaiDocumentShare(button) {
     $("#selected-pdf-preview-title").textContent =
       `${state.surveyRoomHouseId} · ${filename}`;
     $("#selected-pdf-preview-description").textContent =
-      "Review the combined PDF, then save it to this house. It will be available to accounts with access to SEAI PDFs.";
+      "Review the combined PDF, then approve it for this survey. It will only be saved when you save the completed survey.";
     $("#selected-pdf-preview").src = state.preparedHouseShare.previewUrl;
     $("#selected-pdf-preview-dialog").showModal();
   } catch (error) {
@@ -4124,34 +4693,39 @@ function clearSeaiShareSelection() {
   state.seaiSharePages.clear();
   updateSeaiShareToolbar();
 }
-async function saveSelectedSeaiPdf() {
+function approveSelectedSeaiPdf() {
   const prepared = state.preparedHouseShare;
   const button = $("#selected-pdf-preview-continue");
   if (!prepared || button.disabled) return;
-  button.disabled = true;
-  try {
-    const response = await fetch(
-      `/api/seai-documents/save-selected?house_id=${encodeURIComponent(prepared.houseId)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/pdf" },
-        body: prepared.file,
-        cache: "no-store",
-      },
-    );
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(result.error || `Could not save the selected PDF (${response.status}).`);
-    }
-    $("#selected-pdf-preview-dialog").close();
-    clearSeaiShareSelection();
-    await loadSeaiDocuments(state.surveyRoomHouseId, state.surveyRoomRequest);
-    showToast(`${result.filename} saved to the house SEAI PDFs.`);
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    button.disabled = false;
+  if (state.approvedSeaiPdfs.has(prepared.houseId)) {
+    showToast("An approved PDF is already waiting for this survey to be saved.", true);
+    return;
   }
+  state.approvedSeaiPdfs.set(prepared.houseId, prepared);
+  $("#selected-pdf-preview-dialog").close();
+  clearSelectedPdfPreview();
+  state.preparedHouseShare = null;
+  clearSeaiShareSelection();
+  showToast("PDF approved. Save the completed survey to save it to the house.");
+}
+async function saveApprovedSelectedPdf(houseId) {
+  const prepared = state.approvedSeaiPdfs.get(houseId);
+  if (!prepared) return;
+  const response = await fetch(
+    `/api/seai-documents/save-selected?house_id=${encodeURIComponent(houseId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf" },
+      body: prepared.file,
+      cache: "no-store",
+    },
+  );
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || `Could not save the approved PDF (${response.status}).`);
+  }
+  state.approvedSeaiPdfs.delete(houseId);
+  updateSeaiShareToolbar();
 }
 function openSeaiDocument(button) {
   openPdfAnnotator(button, button.dataset.testPdfName ? "seai_test" : "seai");
@@ -5182,12 +5756,20 @@ async function submitHouseSurvey(event) {
   const form = event.currentTarget;
   const workPlanForm = $("#surveyor-work-plan-form");
   if (!updateWorkPlanSaveStatus(workPlanForm)) {
+    setWorkPlanQuestionValidation(workPlanForm, true);
     showToast(
       "Pre-start work plan is not saved. Save it before saving the survey.",
       true,
     );
     scrollToSurveyRoomSection($("#survey-room-work-plan"));
-    $("button[type='submit']", workPlanForm).focus({ preventScroll: true });
+    const missingQuestion = WORK_PLAN_SURVEY_QUESTIONS.find(
+      ([question]) => !workPlanForm.elements[question].value,
+    );
+    const focusTarget = missingQuestion
+      ? workPlanForm.elements[missingQuestion[0]].closest("[data-work-plan-dropdown]")
+          .querySelector("[data-work-plan-dropdown-trigger]")
+      : $("button[type='submit']", workPlanForm);
+    focusTarget.focus({ preventScroll: true });
     return;
   }
   const button = $("button[type='submit']", form);
@@ -5243,12 +5825,41 @@ async function submitHouseSurvey(event) {
           delete house[`draft_plan_${trade}_required`];
           delete house[`draft_plan_${trade}_notes`];
         }
+        for (const [question] of WORK_PLAN_SURVEY_QUESTIONS) {
+          const value = savedWorkPlan.get(question);
+          house[`plan_${question}`] =
+            value === "" ? null : Number(value === "true");
+          delete house[`draft_plan_${question}`];
+        }
         delete house.work_plan_draft_saved_at;
       }
     }
     updateSurveyStatusDisplay(Boolean(result.survey_completed));
     planStale.add("ready");
-    showToast(`Survey for ${form.dataset.houseId} saved.`);
+    const approvedPdf = state.approvedSeaiPdfs.get(form.dataset.houseId);
+    if (approvedPdf && !result.survey_completed) {
+      showToast(
+        "Survey saved, but it is not complete yet. The approved PDF will be saved after a completed survey is saved.",
+        true,
+      );
+      return;
+    }
+    if (approvedPdf) {
+      try {
+        await saveApprovedSelectedPdf(form.dataset.houseId);
+      } catch (error) {
+        showToast(
+          `Survey saved, but the approved PDF was not saved: ${error.message}`,
+          true,
+        );
+        return;
+      }
+    }
+    showToast(
+      `Survey for ${form.dataset.houseId} saved${
+        approvedPdf ? " with the approved PDF." : "."
+      }`,
+    );
     state.houseStatusFilter = "ready";
     state.houseTeamFilter = null;
     state.housesTeamsTab = "houses";
@@ -5347,16 +5958,43 @@ function houseWorkPlanSummaryHtml(house) {
     ["plumber", "Plumber work", house.plan_plumber_required, house.plan_plumber_notes],
     ["vent", "Vent work", house.plan_vent_required, house.plan_vent_notes],
   ];
-  const recorded = rows.some(([, , required]) => required !== null && required !== undefined);
+  const questions = WORK_PLAN_SURVEY_QUESTIONS.map(([key, label]) => [
+    key,
+    label,
+    house[`plan_${key}`],
+  ]);
+  const questionsRecorded = questions.some(
+    ([, , answer]) => answer !== null && answer !== undefined,
+  );
+  const recorded =
+    rows.some(([, , required]) => required !== null && required !== undefined) ||
+    questionsRecorded;
   const isDoneTrade = (trade, required) =>
     Number(required) === 1 &&
     (trade === "plumber"
       ? house.plumber_status === "done" || Boolean(house.plan_plumber_done_by)
       : Boolean(house[`plan_${trade}_done_by`]));
   const requiredCount = rows.filter(([, , required]) => Number(required) === 1).length;
-  const openCount = rows.filter(([trade, , required]) => Number(required) === 1 && !isDoneTrade(trade, required)).length;
-  const summary = !recorded ? "" : !requiredCount ? "Nothing to arrange" : openCount ? `${openCount} to arrange` : "All done";
-  return `<div class="house-work-plan-summary"><div class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span>${summary ? `<span class="work-plan-count${openCount ? " has-required" : ""}">${summary}</span>` : ""}</div>${recorded ? rows.map(([trade, label, required, notes]) => {
+  const trackedQuestionCount = questionsRecorded ? questions.length : 0;
+  const openCount =
+    rows.filter(([trade, , required]) => Number(required) === 1 && !isDoneTrade(trade, required)).length +
+    (questionsRecorded
+      ? questions.filter(
+        ([key, , answer]) =>
+          answer === null ||
+          answer === undefined ||
+          (Number(answer) === 1 && !house[`plan_${key}_done_by`]),
+      ).length
+      : 0);
+  const trackedCount = requiredCount + trackedQuestionCount;
+  const summary = !recorded
+    ? ""
+    : !trackedCount
+      ? "Nothing to arrange"
+      : openCount
+        ? `${openCount} outstanding`
+        : "All done";
+  return `<div class="house-work-plan-summary"><div class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span>${summary ? `<span class="work-plan-count${openCount ? " has-required" : ""}">${summary}</span>` : ""}</div>${recorded ? `<div class="work-plan-trade-items">${rows.map(([trade, label, required, notes]) => {
     const isSet = required !== null && required !== undefined;
     const isRequired = Number(required) === 1;
     const isDone = isDoneTrade(trade, required);
@@ -5368,7 +6006,18 @@ function houseWorkPlanSummaryHtml(house) {
       : `<span class="work-plan-icon" aria-hidden="true">${!isSet ? "?" : isDone ? "✓" : isRequired ? "!" : "✓"}</span>`;
     const badge = !isSet ? "Not set" : isDone ? "Done" : isRequired ? "Required" : "Not required";
     return `<div class="work-plan-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${trade}_done_at`], trade))}</small>` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
-  }).join("") : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}</div>`;
+  }).join("")}</div>` : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}${questionsRecorded ? `<div class="work-plan-question-summary" role="group" aria-label="Survey questions"><div class="work-plan-question-items">${questions.map(([key, label, answer]) => {
+    const isAnswered = answer !== null && answer !== undefined;
+    const isNotRequired = isAnswered && Number(answer) !== 1;
+    const isDone = isAnswered && !isNotRequired && Boolean(house[`plan_${key}_done_by`]);
+    const canCheck = isAnswered && !isNotRequired && permissions[key] === true;
+    const tone = !isAnswered ? "unset" : isNotRequired ? "clear" : isDone ? "done" : "required";
+    const control = canCheck
+      ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${key}" aria-pressed="${isDone}" aria-label="${isDone ? "Mark as Not Done:" : "Mark as Done:"} ${escapeHtml(label)}">${isDone ? "✓" : ""}</button>`
+      : `<span class="work-plan-icon" aria-hidden="true">${!isAnswered ? "?" : isNotRequired || isDone ? "✓" : "!"}</span>`;
+    const doneBy = house[`plan_${key}_done_by`];
+    return `<div class="work-plan-row work-plan-row-${tone} work-plan-question-row">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${key}_done_at`], key))}</small>` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
+  }).join("")}</div></div>` : ""}</div>`;
 }
 async function toggleWorkPlanDone(button) {
   const { houseId, trade } = button.dataset;
@@ -5380,7 +6029,14 @@ async function toggleWorkPlanDone(button) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ house_id: houseId, trade, done }),
     });
-    for (const house of planCache.ready || []) {
+    for (const houses of Object.values(planCache)) {
+      for (const house of houses || []) {
+        if (house.id !== houseId) continue;
+        house[`plan_${trade}_done_by`] = result.done_by;
+        house[`plan_${trade}_done_at`] = result.done_at;
+      }
+    }
+    for (const house of state.houseMapData || []) {
       if (house.id !== houseId) continue;
       house[`plan_${trade}_done_by`] = result.done_by;
       house[`plan_${trade}_done_at`] = result.done_at;
@@ -5420,6 +6076,472 @@ async function updateVentilationHouseCompletion(button) {
     button.disabled = false;
   }
 }
+async function uploadVentHousePhoto(input) {
+  const files = Array.from(input.files || []);
+  const houseId = input.dataset.houseId || state.viewingHouseId;
+  if (!files.length || !houseId) return;
+  if (input.disabled) return;
+  if (ventHousePhotoUploadInProgress) {
+    input.value = "";
+    showToast(
+      "Wait for the current Vent photo upload to finish before adding more photos.",
+      true,
+    );
+    return;
+  }
+  const house = state.dashboard.ventilation_houses?.find(
+    (item) => item.id === houseId,
+  );
+  const existingCount = house?.vent_photos?.length || 0;
+  if (existingCount + files.length > VENT_HOUSE_PHOTO_MAX_COUNT) {
+    showToast(
+      `This house can have up to ${VENT_HOUSE_PHOTO_MAX_COUNT} photos. Only ${Math.max(0, VENT_HOUSE_PHOTO_MAX_COUNT - existingCount)} more can be selected.`,
+      true,
+    );
+    input.value = "";
+    return;
+  }
+  const uploadStartedAt = Date.now();
+  setVentHousePhotoUploadLock(true);
+  try {
+    let uploadedCount = 0;
+    let uploadError = null;
+    let failedFilename = "";
+    for (const [index, file] of files.entries()) {
+      setVentHousePhotoUploadStatus(
+        houseId,
+        "uploading",
+        index + 1,
+        files.length,
+        existingCount + uploadedCount,
+      );
+      const formData = new FormData();
+      formData.append("house_id", houseId);
+      formData.append("file", file);
+      try {
+        await request("/api/house-vent-photos", {
+          method: "POST",
+          body: formData,
+        });
+        uploadedCount += 1;
+        setVentHousePhotoUploadStatus(
+          houseId,
+          "uploading",
+          index + 1,
+          files.length,
+          existingCount + uploadedCount,
+        );
+      } catch (error) {
+        uploadError = error;
+        failedFilename = file.name;
+        break;
+      }
+    }
+    if (uploadedCount) {
+      setVentHousePhotoUploadStatus(
+        houseId,
+        uploadedCount === files.length ? "complete" : "",
+        uploadedCount,
+        files.length,
+        existingCount + uploadedCount,
+      );
+      try {
+        await refresh();
+      } catch (error) {
+        showToast(
+          uploadedCount === files.length
+            ? `Photos uploaded, but the house cards could not refresh: ${error.message}`
+            : `${uploadedCount} of ${files.length} photos uploaded, but the house cards could not refresh: ${error.message}`,
+          true,
+        );
+        return;
+      }
+      setVentHousePhotoUploadStatus(
+        houseId,
+        uploadedCount === files.length ? "complete" : "",
+        0,
+        files.length,
+      );
+      if (uploadedCount === files.length) {
+        showToast(
+          `${uploadedCount} ${uploadedCount === 1 ? "photo" : "photos"} attached to ${houseId}.`,
+        );
+        window.setTimeout(() => {
+          if (ventHousePhotoUploadState(houseId).status === "complete") {
+            setVentHousePhotoUploadStatus(houseId, "");
+          }
+        }, 2800);
+      } else {
+        showToast(
+          `${uploadedCount} of ${files.length} photos uploaded. ${failedFilename} failed: ${uploadError.message}`,
+          true,
+        );
+      }
+    } else {
+      setVentHousePhotoUploadStatus(houseId, "");
+      showToast(`${failedFilename} failed: ${uploadError.message}`, true);
+    }
+  } finally {
+    const minimumLoadingTime = 700;
+    const remainingLoadingTime =
+      minimumLoadingTime - (Date.now() - uploadStartedAt);
+    if (remainingLoadingTime > 0) {
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, remainingLoadingTime),
+      );
+    }
+    input.value = "";
+    setVentHousePhotoUploadLock(false);
+  }
+}
+
+async function deleteVentHousePhoto(button) {
+  const photoId = Number(button.dataset.photoId);
+  const houseId = button.dataset.houseId;
+  const filename = button.dataset.filename || "this photo";
+  if (!Number.isInteger(photoId) || photoId < 1 || !houseId) {
+    showToast("This photo has invalid house or photo information.", true);
+    return;
+  }
+  if (
+    ventHousePhotoUploadInProgress ||
+    ventHousePhotoDeleteInProgress.has(houseId)
+  ) return;
+  if (!window.confirm(`Permanently delete "${filename}"? This cannot be undone.`)) {
+    return;
+  }
+  setVentHousePhotoDeleteState(houseId, true);
+  try {
+    await request(`/api/house-vent-photos/${photoId}/delete`, {
+      method: "POST",
+    });
+    try {
+      await refresh();
+      showToast(`${filename} deleted from ${houseId}.`);
+    } catch (error) {
+      showToast(
+        `Photo deleted, but the house cards could not refresh: ${error.message}`,
+        true,
+      );
+    }
+  } catch (error) {
+    showToast(`Could not delete ${filename}: ${error.message}`, true);
+  } finally {
+    setVentHousePhotoDeleteState(houseId, false);
+  }
+}
+
+async function deleteAllVentHousePhotos(button) {
+  const houseId = button.dataset.houseId;
+  const summary = button.closest(".vent-house-photo-summary");
+  const photos = summary
+    ? $$("[data-vent-photo-delete]", summary).map((photoButton) => ({
+        id: Number(photoButton.dataset.photoId),
+        filename: photoButton.dataset.filename || "this photo",
+      }))
+    : [];
+  if (
+    !houseId ||
+    !photos.length ||
+    photos.some((photo) => !Number.isInteger(photo.id) || photo.id < 1)
+  ) {
+    showToast("Could not identify all Vent photos for this house.", true);
+    return;
+  }
+  if (
+    ventHousePhotoUploadInProgress ||
+    ventHousePhotoDeleteInProgress.has(houseId)
+  ) return;
+  if (
+    !window.confirm(
+      `Permanently delete all ${photos.length} Vent photos from ${houseId}? This cannot be undone.`,
+    )
+  ) {
+    return;
+  }
+
+  setVentHousePhotoDeleteState(houseId, true);
+  button.textContent = "Deleting photos…";
+  button.setAttribute("aria-busy", "true");
+
+  let deletedCount = 0;
+  let failedPhoto = null;
+  try {
+    for (const photo of photos) {
+      try {
+        await request(`/api/house-vent-photos/${photo.id}/delete`, {
+          method: "POST",
+        });
+        deletedCount += 1;
+      } catch (error) {
+        failedPhoto = { ...photo, error };
+        break;
+      }
+    }
+  } finally {
+    setVentHousePhotoDeleteState(houseId, false);
+    button.textContent = `Delete all (${photos.length})`;
+    button.removeAttribute("aria-busy");
+  }
+
+  if (deletedCount) {
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(
+        `${deletedCount} of ${photos.length} Vent photos deleted, but the house cards could not refresh: ${error.message}`,
+        true,
+      );
+      return;
+    }
+  }
+  if (failedPhoto) {
+    showToast(
+      `${deletedCount} of ${photos.length} Vent photos deleted. Could not delete ${failedPhoto.filename}: ${failedPhoto.error.message}`,
+      true,
+    );
+    return;
+  }
+  showToast(`All ${deletedCount} Vent photos deleted from ${houseId}.`);
+}
+
+async function uploadPlumbingHousePhoto(input) {
+  const files = Array.from(input.files || []);
+  const houseId = input.dataset.houseId || state.viewingHouseId;
+  if (!files.length || !houseId || input.disabled) return;
+  const house = state.dashboard.house_list?.find((item) => item.id === houseId);
+  const existingCount = house?.plumbing_photos?.length || 0;
+  if (existingCount + files.length > PLUMBING_HOUSE_PHOTO_MAX_COUNT) {
+    showToast(
+      `This house can have up to ${PLUMBING_HOUSE_PHOTO_MAX_COUNT} photos. Only ${Math.max(0, PLUMBING_HOUSE_PHOTO_MAX_COUNT - existingCount)} more can be selected.`,
+      true,
+    );
+    input.value = "";
+    return;
+  }
+  if (
+    plumbingHousePhotoUploadInProgress ||
+    plumbingHousePhotoUploadState(houseId).status === "uploading"
+  ) {
+    input.value = "";
+    return;
+  }
+  let uploadedCount = 0;
+  let uploadError = null;
+  let failedFilename = "";
+  setPlumbingHousePhotoUploadLock(true);
+  try {
+    for (const [index, file] of files.entries()) {
+      setPlumbingHousePhotoUploadStatus(
+        houseId,
+        "uploading",
+        index + 1,
+        files.length,
+      );
+      const formData = new FormData();
+      formData.append("house_id", houseId);
+      formData.append("activity", PLUMBING_HOUSE_PHOTO_ACTIVITY);
+      formData.append("file", file);
+      try {
+        await request("/api/house-plumbing-photos", {
+          method: "POST",
+          body: formData,
+        });
+        uploadedCount += 1;
+      } catch (error) {
+        uploadError = error;
+        failedFilename = file.name;
+        break;
+      }
+    }
+    if (uploadedCount) {
+      try {
+        await refresh();
+      } catch (error) {
+        setPlumbingHousePhotoUploadStatus(houseId, "");
+        showToast(
+          uploadedCount === files.length
+            ? `Photos uploaded, but the house cards could not refresh: ${error.message}`
+            : `${uploadedCount} of ${files.length} photos uploaded, but the house cards could not refresh: ${error.message}`,
+          true,
+        );
+        return;
+      }
+      if (uploadedCount === files.length) {
+        setPlumbingHousePhotoUploadStatus(
+          houseId,
+          "complete",
+          files.length,
+          files.length,
+        );
+        window.setTimeout(() => {
+          if (plumbingHousePhotoUploadState(houseId).status === "complete") {
+            setPlumbingHousePhotoUploadStatus(houseId, "");
+          }
+        }, 2800);
+      } else {
+        setPlumbingHousePhotoUploadStatus(houseId, "");
+        showToast(
+          `${uploadedCount} of ${files.length} photos uploaded. ${failedFilename} failed: ${uploadError.message}`,
+          true,
+        );
+      }
+    } else {
+      setPlumbingHousePhotoUploadStatus(houseId, "");
+      showToast(`${failedFilename} failed: ${uploadError.message}`, true);
+    }
+  } finally {
+    if (plumbingHousePhotoUploadState(houseId).status === "uploading") {
+      setPlumbingHousePhotoUploadStatus(houseId, "");
+    }
+    input.value = "";
+    setPlumbingHousePhotoUploadLock(false);
+  }
+}
+
+async function deletePlumbingHousePhoto(button) {
+  const photoId = Number(button.dataset.photoId);
+  const houseId = button.dataset.houseId;
+  const filename = button.dataset.filename || "this photo";
+  if (!Number.isInteger(photoId) || photoId < 1 || !houseId) {
+    showToast("This photo has invalid house or photo information.", true);
+    return;
+  }
+  if (!window.confirm(`Permanently delete "${filename}"? This cannot be undone.`)) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    const result = await request(`/api/house-plumbing-photos/${photoId}/delete`, {
+      method: "POST",
+    });
+    try {
+      await refresh();
+      showToast(
+        result.plumbing_reopened
+          ? `${filename} deleted from ${houseId}; plumbing work is now marked outstanding.`
+          : `${filename} deleted from ${houseId}.`,
+      );
+    } catch (error) {
+      showToast(
+        `Photo deleted, but the house cards could not refresh: ${error.message}`,
+        true,
+      );
+    }
+  } catch (error) {
+    showToast(`Could not delete ${filename}: ${error.message}`, true);
+    button.disabled = false;
+  }
+}
+
+async function deleteAllPlumbingHousePhotos(button) {
+  const houseId = button.dataset.houseId;
+  const summary = button.closest(".plumbing-house-photo-summary");
+  const photos = summary
+    ? $$("[data-plumbing-photo-delete]", summary).map((photoButton) => ({
+        id: Number(photoButton.dataset.photoId),
+        filename: photoButton.dataset.filename || "this photo",
+      }))
+    : [];
+  if (
+    !houseId ||
+    !photos.length ||
+    photos.some((photo) => !Number.isInteger(photo.id) || photo.id < 1)
+  ) {
+    showToast("Could not identify all photos for this house.", true);
+    return;
+  }
+  if (
+    plumbingHousePhotoUploadInProgress ||
+    plumbingHousePhotoDeleteInProgress.has(houseId)
+  ) {
+    return;
+  }
+  if (
+    !window.confirm(
+      `Permanently delete all ${photos.length} Plumbing photos from ${houseId}? This cannot be undone.`,
+    )
+  ) {
+    return;
+  }
+
+  plumbingHousePhotoDeleteInProgress.add(houseId);
+  $$("[data-plumbing-photo-delete-all]").forEach((deleteAllButton) => {
+    deleteAllButton.disabled =
+      Number(deleteAllButton.dataset.photoCount) === 0 ||
+      plumbingHousePhotoUploadInProgress ||
+      plumbingHousePhotoDeleteInProgress.has(deleteAllButton.dataset.houseId);
+  });
+  button.disabled = true;
+  button.textContent = "Deleting photos…";
+  button.setAttribute("aria-busy", "true");
+  $$("[data-plumbing-photo-delete]", summary).forEach((photoButton) => {
+    photoButton.disabled = true;
+  });
+  $$("[data-plumbing-photo-upload]").forEach((input) => {
+    if (input.dataset.houseId === houseId) {
+      updatePlumbingHousePhotoUploadControl(input);
+    }
+  });
+
+  let deletedCount = 0;
+  let failedPhoto = null;
+  let plumbingReopened = false;
+  try {
+    for (const photo of photos) {
+      try {
+        const result = await request(
+          `/api/house-plumbing-photos/${photo.id}/delete`,
+          { method: "POST" },
+        );
+        deletedCount += 1;
+        plumbingReopened = plumbingReopened || result.plumbing_reopened;
+      } catch (error) {
+        failedPhoto = { ...photo, error };
+        break;
+      }
+    }
+  } finally {
+    plumbingHousePhotoDeleteInProgress.delete(houseId);
+    button.disabled = plumbingHousePhotoUploadInProgress;
+    button.removeAttribute("aria-busy");
+    button.textContent = `Delete all (${photos.length})`;
+    $$("[data-plumbing-photo-delete]", summary).forEach((photoButton) => {
+      photoButton.disabled = false;
+    });
+    $$("[data-plumbing-photo-delete-all]").forEach((deleteAllButton) => {
+      deleteAllButton.disabled =
+        Number(deleteAllButton.dataset.photoCount) === 0 ||
+        plumbingHousePhotoUploadInProgress ||
+        plumbingHousePhotoDeleteInProgress.has(deleteAllButton.dataset.houseId);
+    });
+  }
+
+  if (deletedCount) {
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(
+        `${deletedCount} of ${photos.length} photos deleted, but the house cards could not refresh: ${error.message}`,
+        true,
+      );
+      return;
+    }
+  }
+  if (failedPhoto) {
+    showToast(
+      `${deletedCount} of ${photos.length} photos deleted. Could not delete ${failedPhoto.filename}: ${failedPhoto.error.message}`,
+      true,
+    );
+    return;
+  }
+  showToast(
+    plumbingReopened
+      ? `All ${deletedCount} photos deleted from ${houseId}; plumbing work is now marked outstanding.`
+      : `All ${deletedCount} photos deleted from ${houseId}.`,
+  );
+}
+
 async function renderNotStartedHouses(query, mode = "not_started") {
   const list = $("#houses-list");
   list.classList.remove("house-grid-scrollable");
@@ -6566,8 +7688,22 @@ function renderHouses() {
   }
   $("#houses-empty").classList.toggle(
     "hidden",
-    data.house_list.length > 0 || teams.length > 0,
+    isAssign || data.house_list.length > 0 || teams.length > 0,
   );
+  const noResults = $("#houses-no-results");
+  const noResultsTitle = $("strong", noResults);
+  const noResultsMessage = $("p", noResults);
+  const emptyAssignStage = isAssign && !query && matchingHouses.length === 0;
+  if (emptyAssignStage) {
+    const stageLabel = visibleStatus === "closed" ? "Closed" : "Active";
+    noResultsTitle.textContent = `No ${stageLabel.toLowerCase()} houses`;
+    noResultsMessage.textContent =
+      `There are no houses currently in the ${stageLabel} stage.`;
+  } else {
+    noResultsTitle.textContent = "No matching houses";
+    noResultsMessage.textContent =
+      "Try another house ID, owner, employee or postcode.";
+  }
   $("#houses-no-results").classList.toggle(
     "hidden",
     (!query && !teamFilter && !statusFilter) || matchingHouses.length > 0,
@@ -6651,6 +7787,17 @@ async function submitHouseChecklist(event) {
 
 function renderHouseDetail(result) {
   const { house, movements } = result;
+  const photoViewOnly = house.photo_view_only === true;
+  $("#house-detail-nav").classList.toggle("hidden", photoViewOnly);
+  $("#house-detail-facts").classList.toggle("hidden", photoViewOnly);
+  [
+    "#house-detail-checklist-card",
+    "#house-detail-stock-card",
+    "#house-detail-records-card",
+    "#house-history-card",
+  ].forEach((selector) => {
+    $(selector).classList.toggle("hidden", photoViewOnly);
+  });
   const statusLabel = {
     not_started: "Not started",
     ready: "Ready for start",
@@ -6670,6 +7817,44 @@ function renderHouseDetail(result) {
     [house.owner_name, house.employee_name, house.postcode, house.address]
       .filter(Boolean)
       .join(" · ") || "House details have not been recorded.";
+  const canViewVentPhotos = house.can_view_vent_photos === true;
+  const ventPhotos = house.vent_photos || [];
+  const canViewPlumbingPhotos = house.can_view_plumbing_photos === true;
+  const plumbingPhotos = house.plumbing_photos || [];
+  $("#house-detail-vent-photos-card").classList.toggle(
+    "hidden",
+    !canViewVentPhotos,
+  );
+  $('[data-house-detail-target="house-detail-vent-photos-card"]').classList.toggle(
+    "hidden",
+    !canViewVentPhotos,
+  );
+  $("#house-detail-vent-photos").innerHTML = canViewVentPhotos
+    ? ventPhotos.length
+      ? `<div class="vent-house-photo-gallery">${ventPhotos.map((photo) => ventHousePhotoLink(photo)).join("")}</div>`
+      : `<div class="empty-state"><strong>No Vent team photos uploaded yet</strong><p>Photos attached to this house will appear here.</p></div>`
+    : "";
+  $("#house-detail-vent-photo-upload").innerHTML =
+    canViewVentPhotos && isVentPhotoUploader(state.user)
+      ? `${ventHousePhotoUpload(house.id)}${ventHousePhotoUploadStatus(house.id)}`
+      : "";
+  $("#house-detail-plumbing-photos-card").classList.toggle(
+    "hidden",
+    !canViewPlumbingPhotos,
+  );
+  $('[data-house-detail-target="house-detail-plumbing-photos-card"]').classList.toggle(
+    "hidden",
+    !canViewPlumbingPhotos,
+  );
+  $("#house-detail-plumbing-photos").innerHTML = canViewPlumbingPhotos
+    ? plumbingPhotos.length
+      ? `<div class="vent-house-photo-gallery">${plumbingPhotos.map((photo) => plumbingHousePhotoLink(photo)).join("")}</div>`
+      : `<div class="empty-state"><strong>No Plumbing team photos uploaded yet</strong><p>Photos attached to this house will appear here.</p></div>`
+    : "";
+  $("#house-detail-plumbing-photo-upload").innerHTML =
+    house.can_upload_plumbing_photos === true
+      ? `${plumbingHousePhotoUpload(house.id)}${plumbingHousePhotoUploadStatus(house.id)}`
+      : "";
   const externalWallMeasure = house.seai_details?.Measures?.find((measure) =>
     /external wall insulation/i.test(String(measure.Name || "")),
   );
@@ -7356,6 +8541,12 @@ function closeAssignSeaiHouseRecord() {
 function openHouseDetail(houseId) {
   const activeTab = $(".page.active")?.dataset.page || "houses";
   state.houseDetailReturnTab = activeTab;
+  $("#back-to-houses").textContent =
+    isVentPhotoUploader(state.user) ||
+    isPlumbingSupervisorUser(state.user) ||
+    hasAccessProfile(state.user, "plumbing_coordinator")
+      ? "← Back to dashboard"
+      : "← Back to houses & teams";
   if (activeTab !== "houses") {
     setTab("houses");
   }
@@ -8740,6 +9931,7 @@ async function loadUsers() {
               ${managers.map((manager) => `<option value="${manager.id}" ${managerValue === String(manager.id) ? "selected" : ""}>${escapeHtml(manager.display_name)} · ${escapeHtml(manager.role_name || manager.role)}</option>`).join("")}
             </select></label>
             <button class="button button-secondary user-organization-save" type="button" data-user-id="${user.id}">Save organization</button>
+            <label class="user-plumbing-photo-access"><input type="checkbox" data-plumbing-photo-access data-user-id="${user.id}" ${user.can_view_plumbing_photos ? "checked" : ""}>Allow this account to view Plumbing team photos</label>
           </div>
           ${hasAccessProfile(user, "supervisor")
             ? `<span class="user-row-specialty"><strong>${status}</strong><span class="user-row-specialty-edit"><input class="supervisor-specialty-input" data-user-id="${user.id}" maxlength="120" value="${escapeHtml(user.supervisor_specialty || "")}" placeholder="Add specialty" aria-label="Specialty for ${escapeHtml(user.display_name)}"><button class="button button-secondary supervisor-specialty-save" type="button" data-user-id="${user.id}">Save</button></span></span>`
@@ -8867,6 +10059,36 @@ async function saveUserOrganization(button) {
     showToast(error.message, true);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function saveUserPlumbingPhotoAccess(input) {
+  const user = state.users.find(
+    (item) => String(item.id) === input.dataset.userId,
+  );
+  if (!user || input.disabled) return;
+  const previous = Boolean(user.can_view_plumbing_photos);
+  input.disabled = true;
+  try {
+    const result = await request(
+      `/api/users/${encodeURIComponent(user.id)}/plumbing-photo-access`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ can_view: input.checked }),
+      },
+    );
+    user.can_view_plumbing_photos = result.can_view;
+    showToast(
+      result.can_view
+        ? `Plumbing photo access granted to ${user.display_name}.`
+        : `Plumbing photo access removed from ${user.display_name}.`,
+    );
+  } catch (error) {
+    input.checked = previous;
+    showToast(error.message, true);
+  } finally {
+    input.disabled = false;
   }
 }
 
@@ -9305,6 +10527,10 @@ function bindEvents() {
     const organizationButton = event.target.closest(".user-organization-save");
     if (organizationButton) saveUserOrganization(organizationButton);
   });
+  $("#user-list").addEventListener("change", (event) => {
+    const input = event.target.closest("[data-plumbing-photo-access]");
+    if (input) void saveUserPlumbingPhotoAccess(input);
+  });
   $("#pin-form").addEventListener("submit", submitPinChange);
   $("#close-presentation").addEventListener("click", closePresentation);
   $("#minimize-presentation").addEventListener("click", minimizePresentation);
@@ -9452,7 +10678,7 @@ function bindEvents() {
     "close",
     clearSelectedPdfPreview,
   );
-  $("#selected-pdf-preview-continue").addEventListener("click", saveSelectedSeaiPdf);
+  $("#selected-pdf-preview-continue").addEventListener("click", approveSelectedSeaiPdf);
   $("#movement-kind").addEventListener("change", updateMovementFields);
   $("#movement-material-search").addEventListener(
     "input",
@@ -9542,6 +10768,11 @@ function bindEvents() {
   $("#house-map-list-view").addEventListener("click", () => {
     if (hasAccessProfile(state.user, "assign") && state.houseStatusFilter === "seai") {
       state.houseStatusFilter = "active";
+      saveAssignHouseView(
+        state.user,
+        state.houseStatusFilter,
+        state.assignSurveyFilter,
+      );
     }
     state.houseMapMode = false;
     state.selectedMapHouseId = "";
@@ -10283,18 +11514,82 @@ function bindEvents() {
   $("#house-checklist-form").addEventListener("submit", submitHouseChecklist);
   $("#house-note-form").addEventListener("submit", submitHouseNote);
   $("#house-survey-form").addEventListener("submit", submitHouseSurvey);
-  $("#surveyor-work-plan-form").addEventListener("submit", submitHouseWorkPlan);
-  $("#surveyor-work-plan-form").addEventListener("change", (event) => {
+  const workPlanForm = $("#surveyor-work-plan-form");
+  workPlanForm.addEventListener("submit", submitHouseWorkPlan);
+  workPlanForm.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-work-plan-dropdown-trigger]");
+    if (trigger) {
+      const dropdown = trigger.closest("[data-work-plan-dropdown]");
+      if (trigger.getAttribute("aria-expanded") === "true") {
+        closeWorkPlanDropdown(dropdown);
+      } else {
+        openWorkPlanDropdown(dropdown);
+      }
+      return;
+    }
+    const option = event.target.closest("[data-work-plan-dropdown-option]");
+    if (option) selectWorkPlanDropdownOption(option);
+  });
+  workPlanForm.addEventListener("keydown", (event) => {
+    const dropdown = event.target.closest("[data-work-plan-dropdown]");
+    if (!dropdown) return;
+    const trigger = event.target.closest("[data-work-plan-dropdown-trigger]");
+    if (trigger && ["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      openWorkPlanDropdown(dropdown);
+      if (event.key === "ArrowUp") {
+        dropdown.querySelector("[data-work-plan-dropdown-option]:last-child").focus();
+      }
+      return;
+    }
+    const option = event.target.closest("[data-work-plan-dropdown-option]");
+    if (!option) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeWorkPlanDropdown(dropdown, true);
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectWorkPlanDropdownOption(option);
+      return;
+    }
+    const options = [...dropdown.querySelectorAll("[data-work-plan-dropdown-option]")];
+    const index = options.indexOf(option);
+    const nextIndex =
+      event.key === "ArrowDown" ? Math.min(index + 1, options.length - 1)
+      : event.key === "ArrowUp" ? Math.max(index - 1, 0)
+      : event.key === "Home" ? 0
+      : event.key === "End" ? options.length - 1
+      : -1;
+    if (nextIndex >= 0) {
+      event.preventDefault();
+      options[nextIndex].focus();
+    }
+  });
+  workPlanForm.addEventListener("focusout", (event) => {
+    const dropdown = event.target.closest("[data-work-plan-dropdown]");
+    if (!dropdown) return;
+    setTimeout(() => {
+      if (!dropdown.contains(document.activeElement)) closeWorkPlanDropdown(dropdown);
+    }, 0);
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#surveyor-work-plan-form [data-work-plan-dropdown]")) {
+      closeWorkPlanDropdowns(workPlanForm);
+    }
+  });
+  workPlanForm.addEventListener("change", (event) => {
     if (
       event.target.matches(
-        "select[name$='_required'], textarea[name$='_notes']",
+        "select, input[data-work-plan-dropdown-value], textarea[name$='_notes']",
       )
     ) {
       syncWorkPlanCards(event.currentTarget);
       updateWorkPlanSaveStatus(event.currentTarget);
     }
   });
-  $("#surveyor-work-plan-form").addEventListener("input", (event) => {
+  workPlanForm.addEventListener("input", (event) => {
     if (event.target.matches("textarea[name$='_notes']")) {
       updateWorkPlanSaveStatus(event.currentTarget);
     }
@@ -10442,15 +11737,48 @@ function bindEvents() {
     saveSupervisorHouseAssignment,
   );
   $("#plumbing-supervisor-house-list").addEventListener("click", (event) => {
+    const uploadTrigger = event.target.closest("[data-plumbing-photo-trigger]");
+    if (uploadTrigger) {
+      openPlumbingHousePhotoPicker(event);
+      return;
+    }
+    const deleteAllButton = event.target.closest("[data-plumbing-photo-delete-all]");
+    if (deleteAllButton) {
+      void deleteAllPlumbingHousePhotos(deleteAllButton);
+      return;
+    }
+    const deletePhotoButton = event.target.closest("[data-plumbing-photo-delete]");
+    if (deletePhotoButton) {
+      void deletePlumbingHousePhoto(deletePhotoButton);
+      return;
+    }
     const button = event.target.closest(".plumbing-completion-toggle");
     if (button && !button.disabled) {
       void updatePlumbingCompletion(button);
     }
   });
-  $("#plumbing-supervisor-house-list").addEventListener(
-    "change",
-    updateSupervisorAssignmentFormState,
-  );
+  const handlePlumbingPhotoSelection = (event) => {
+    if (event.target.matches("[data-plumbing-photo-upload]")) {
+      void uploadPlumbingHousePhoto(event.target);
+    } else if (event.type === "change") {
+      updateSupervisorAssignmentFormState(event);
+    }
+  };
+  ["input", "change"].forEach((eventName) => {
+    $("#plumbing-supervisor-house-list").addEventListener(
+      eventName,
+      handlePlumbingPhotoSelection,
+    );
+    $("#house-detail-plumbing-photos-card").addEventListener(
+      eventName,
+      handlePlumbingPhotoSelection,
+    );
+  });
+  $("#house-detail-plumbing-photos-card").addEventListener("click", (event) => {
+    if (event.target.closest("[data-plumbing-photo-trigger]")) {
+      openPlumbingHousePhotoPicker(event);
+    }
+  });
   $("#teamlead-ewi-work-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-teamlead-ewi-complete]");
     if (button && !button.disabled) {
@@ -10641,6 +11969,16 @@ function bindEvents() {
     renderSupervisorHouses();
   });
   $("#ventilation-house-list").addEventListener("click", (event) => {
+    const deleteAllButton = event.target.closest("[data-vent-photo-delete-all]");
+    if (deleteAllButton) {
+      void deleteAllVentHousePhotos(deleteAllButton);
+      return;
+    }
+    const deletePhotoButton = event.target.closest("[data-vent-photo-delete]");
+    if (deletePhotoButton) {
+      void deleteVentHousePhoto(deletePhotoButton);
+      return;
+    }
     const surveyPdfsButton = event.target.closest("[data-vent-survey-pdfs]");
     if (surveyPdfsButton) {
       openVentSurveyPdfs(surveyPdfsButton.dataset.houseId);
@@ -10657,7 +11995,32 @@ function bindEvents() {
     const button = event.target.closest("[data-ventilation-complete]");
     if (button) updateVentilationHouseCompletion(button);
   });
+  $("#ventilation-house-list").addEventListener(
+    "click",
+    openVentHousePhotoPicker,
+  );
+  $("#house-detail-vent-photos-card").addEventListener(
+    "click",
+    openVentHousePhotoPicker,
+  );
+  const handleVentPhotoSelection = (event) => {
+    if (event.target.matches("[data-vent-photo-upload]")) {
+      void uploadVentHousePhoto(event.target);
+    }
+  };
+  $("#ventilation-house-list").addEventListener(
+    "change",
+    handleVentPhotoSelection,
+  );
+  $("#house-detail-vent-photos-card").addEventListener(
+    "change",
+    handleVentPhotoSelection,
+  );
   $("#plumbing-house-list").addEventListener("submit", submitPlumbingAssignment);
+  $("#plumbing-house-list").addEventListener("click", (event) => {
+    const detailButton = event.target.closest(".plumbing-house-detail-button");
+    if (detailButton) openHouseDetail(detailButton.dataset.houseId);
+  });
   $("#ventilation-coordinator-house-list").addEventListener(
     "submit",
     submitVentilationAssignment,

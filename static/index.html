@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261111-login-logo-raised-2">
+    <link rel="stylesheet" href="/app.css?v=20261112-plumbing-house-photo-detail">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -627,7 +627,7 @@
               <div id="survey-room-seai-content" class="survey-room-seai-content"></div>
             </article>
             <article class="card survey-room-work-plan-card" id="survey-room-work-plan">
-              <div class="card-heading"><div><span class="work-plan-eyebrow">Before activation</span><h2>Pre-start work plan</h2><p>For each trade, choose whether work is required and add any helpful details. The Assign team sees this plan on the house card, and the Active house checklist starts required work as not done.</p></div><span id="surveyor-work-plan-progress" class="work-plan-progress" aria-live="polite">0 of 4 chosen</span></div>
+              <div class="card-heading"><div><span class="work-plan-eyebrow">Before activation</span><h2>Pre-start work plan</h2><p>Choose the trades needed, then answer five quick site questions. Assign will see your answers, and required trades will start unchecked on the active checklist.</p></div><span id="surveyor-work-plan-progress" class="work-plan-progress" aria-live="polite">Trades 0/4 · Questions 0/5</span></div>
               <form id="surveyor-work-plan-form" class="surveyor-work-plan-form">
                 <div class="work-plan-trade" data-trade="scaffolding" data-state="unset">
                   <div class="work-plan-trade-head"><span class="work-plan-trade-icon" aria-hidden="true">🏗️</span><strong>Scaffolding</strong><span class="work-plan-trade-state">Not chosen</span></div>
@@ -649,7 +649,77 @@
                   <label class="field">Requirement<select name="vent_required"><option value="">Choose requirement</option><option value="true">Required</option><option value="false">Not required</option></select></label>
                   <label class="field">Work details<textarea name="vent_notes" rows="2" maxlength="1000" placeholder="Optional details about the ventilation work"></textarea></label>
                 </div>
-                <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Changes are saved only when you click Save work plan.</small><button class="button button-secondary" type="submit">Save work plan</button></div>
+                <div class="work-plan-survey-questions">
+                  <div class="work-plan-questions-heading"><div><h3>Quick site questions</h3><p>Select Yes or No for each item.</p></div><span>5 questions</span></div>
+                  <div class="form-grid">
+                    <div class="field work-plan-question-field">
+                      <span class="work-plan-question-label" id="work-plan-label-ceramic-fuse-board">Is there a ceramic fuse board?</span>
+                      <div class="work-plan-dropdown" data-work-plan-dropdown>
+                        <input type="hidden" name="ceramic_fuse_board" data-work-plan-dropdown-value>
+                        <button class="work-plan-dropdown-trigger" data-work-plan-dropdown-trigger type="button" role="combobox" aria-labelledby="work-plan-label-ceramic-fuse-board work-plan-value-ceramic-fuse-board" aria-haspopup="listbox" aria-expanded="false" aria-controls="work-plan-list-ceramic-fuse-board" aria-required="true" aria-invalid="false">
+                          <span id="work-plan-value-ceramic-fuse-board" data-work-plan-dropdown-label>Choose an answer</span><span class="work-plan-dropdown-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div class="work-plan-dropdown-list" data-work-plan-dropdown-list id="work-plan-list-ceramic-fuse-board" role="listbox" aria-label="Choose yes or no" hidden>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="true">Yes</div>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="false">No</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field work-plan-question-field">
+                      <span class="work-plan-question-label" id="work-plan-label-solar-pv-required">Is solar PV required?</span>
+                      <div class="work-plan-dropdown" data-work-plan-dropdown>
+                        <input type="hidden" name="solar_pv_required" data-work-plan-dropdown-value>
+                        <button class="work-plan-dropdown-trigger" data-work-plan-dropdown-trigger type="button" role="combobox" aria-labelledby="work-plan-label-solar-pv-required work-plan-value-solar-pv-required" aria-haspopup="listbox" aria-expanded="false" aria-controls="work-plan-list-solar-pv-required" aria-required="true" aria-invalid="false">
+                          <span id="work-plan-value-solar-pv-required" data-work-plan-dropdown-label>Choose an answer</span><span class="work-plan-dropdown-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div class="work-plan-dropdown-list" data-work-plan-dropdown-list id="work-plan-list-solar-pv-required" role="listbox" aria-label="Choose yes or no" hidden>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="true">Yes</div>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="false">No</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field work-plan-question-field">
+                      <span class="work-plan-question-label" id="work-plan-label-pir-required">Is PIR required?</span>
+                      <div class="work-plan-dropdown" data-work-plan-dropdown>
+                        <input type="hidden" name="pir_required" data-work-plan-dropdown-value>
+                        <button class="work-plan-dropdown-trigger" data-work-plan-dropdown-trigger type="button" role="combobox" aria-labelledby="work-plan-label-pir-required work-plan-value-pir-required" aria-haspopup="listbox" aria-expanded="false" aria-controls="work-plan-list-pir-required" aria-required="true" aria-invalid="false">
+                          <span id="work-plan-value-pir-required" data-work-plan-dropdown-label>Choose an answer</span><span class="work-plan-dropdown-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div class="work-plan-dropdown-list" data-work-plan-dropdown-list id="work-plan-list-pir-required" role="listbox" aria-label="Choose yes or no" hidden>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="true">Yes</div>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="false">No</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field work-plan-question-field">
+                      <span class="work-plan-question-label" id="work-plan-label-order-variations">Are there any variations to the order?</span>
+                      <div class="work-plan-dropdown" data-work-plan-dropdown>
+                        <input type="hidden" name="order_variations" data-work-plan-dropdown-value>
+                        <button class="work-plan-dropdown-trigger" data-work-plan-dropdown-trigger type="button" role="combobox" aria-labelledby="work-plan-label-order-variations work-plan-value-order-variations" aria-haspopup="listbox" aria-expanded="false" aria-controls="work-plan-list-order-variations" aria-required="true" aria-invalid="false">
+                          <span id="work-plan-value-order-variations" data-work-plan-dropdown-label>Choose an answer</span><span class="work-plan-dropdown-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div class="work-plan-dropdown-list" data-work-plan-dropdown-list id="work-plan-list-order-variations" role="listbox" aria-label="Choose yes or no" hidden>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="true">Yes</div>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="false">No</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field work-plan-question-field">
+                      <span class="work-plan-question-label" id="work-plan-label-windows-required">Are windows required?</span>
+                      <div class="work-plan-dropdown" data-work-plan-dropdown>
+                        <input type="hidden" name="windows_required" data-work-plan-dropdown-value>
+                        <button class="work-plan-dropdown-trigger" data-work-plan-dropdown-trigger type="button" role="combobox" aria-labelledby="work-plan-label-windows-required work-plan-value-windows-required" aria-haspopup="listbox" aria-expanded="false" aria-controls="work-plan-list-windows-required" aria-required="true" aria-invalid="false">
+                          <span id="work-plan-value-windows-required" data-work-plan-dropdown-label>Choose an answer</span><span class="work-plan-dropdown-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div class="work-plan-dropdown-list" data-work-plan-dropdown-list id="work-plan-list-windows-required" role="listbox" aria-label="Choose yes or no" hidden>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="true">Yes</div>
+                          <div class="work-plan-dropdown-option" role="option" tabindex="-1" aria-selected="false" data-work-plan-dropdown-option data-value="false">No</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="survey-room-notes-actions"><small id="surveyor-work-plan-save-status" aria-live="polite">Changes are saved only when you click Save work plan.</small><button class="button button-primary" type="submit">Save work plan</button></div>
               </form>
             </article>
             <article class="card survey-room-measurements-card" id="survey-room-measurements">
@@ -755,13 +825,23 @@
                 <p class="page-subtitle" id="house-detail-subtitle"></p>
               </div>
             </div>
-            <nav class="house-detail-nav" aria-label="House record sections">
+            <nav class="house-detail-nav" id="house-detail-nav" aria-label="House record sections">
               <button type="button" data-house-detail-target="house-detail-checklist-card">Pre-start checklist</button>
+              <button class="hidden" type="button" data-house-detail-target="house-detail-vent-photos-card">Vent team photos</button>
+              <button class="hidden" type="button" data-house-detail-target="house-detail-plumbing-photos-card">Plumbing team photos</button>
               <button type="button" data-house-detail-target="house-detail-stock-card">Materials on site</button>
               <button type="button" data-house-detail-target="house-detail-records-card">Notes &amp; snags</button>
               <button type="button" data-house-detail-target="house-history-card">Movement history</button>
             </nav>
             <div id="house-detail-facts" class="house-detail-facts"></div>
+            <article class="card house-detail-vent-photos-card hidden" id="house-detail-vent-photos-card">
+              <div class="card-heading"><div><h2>Vent team photos</h2><p>Photos attached to this house by the Vent team.</p></div><div id="house-detail-vent-photo-upload"></div></div>
+              <div id="house-detail-vent-photos" aria-live="polite"></div>
+            </article>
+            <article class="card house-detail-vent-photos-card hidden" id="house-detail-plumbing-photos-card">
+              <div class="card-heading"><div><h2>Plumbing team photos</h2><p>Photos attached to this house by the Plumbing team.</p></div><div id="house-detail-plumbing-photo-upload"></div></div>
+              <div id="house-detail-plumbing-photos" aria-live="polite"></div>
+            </article>
             <article class="card house-detail-checklist-card" id="house-detail-checklist-card">
               <div class="card-heading"><div><h2>Pre-start checklist</h2><p>Saved preparation checks for this house.</p></div><span id="house-detail-checklist-summary" class="house-detail-checklist-summary"></span></div>
               <div id="house-detail-checklist" class="house-detail-checklist"></div>
@@ -869,7 +949,7 @@
         <iframe id="selected-pdf-preview" title="Preview of selected survey PDF"></iframe>
         <div class="dialog-actions">
           <button class="button button-secondary close-dialog" type="button">Close PDF preview</button>
-          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Save selected PDFs to house</button>
+          <button id="selected-pdf-preview-continue" class="button button-primary" type="button">Approve PDF for survey</button>
         </div>
       </div>
     </dialog>
@@ -1262,6 +1342,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261112-icon-color-match-1" defer></script>
+    <script src="/app.js?v=20261112-plumbing-house-photo-detail" defer></script>
   </body>
 </html>

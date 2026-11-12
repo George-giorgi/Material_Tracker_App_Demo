@@ -30,7 +30,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 import pymupdf as fitz
-from PIL import Image
+from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
 from pypdf.errors import PdfReadError
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib import colors
@@ -42,6 +43,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import reportlab
+
+register_heif_opener(thumbnails=False)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -68,6 +71,10 @@ SESSION_MAX_AGE = 12 * 60 * 60
 CREDENTIAL_ITERATIONS = 310_000
 HOUSE_DOCUMENT_MAX_BYTES = 8_000_000
 HOUSE_DOCUMENT_MAX_COUNT = 25
+HOUSE_VENT_PHOTO_MAX_BYTES = 8_000_000
+HOUSE_VENT_PHOTO_MAX_COUNT = 25
+HOUSE_PLUMBING_PHOTO_MAX_BYTES = HOUSE_VENT_PHOTO_MAX_BYTES
+HOUSE_PLUMBING_PHOTO_MAX_COUNT = HOUSE_VENT_PHOTO_MAX_COUNT
 HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
@@ -882,6 +889,13 @@ def _is_annotated_pdf_filename(filename):
 
 
 WORK_PLAN_TRADES = ("scaffolding", "esb", "plumber", "vent")
+WORK_PLAN_SURVEY_QUESTIONS = (
+    "ceramic_fuse_board",
+    "solar_pv_required",
+    "pir_required",
+    "order_variations",
+    "windows_required",
+)
 
 
 def _is_not_started_house(db, house_id):
@@ -935,7 +949,22 @@ def _clear_house_survey_records(db, house_id):
             plan_vent_required = NULL,
             plan_vent_notes = '',
             plan_vent_done_by = '',
-            plan_vent_done_at = ''
+            plan_vent_done_at = '',
+            plan_ceramic_fuse_board = NULL,
+            plan_solar_pv_required = NULL,
+            plan_pir_required = NULL,
+            plan_order_variations = NULL,
+            plan_windows_required = NULL,
+            plan_ceramic_fuse_board_done_by = '',
+            plan_ceramic_fuse_board_done_at = '',
+            plan_solar_pv_required_done_by = '',
+            plan_solar_pv_required_done_at = '',
+            plan_pir_required_done_by = '',
+            plan_pir_required_done_at = '',
+            plan_order_variations_done_by = '',
+            plan_order_variations_done_at = '',
+            plan_windows_required_done_by = '',
+            plan_windows_required_done_at = ''
         WHERE id = ?
         """,
         (house_id,),
@@ -1235,6 +1264,7 @@ def initialize_db():
             ("access.plumber", "Employee-style operational access for plumbing work."),
             ("access.plumbing_coordinator", "Plumbing work queue and assignment to Plumbing supervisors."),
             ("access.ventilation_coordinator", "Ventilation work queue and assignment to Ventilation teams."),
+            ("access.vent_photos", "View Vent team photos attached to houses."),
             ("access.employee", "Standard employee dashboard and material movement access."),
         )
         db.executemany(
@@ -1549,6 +1579,67 @@ def initialize_db():
         )
         db.execute(
             """
+            CREATE TABLE IF NOT EXISTS house_vent_photos (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                uploaded_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS house_vent_photos_house_idx
+            ON house_vent_photos(house_id, id DESC)
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_plumbing_photos (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                uploaded_at TEXT NOT NULL,
+                activity TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        plumbing_photo_columns = {
+            row["name"]
+            for row in db.execute("PRAGMA table_info(house_plumbing_photos)")
+        }
+        if "activity" not in plumbing_photo_columns:
+            db.execute(
+                """
+                ALTER TABLE house_plumbing_photos
+                ADD COLUMN activity TEXT NOT NULL DEFAULT ''
+                """
+            )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS house_plumbing_photos_house_idx
+            ON house_plumbing_photos(house_id, id DESC)
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_user_plumbing_photo_access (
+                user_id INTEGER PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+                granted_by TEXT NOT NULL DEFAULT '',
+                granted_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
             CREATE TABLE IF NOT EXISTS house_vent_document_annotations (
                 annotated_document_id INTEGER PRIMARY KEY
                     REFERENCES house_vent_documents(id) ON DELETE CASCADE,
@@ -1639,8 +1730,12 @@ def initialize_db():
             ("plan_vent_required", "INTEGER"),
             ("plan_vent_notes", "TEXT NOT NULL DEFAULT ''"),
             *(
-                (f"plan_{trade}_{field}", "TEXT NOT NULL DEFAULT ''")
-                for trade in WORK_PLAN_TRADES
+                (f"plan_{question}", "INTEGER")
+                for question in WORK_PLAN_SURVEY_QUESTIONS
+            ),
+            *(
+                (f"plan_{item}_{field}", "TEXT NOT NULL DEFAULT ''")
+                for item in (*WORK_PLAN_TRADES, *WORK_PLAN_SURVEY_QUESTIONS)
                 for field in ("done_by", "done_at")
             ),
             ("latitude", "REAL"),
@@ -3494,6 +3589,21 @@ def _dashboard(db):
                        COALESCE(p.plan_vent_notes, '') AS plan_vent_notes,
                        COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
                        COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
+                       p.plan_ceramic_fuse_board,
+                       p.plan_ceramic_fuse_board_done_by,
+                       p.plan_ceramic_fuse_board_done_at,
+                       p.plan_solar_pv_required,
+                       p.plan_solar_pv_required_done_by,
+                       p.plan_solar_pv_required_done_at,
+                       p.plan_pir_required,
+                       p.plan_pir_required_done_by,
+                       p.plan_pir_required_done_at,
+                       p.plan_order_variations,
+                       p.plan_order_variations_done_by,
+                       p.plan_order_variations_done_at,
+                       p.plan_windows_required,
+                       p.plan_windows_required_done_by,
+                       p.plan_windows_required_done_at,
                        assigned_surveyor.display_name AS assigned_surveyor_name,
                        assigned_surveyor.is_active AS assigned_surveyor_is_active,
                        surveyor_assignment.assigned_by AS surveyor_assigned_by,
@@ -3535,7 +3645,80 @@ def _dashboard(db):
     }
 
 
-def _ventilation_house_list(db, teamlead_user_id):
+def _is_vent_photo_uploader(user):
+    return (
+        user is not None
+        and (user["username"] or "").strip().casefold() == "krystian.stelmach"
+    )
+
+
+def _can_view_vent_house_photos(user):
+    return (
+        _is_vent_photo_uploader(user)
+        or _has_access_profile(user, "vent_photos")
+        or _has_access_profile(user, "admin")
+    )
+
+
+def _vent_house_photo_metadata(db, house_id):
+    return [
+        {
+            "id": row["id"],
+            "filename": row["filename"],
+            "size_bytes": row["size_bytes"],
+            "uploaded_by": row["uploaded_by"],
+            "uploaded_at": row["uploaded_at"],
+        }
+        for row in db.execute(
+            """
+            SELECT id, filename, size_bytes, uploaded_by, uploaded_at
+            FROM house_vent_photos
+            WHERE house_id = ?
+            ORDER BY id DESC
+            """,
+            (house_id,),
+        )
+    ]
+
+
+def _plumbing_house_photo_metadata(db, house_id):
+    return [
+        {
+            "id": row["id"],
+            "house_id": house_id,
+            "filename": row["filename"],
+            "size_bytes": row["size_bytes"],
+            "uploaded_by": row["uploaded_by"],
+            "uploaded_at": row["uploaded_at"],
+            "activity": row["activity"],
+        }
+        for row in db.execute(
+            """
+            SELECT id, filename, size_bytes, uploaded_by, uploaded_at, activity
+            FROM house_plumbing_photos
+            WHERE house_id = ?
+            ORDER BY id DESC
+            """,
+            (house_id,),
+        )
+    ]
+
+
+def _has_plumbing_photo_view_access(db, user):
+    return _has_access_profile(user, "admin") or db.execute(
+        "SELECT 1 FROM app_user_plumbing_photo_access WHERE user_id = ?",
+        (user["id"],),
+    ).fetchone() is not None
+
+
+def _can_view_plumbing_house_photos(db, user):
+    return (
+        _has_plumbing_photo_view_access(db, user)
+        or _is_plumbing_supervisor(db, user)
+    )
+
+
+def _ventilation_house_list(db, teamlead_user_id, include_photos=False):
     houses = [
         {
             "id": row["id"],
@@ -3552,6 +3735,8 @@ def _ventilation_house_list(db, teamlead_user_id):
             "assignment_assigned_by": row["assignment_assigned_by"],
             "documents": [],
             "survey_documents": [],
+            "vent_photos": [],
+            "can_view_vent_photos": bool(include_photos),
         }
         for row in db.execute(
             """
@@ -3650,6 +3835,30 @@ def _ventilation_house_list(db, teamlead_user_id):
         )
     for house in houses:
         house["documents"] = documents_by_house.get(house["id"], [])
+    if include_photos and houses:
+        house_ids = [house["id"] for house in houses]
+        placeholders = ",".join("?" for _ in house_ids)
+        photos_by_house = {}
+        for row in db.execute(
+            f"""
+            SELECT id, house_id, filename, size_bytes, uploaded_by, uploaded_at
+            FROM house_vent_photos
+            WHERE house_id IN ({placeholders})
+            ORDER BY id DESC
+            """,
+            house_ids,
+        ):
+            photos_by_house.setdefault(row["house_id"], []).append(
+                {
+                    "id": row["id"],
+                    "filename": row["filename"],
+                    "size_bytes": row["size_bytes"],
+                    "uploaded_by": row["uploaded_by"],
+                    "uploaded_at": row["uploaded_at"],
+                }
+            )
+        for house in houses:
+            house["vent_photos"] = photos_by_house.get(house["id"], [])
     survey_documents_by_house = {}
     if houses:
         house_ids = [house["id"] for house in houses]
@@ -3814,6 +4023,27 @@ def _plumbing_coordinator_dashboard(db):
         "plumbing_houses": _attach_seai_application_ids(db, houses),
         "plumbing_supervisors": supervisors,
     }
+
+
+def _plumbing_coordinator_house_is_visible(db, house_id):
+    return db.execute(
+        """
+        SELECT 1
+        FROM provided_houses p
+        LEFT JOIN houses h ON h.id = p.id
+        LEFT JOIN house_checklists hc ON hc.house_id = p.id
+        WHERE p.id = ?
+          AND p.plan_plumber_required = 1
+          AND COALESCE(hc.plumber_status, p.plan_plumber, 'not_done')
+                != 'not_necessary'
+          AND (
+              h.id IS NULL
+              OR h.is_finished = 0
+              OR COALESCE(hc.plumber_status, p.plan_plumber, 'not_done') = 'done'
+          )
+        """,
+        (house_id,),
+    ).fetchone() is not None
 
 
 def _ventilation_coordinator_dashboard(db):
@@ -4340,6 +4570,19 @@ class LegacyRouteHandlers:
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_house_photo(self, filename, content, content_type):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header(
+            "Content-Disposition",
+            f"inline; filename*=UTF-8''{quote(filename, safe='')}",
+        )
+        self.end_headers()
+        self.wfile.write(content)
+
     def _body(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -4408,8 +4651,55 @@ class LegacyRouteHandlers:
             self._send_json(401, {"error": "Sign in to continue."})
             return None
         path = urlparse(self.path).path
-        if _has_access_profile(user, "plumbing_coordinator") and not (
-            (self.command == "GET" and path in {"/api/dashboard", "/api/updates"})
+        is_plumbing_coordinator = _has_access_profile(user, "plumbing_coordinator")
+        plumbing_photo_read_allowed = False
+        if self.command == "GET" and (
+            path.startswith("/api/houses/")
+            or path.startswith("/api/house-plumbing-photos/")
+        ):
+            with connect_db() as db:
+                if is_plumbing_coordinator:
+                    if path.startswith("/api/houses/"):
+                        house_id = unquote(path[len("/api/houses/"):])
+                        plumbing_photo_read_allowed = (
+                            bool(house_id)
+                            and "/" not in house_id
+                            and _plumbing_coordinator_house_is_visible(db, house_id)
+                        )
+                    else:
+                        photo_path = path[
+                            len("/api/house-plumbing-photos/"):
+                        ].split("/")
+                        if (
+                            len(photo_path) == 2
+                            and photo_path[0].isdigit()
+                            and photo_path[1] == "file"
+                        ):
+                            photo = db.execute(
+                                """
+                                SELECT house_id FROM house_plumbing_photos
+                                WHERE id = ?
+                                """,
+                                (int(photo_path[0]),),
+                            ).fetchone()
+                            plumbing_photo_read_allowed = bool(
+                                photo
+                                and _plumbing_coordinator_house_is_visible(
+                                    db, photo["house_id"]
+                                )
+                            )
+                else:
+                    plumbing_photo_read_allowed = _can_view_plumbing_house_photos(
+                        db, user
+                    )
+        if is_plumbing_coordinator and not (
+            (
+                self.command == "GET"
+                and (
+                    path in {"/api/dashboard", "/api/updates"}
+                    or plumbing_photo_read_allowed
+                )
+            )
             or (
                 self.command == "POST"
                 and path in {
@@ -4425,7 +4715,13 @@ class LegacyRouteHandlers:
             )
             return None
         if _has_access_profile(user, "ventilation_coordinator") and not (
-            (self.command == "GET" and path in {"/api/dashboard", "/api/updates"})
+            (
+                self.command == "GET"
+                and (
+                    path in {"/api/dashboard", "/api/updates"}
+                    or plumbing_photo_read_allowed
+                )
+            )
             or (
                 self.command == "POST"
                 and path in {
@@ -4456,7 +4752,10 @@ class LegacyRouteHandlers:
                 "ventilation_coordinator",
                 "employee",
             )
-        ) and path not in {"/api/auth/pin", "/api/auth/logout"}:
+        ) and not plumbing_photo_read_allowed and path not in {
+            "/api/auth/pin",
+            "/api/auth/logout",
+        }:
             self._send_json(
                 403,
                 {"error": "This account has no active access permissions. Contact an administrator."},
@@ -4482,6 +4781,13 @@ class LegacyRouteHandlers:
                 self.command == "GET"
                 and (
                     urlparse(self.path).path == "/api/updates"
+                    or (
+                        urlparse(self.path).path.startswith("/api/houses/")
+                            and (
+                                _has_access_profile(user, "vent_photos")
+                                or plumbing_photo_read_allowed
+                            )
+                    )
                     or urlparse(self.path).path == "/api/house-documents"
                     or urlparse(self.path).path.startswith("/api/house-documents/")
                     or urlparse(self.path).path == "/api/seai-documents"
@@ -4492,6 +4798,8 @@ class LegacyRouteHandlers:
                     )
                     or urlparse(self.path).path == "/api/house-vent-documents"
                     or urlparse(self.path).path.startswith("/api/house-vent-documents/")
+                    or urlparse(self.path).path.startswith("/api/house-vent-photos/")
+                    or urlparse(self.path).path.startswith("/api/house-plumbing-photos/")
                     or urlparse(self.path).path == "/api/supervisor/shared-seai-documents"
                     or urlparse(self.path).path.startswith("/api/supervisor/shared-seai-documents/")
                 )
@@ -4499,6 +4807,22 @@ class LegacyRouteHandlers:
             allowed = allowed or (
                 self.command == "POST"
                 and urlparse(self.path).path == "/api/house-vent-documents"
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/house-vent-photos/\d+/delete",
+                    urlparse(self.path).path,
+                )
+                is not None
+            )
+            allowed = allowed or (
+                self.command == "POST"
+                and re.fullmatch(
+                    r"/api/house-plumbing-photos/\d+/delete",
+                    urlparse(self.path).path,
+                )
+                is not None
             )
             allowed = allowed or (
                 self.command == "POST"
@@ -4787,6 +5111,19 @@ class LegacyRouteHandlers:
                            p.plan_plumber_done_by, p.plan_plumber_done_at,
                            p.plan_vent_required, p.plan_vent_notes,
                            p.plan_vent_done_by, p.plan_vent_done_at,
+                           p.plan_ceramic_fuse_board, p.plan_solar_pv_required,
+                           p.plan_pir_required, p.plan_order_variations,
+                           p.plan_windows_required,
+                           p.plan_ceramic_fuse_board_done_by,
+                           p.plan_ceramic_fuse_board_done_at,
+                           p.plan_solar_pv_required_done_by,
+                           p.plan_solar_pv_required_done_at,
+                           p.plan_pir_required_done_by,
+                           p.plan_pir_required_done_at,
+                           p.plan_order_variations_done_by,
+                           p.plan_order_variations_done_at,
+                           p.plan_windows_required_done_by,
+                           p.plan_windows_required_done_at,
                            hs.data AS survey_data, hs.notes AS survey_notes,
                            hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
                            assigned_surveyor.display_name AS assigned_surveyor_name,
@@ -4921,6 +5258,12 @@ class LegacyRouteHandlers:
                     trade: _can_complete_work_plan_trade(db, user, trade)
                     for trade in WORK_PLAN_TRADES
                 }
+                work_plan_permissions.update(
+                    {
+                        question: _has_access_profile(user, "assign")
+                        for question in WORK_PLAN_SURVEY_QUESTIONS
+                    }
+                )
                 seai_application_ids = _seai_application_ids_by_house(
                     db, [row["id"] for row in rows]
                 )
@@ -4942,6 +5285,8 @@ class LegacyRouteHandlers:
                         house[f"draft_plan_{trade}_notes"] = draft.get(
                             f"{trade}_notes", ""
                         )
+                    for question in WORK_PLAN_SURVEY_QUESTIONS:
+                        house[f"draft_plan_{question}"] = draft.get(question)
                     house["work_plan_draft_saved_at"] = draft.get("saved_at")
                 if not _has_access_profile(user, "surveyor"):
                     house.pop("surveyor_assigned_by", None)
@@ -5779,6 +6124,92 @@ class LegacyRouteHandlers:
                 self._send_png(image, (("X-PDF-Page-Count", str(page_count)),))
             else:
                 self._send_pdf(row["filename"], row["content"])
+        elif path.startswith("/api/house-plumbing-photos/"):
+            user = self._login_required()
+            if user is None:
+                return
+            with connect_db() as db:
+                photo_path = path[len("/api/house-plumbing-photos/"):].split("/")
+                if (
+                    len(photo_path) != 2
+                    or not photo_path[0].isdigit()
+                    or photo_path[1] != "file"
+                ):
+                    self._send_json(404, {"error": "Plumbing photo was not found."})
+                    return
+                row = db.execute(
+                    """
+                    SELECT house_id, filename, mime_type, content
+                    FROM house_plumbing_photos
+                    WHERE id = ?
+                    """,
+                    (int(photo_path[0]),),
+                ).fetchone()
+                if _has_access_profile(user, "plumbing_coordinator"):
+                    can_view = bool(
+                        row
+                        and _plumbing_coordinator_house_is_visible(
+                            db, row["house_id"]
+                        )
+                    )
+                else:
+                    can_view = _can_view_plumbing_house_photos(db, user)
+                if not can_view:
+                    self._send_json(403, {"error": "Plumbing photo access is required to view these images."})
+                    return
+                if (
+                    row is not None
+                    and _is_plumbing_supervisor(db, user)
+                    and not _has_plumbing_photo_view_access(db, user)
+                    and not db.execute(
+                        """
+                        SELECT 1 FROM house_role_assignments
+                        WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                        """,
+                        (row["house_id"], user["id"]),
+                    ).fetchone()
+                ):
+                    row = None
+            if row is None:
+                self._send_json(404, {"error": "Plumbing photo was not found."})
+                return
+            self._send_house_photo(row["filename"], row["content"], row["mime_type"])
+        elif path.startswith("/api/house-vent-photos/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if not _can_view_vent_house_photos(user):
+                self._send_json(403, {"error": "Vent photo access is required to view these images."})
+                return
+            photo_path = path[len("/api/house-vent-photos/"):].split("/")
+            if (
+                len(photo_path) != 2
+                or not photo_path[0].isdigit()
+                or photo_path[1] != "file"
+            ):
+                self._send_json(404, {"error": "Vent photo was not found."})
+                return
+            with connect_db() as db:
+                row = db.execute(
+                    """
+                    SELECT house_id, filename, mime_type, content
+                    FROM house_vent_photos
+                    WHERE id = ?
+                    """,
+                    (int(photo_path[0]),),
+                ).fetchone()
+                if (
+                    row is not None
+                    and _is_vent_photo_uploader(user)
+                    and not _ventilation_house_is_visible(
+                        db, row["house_id"], user["id"]
+                    )
+                ):
+                    row = None
+            if row is None:
+                self._send_json(404, {"error": "Vent photo was not found."})
+                return
+            self._send_house_photo(row["filename"], row["content"], row["mime_type"])
         elif path.startswith("/api/house-documents/"):
             user = self._login_required()
             if user is None:
@@ -6030,7 +6461,9 @@ class LegacyRouteHandlers:
                     and _in_department(db, user, "Ventilation")
                 ):
                     dashboard["ventilation_houses"] = _ventilation_house_list(
-                        db, user["id"]
+                        db,
+                        user["id"],
+                        include_photos=_can_view_vent_house_photos(user),
                     )
             if (
                 not _has_access_profile(user, "ventilation_coordinator")
@@ -6365,6 +6798,29 @@ class LegacyRouteHandlers:
                                 house["survey_documents"] = documents_by_house.get(
                                     house["id"], []
                                 )
+                            photos_by_house = {}
+                            for photo in plumbing_db.execute(
+                                f"""
+                                SELECT id, house_id, filename, size_bytes,
+                                       uploaded_by, uploaded_at, activity
+                                FROM house_plumbing_photos
+                                WHERE house_id IN ({house_placeholders})
+                                ORDER BY id DESC
+                                """,
+                                [
+                                    house["id"]
+                                    for house in dashboard["house_list"]
+                                ],
+                            ):
+                                photos_by_house.setdefault(
+                                    photo["house_id"], []
+                                ).append(dict(photo))
+                            for house in dashboard["house_list"]:
+                                house["plumbing_photos"] = photos_by_house.get(
+                                    house["id"], []
+                                )
+                                house["can_view_plumbing_photos"] = True
+                                house["can_upload_plumbing_photos"] = True
                 active_houses = sum(
                     not house["is_finished"]
                     and not house.get("plumbing_assignment_pending_activation")
@@ -6624,7 +7080,30 @@ class LegacyRouteHandlers:
             if user is None:
                 return
             is_admin = _has_access_profile(user, "admin")
-            if not is_admin and not _has_access_profile(user, "supervisor"):
+            is_supervisor = _has_access_profile(user, "supervisor")
+            is_plumbing_coordinator = _has_access_profile(user, "plumbing_coordinator")
+            is_vent_photo_uploader = _is_vent_photo_uploader(user)
+            is_photo_viewer = (
+                not is_admin
+                and not is_supervisor
+                and not is_vent_photo_uploader
+                and _has_access_profile(user, "vent_photos")
+            )
+            with connect_db() as db:
+                is_plumbing_photo_viewer = (
+                    not is_admin
+                    and not is_supervisor
+                    and not is_vent_photo_uploader
+                    and _has_plumbing_photo_view_access(db, user)
+                )
+            if (
+                not is_admin
+                and not is_supervisor
+                and not is_vent_photo_uploader
+                and not is_photo_viewer
+                and not is_plumbing_photo_viewer
+                and not is_plumbing_coordinator
+            ):
                 self._send_json(403, {"error": "Administrator or assigned Supervisor access is required."})
                 return
             raw_house_id = path[len("/api/houses/"):]
@@ -6636,15 +7115,41 @@ class LegacyRouteHandlers:
                 self._send_json(404, {"error": "House was not found."})
                 return
             with connect_db() as db:
-                if not is_admin and not db.execute(
-                    """
-                    SELECT 1 FROM house_role_assignments
-                    WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
-                    """,
-                    (house_id, user["id"]),
-                ).fetchone():
-                    self._send_json(404, {"error": "House was not found."})
-                    return
+                if not is_admin:
+                    if is_supervisor:
+                        has_house_access = db.execute(
+                            """
+                            SELECT 1 FROM house_role_assignments
+                            WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                            """,
+                            (house_id, user["id"]),
+                        ).fetchone()
+                    elif is_vent_photo_uploader:
+                        has_house_access = _ventilation_house_is_visible(
+                            db, house_id, user["id"]
+                        )
+                    elif is_plumbing_coordinator:
+                        has_house_access = _plumbing_coordinator_house_is_visible(
+                            db, house_id
+                        )
+                    elif is_photo_viewer:
+                        has_house_access = db.execute(
+                            "SELECT 1 FROM house_vent_photos WHERE house_id = ? LIMIT 1",
+                            (house_id,),
+                        ).fetchone()
+                    elif is_plumbing_photo_viewer:
+                        has_house_access = db.execute(
+                            """
+                            SELECT 1 FROM house_plumbing_photos
+                            WHERE house_id = ? LIMIT 1
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                    else:
+                        has_house_access = None
+                    if not has_house_access:
+                        self._send_json(404, {"error": "House was not found."})
+                        return
                 house = db.execute(
                     """
                     SELECT p.id, COALESCE(NULLIF(p.postcode, ''), h.postcode) AS postcode,
@@ -6664,6 +7169,9 @@ class LegacyRouteHandlers:
                            p.plan_esb_required, p.plan_esb_notes,
                            p.plan_plumber_required, p.plan_plumber_notes,
                            p.plan_vent_required, p.plan_vent_notes,
+                           p.plan_ceramic_fuse_board, p.plan_solar_pv_required,
+                           p.plan_pir_required, p.plan_order_variations,
+                           p.plan_windows_required,
                            hs.data AS survey_data,
                            COALESCE(hs.notes, '') AS survey_notes,
                            COALESCE(hs.updated_by, '') AS survey_updated_by,
@@ -6689,6 +7197,11 @@ class LegacyRouteHandlers:
                                NULL AS plan_esb_required, NULL AS plan_esb_notes,
                                NULL AS plan_plumber_required, NULL AS plan_plumber_notes,
                                NULL AS plan_vent_required, NULL AS plan_vent_notes,
+                               NULL AS plan_ceramic_fuse_board,
+                               NULL AS plan_solar_pv_required,
+                               NULL AS plan_pir_required,
+                               NULL AS plan_order_variations,
+                               NULL AS plan_windows_required,
                                NULL AS survey_data, '' AS survey_notes,
                                '' AS survey_updated_by, '' AS survey_updated_at
                         FROM houses
@@ -6699,6 +7212,64 @@ class LegacyRouteHandlers:
                     ).fetchone()
                 if house is None:
                     self._send_json(404, {"error": "House was not found."})
+                    return
+                if is_plumbing_coordinator:
+                    self._send_json(
+                        200,
+                        {
+                            "house": {
+                                "id": house["id"],
+                                "postcode": house["postcode"],
+                                "owner_name": house["owner_name"],
+                                "address": house["address"],
+                                "status": house["status"],
+                                "can_view_plumbing_photos": True,
+                                "photo_view_only": True,
+                                "plumbing_photos": _plumbing_house_photo_metadata(
+                                    db, house_id
+                                ),
+                            },
+                            "movements": [],
+                        },
+                    )
+                    return
+                if is_photo_viewer:
+                    self._send_json(
+                        200,
+                        {
+                            "house": {
+                                "id": house["id"],
+                                "postcode": house["postcode"],
+                                "owner_name": house["owner_name"],
+                                "address": house["address"],
+                                "status": house["status"],
+                                "can_view_vent_photos": True,
+                                "photo_view_only": True,
+                                "vent_photos": _vent_house_photo_metadata(db, house_id),
+                            },
+                            "movements": [],
+                        },
+                    )
+                    return
+                if is_plumbing_photo_viewer:
+                    self._send_json(
+                        200,
+                        {
+                            "house": {
+                                "id": house["id"],
+                                "postcode": house["postcode"],
+                                "owner_name": house["owner_name"],
+                                "address": house["address"],
+                                "status": house["status"],
+                                "can_view_plumbing_photos": True,
+                                "photo_view_only": True,
+                                "plumbing_photos": _plumbing_house_photo_metadata(
+                                    db, house_id
+                                ),
+                            },
+                            "movements": [],
+                        },
+                    )
                     return
                 movements = _house_movement_rows(db, house_id)
                 house_data = dict(house)
@@ -6737,6 +7308,35 @@ class LegacyRouteHandlers:
                 house_data["snags"] = _snags_by_house(db, include_created_at=True).get(
                     house_id, []
                 )
+                can_view_vent_photos = _can_view_vent_house_photos(user)
+                house_data["can_view_vent_photos"] = can_view_vent_photos
+                house_data["vent_photos"] = (
+                    _vent_house_photo_metadata(db, house_id)
+                    if can_view_vent_photos
+                    else []
+                )
+                can_view_plumbing_photos = _can_view_plumbing_house_photos(
+                    db, user
+                )
+                house_data["can_view_plumbing_photos"] = (
+                    can_view_plumbing_photos
+                )
+                house_data["can_upload_plumbing_photos"] = (
+                    _is_plumbing_supervisor(db, user)
+                    and db.execute(
+                        """
+                        SELECT 1 FROM house_role_assignments
+                        WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                        """,
+                        (house_id, user["id"]),
+                    ).fetchone()
+                    is not None
+                )
+                house_data["plumbing_photos"] = (
+                    _plumbing_house_photo_metadata(db, house_id)
+                    if can_view_plumbing_photos
+                    else []
+                )
                 house_data.update(
                     _house_audit_by_id(db).get(
                         house_id, {"status_history": [], "last_movement": None}
@@ -6761,6 +7361,10 @@ class LegacyRouteHandlers:
                     SELECT users.id, users.username, users.display_name, users.role,
                            roles.display_name AS role_name, users.is_active,
                            users.supervisor_specialty, users.team_name,
+                           EXISTS (
+                               SELECT 1 FROM app_user_plumbing_photo_access photo_access
+                               WHERE photo_access.user_id = users.id
+                           ) AS can_view_plumbing_photos,
                            COALESCE((
                                SELECT json_group_array(json_object(
                                    'id', departments.id,
@@ -7021,6 +7625,139 @@ class LegacyRouteHandlers:
 
             user = self._login_required()
             if user is None:
+                return
+            vent_photo_delete_match = re.fullmatch(
+                r"/api/house-vent-photos/(\d+)/delete", path
+            )
+            if vent_photo_delete_match:
+                if not _is_vent_photo_uploader(user):
+                    raise ApiError(
+                        403,
+                        "Only the Vent photo uploader can delete attached photos.",
+                    )
+                photo_id = int(vent_photo_delete_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        photo = db.execute(
+                            """
+                            SELECT house_id, filename
+                            FROM house_vent_photos
+                            WHERE id = ?
+                            """,
+                            (photo_id,),
+                        ).fetchone()
+                        if photo is None or not _ventilation_house_is_visible(
+                            db, photo["house_id"], user["id"]
+                        ):
+                            raise ApiError(404, "Assigned Vent photo was not found.")
+                        db.execute(
+                            "DELETE FROM house_vent_photos WHERE id = ?",
+                            (photo_id,),
+                        )
+                        remaining_count = db.execute(
+                            "SELECT COUNT(*) FROM house_vent_photos WHERE house_id = ?",
+                            (photo["house_id"],),
+                        ).fetchone()[0]
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "id": photo_id,
+                        "house_id": photo["house_id"],
+                        "filename": photo["filename"],
+                        "remaining_count": remaining_count,
+                    },
+                )
+                return
+            plumbing_photo_delete_match = re.fullmatch(
+                r"/api/house-plumbing-photos/(\d+)/delete", path
+            )
+            if plumbing_photo_delete_match:
+                photo_id = int(plumbing_photo_delete_match.group(1))
+                with connect_db() as db:
+                    if not _is_plumbing_supervisor(db, user):
+                        raise ApiError(
+                            403,
+                            "Only Plumbing Supervisors can delete Plumbing team photos.",
+                        )
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        photo = db.execute(
+                            """
+                            SELECT photo.house_id, photo.filename,
+                                   COALESCE(checklist.plumber_status,
+                                            provided.plan_plumber, 'not_done')
+                                       AS plumber_status,
+                                   (SELECT COUNT(*) FROM house_plumbing_photos count_photos
+                                    WHERE count_photos.house_id = photo.house_id)
+                                       AS photo_count
+                            FROM house_plumbing_photos photo
+                            JOIN provided_houses provided
+                              ON provided.id = photo.house_id
+                            LEFT JOIN house_checklists checklist
+                              ON checklist.house_id = photo.house_id
+                            WHERE photo.id = ?
+                              AND provided.plan_plumber_required = 1
+                              AND EXISTS (
+                                  SELECT 1 FROM house_role_assignments assignment
+                                  WHERE assignment.house_id = photo.house_id
+                                    AND assignment.role = 'supervisor'
+                                    AND assignment.user_id = ?
+                              )
+                            """,
+                            (photo_id, user["id"]),
+                        ).fetchone()
+                        if photo is None:
+                            raise ApiError(404, "Assigned Plumbing photo was not found.")
+                        db.execute(
+                            "DELETE FROM house_plumbing_photos WHERE id = ?",
+                            (photo_id,),
+                        )
+                        plumbing_reopened = (
+                            photo["photo_count"] == 1
+                            and photo["plumber_status"] == "done"
+                        )
+                        if plumbing_reopened:
+                            db.execute(
+                                """
+                                INSERT OR IGNORE INTO house_checklists (house_id)
+                                VALUES (?)
+                                """,
+                                (photo["house_id"],),
+                            )
+                            db.execute(
+                                """
+                                UPDATE house_checklists
+                                SET plumber_status = 'not_done'
+                                WHERE house_id = ?
+                                """,
+                                (photo["house_id"],),
+                            )
+                            db.execute(
+                                """
+                                UPDATE provided_houses
+                                SET plan_plumber_done_by = '',
+                                    plan_plumber_done_at = ''
+                                WHERE id = ?
+                                """,
+                                (photo["house_id"],),
+                            )
+                        remaining_count = db.execute(
+                            "SELECT COUNT(*) FROM house_plumbing_photos WHERE house_id = ?",
+                            (photo["house_id"],),
+                        ).fetchone()[0]
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "id": photo_id,
+                        "house_id": photo["house_id"],
+                        "filename": photo["filename"],
+                        "remaining_count": remaining_count,
+                        "plumbing_reopened": plumbing_reopened,
+                    },
+                )
                 return
             house_document_delete_match = re.fullmatch(
                 r"/api/house-documents/(\d+)/delete", path
@@ -8039,7 +8776,12 @@ class LegacyRouteHandlers:
                         ready = db.execute("""
                             SELECT p.plan_scaffolding_required,
                                    p.plan_esb_required,
-                                   p.plan_plumber_required
+                                   p.plan_plumber_required,
+                                   p.plan_ceramic_fuse_board,
+                                   p.plan_solar_pv_required,
+                                   p.plan_pir_required,
+                                   p.plan_order_variations,
+                                   p.plan_windows_required
                             FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
                             WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
                         """, (house_id,)).fetchone()
@@ -8098,6 +8840,40 @@ class LegacyRouteHandlers:
                                         house_id,
                                     ),
                                 )
+                            for question in WORK_PLAN_SURVEY_QUESTIONS:
+                                answer = draft_data.get(question)
+                                if answer is not None and not isinstance(answer, bool):
+                                    raise ApiError(
+                                        500,
+                                        "Saved pre-start work-plan draft is invalid.",
+                                    )
+                                if answer is None:
+                                    raise ApiError(
+                                        409,
+                                        "Answer every pre-start survey question before submitting the survey.",
+                                    )
+                            question_assignments = ", ".join(
+                                f"plan_{question} = ?, "
+                                f"plan_{question}_done_by = CASE "
+                                f"WHEN plan_{question} IS ? THEN plan_{question}_done_by "
+                                "ELSE '' END, "
+                                f"plan_{question}_done_at = CASE "
+                                f"WHEN plan_{question} IS ? THEN plan_{question}_done_at "
+                                "ELSE '' END"
+                                for question in WORK_PLAN_SURVEY_QUESTIONS
+                            )
+                            question_values = []
+                            for question in WORK_PLAN_SURVEY_QUESTIONS:
+                                answer = (
+                                    int(draft_data[question])
+                                    if isinstance(draft_data.get(question), bool)
+                                    else None
+                                )
+                                question_values.extend((answer, answer, answer))
+                            db.execute(
+                                f"UPDATE provided_houses SET {question_assignments} WHERE id = ?",
+                                (*question_values, house_id),
+                            )
                         elif any(
                             ready[f"plan_{trade}_required"] is None
                             for trade in ("scaffolding", "esb", "plumber")
@@ -8105,6 +8881,14 @@ class LegacyRouteHandlers:
                             raise ApiError(
                                 409,
                                 "Pre-start work plan is not saved. Save it before recording survey measurements.",
+                            )
+                        elif any(
+                            ready[f"plan_{question}"] is None
+                            for question in WORK_PLAN_SURVEY_QUESTIONS
+                        ):
+                            raise ApiError(
+                                409,
+                                "Answer every pre-start survey question before submitting the survey.",
                             )
                         db.execute(
                             """
@@ -8412,6 +9196,394 @@ class LegacyRouteHandlers:
                     {"id": cursor.lastrowid, "house_id": house_id, "filename": filename},
                 )
                 return
+            if path == "/api/house-plumbing-photos":
+                with connect_db() as db:
+                    if not _is_plumbing_supervisor(db, user):
+                        raise ApiError(
+                            403,
+                            "Only Plumbing Supervisors can upload Plumbing team photos.",
+                        )
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload an image using the file picker.")
+                body = self._body()
+                match = re.search(r'boundary="?([^";]+)"?', content_type)
+                if not match:
+                    raise ApiError(400, "Invalid image upload.")
+                try:
+                    boundary = match.group(1).encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ApiError(400, "Invalid image upload boundary.") from exc
+                house_id = ""
+                filename = ""
+                activity = ""
+                file_data = None
+                for part in body.split(b"--" + boundary):
+                    if b"\r\n\r\n" not in part:
+                        continue
+                    headers, content = part.split(b"\r\n\r\n", 1)
+                    disposition = re.search(
+                        rb'Content-Disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="([^"]*)")?',
+                        headers,
+                        re.IGNORECASE,
+                    )
+                    if not disposition:
+                        continue
+                    raw_content = content.rsplit(b"\r\n", 1)[0]
+                    if disposition.group(1) == b"house_id":
+                        try:
+                            house_id = raw_content.decode("utf-8").strip()
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid house ID.") from exc
+                    elif disposition.group(1) == b"activity":
+                        try:
+                            activity = raw_content.decode("utf-8").strip()
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid photo activity.") from exc
+                    elif disposition.group(1) == b"file":
+                        if file_data is not None:
+                            raise ApiError(400, "Upload one image at a time.")
+                        try:
+                            filename = (
+                                (disposition.group(2) or b"")
+                                .decode("utf-8")
+                                .replace("\\", "/")
+                                .rsplit("/", 1)[-1]
+                                .strip()
+                            )
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid image filename.") from exc
+                        file_data = raw_content
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                activity = activity or "Plumbing team photo"
+                if len(activity) > 240:
+                    raise ApiError(400, "Photo activity must be 240 characters or fewer.")
+                if not filename or len(filename) > 200:
+                    raise ApiError(400, "Choose a valid image filename.")
+                if not file_data:
+                    raise ApiError(400, "Choose an image to upload.")
+                if len(file_data) > HOUSE_PLUMBING_PHOTO_MAX_BYTES:
+                    raise ApiError(400, "House photos must be 8 MB or smaller.")
+                suffix = Path(filename).suffix.lower()
+                extension_formats = {
+                    ".jpg": "JPEG",
+                    ".jpeg": "JPEG",
+                    ".png": "PNG",
+                    ".webp": "WEBP",
+                    ".gif": "GIF",
+                    ".bmp": "BMP",
+                    ".tif": "TIFF",
+                    ".tiff": "TIFF",
+                }
+                expected_format = extension_formats.get(suffix)
+                try:
+                    if not expected_format:
+                        raise ValueError("Unsupported image extension.")
+                    with Image.open(BytesIO(file_data)) as image:
+                        image_format = image.format
+                        width, height = image.size
+                        if (
+                            image_format != expected_format
+                            or width < 1
+                            or height < 1
+                            or width > 10000
+                            or height > 10000
+                            or width * height > 40_000_000
+                        ):
+                            raise ValueError("Unsupported image format or dimensions.")
+                        image.verify()
+                except (
+                    OSError,
+                    SyntaxError,
+                    ValueError,
+                    Image.DecompressionBombError,
+                ) as exc:
+                    raise ApiError(
+                        400,
+                        "House photos must be valid JPG, PNG, WebP, GIF, BMP, or TIFF images with a matching extension and no larger than 40 megapixels.",
+                    ) from exc
+                if image_format == "TIFF":
+                    try:
+                        with Image.open(BytesIO(file_data)) as image:
+                            image.seek(0)
+                            image = ImageOps.exif_transpose(image)
+                            has_alpha = (
+                                "A" in image.getbands()
+                                or "transparency" in image.info
+                            )
+                            output_format = "PNG" if has_alpha else "JPEG"
+                            output = BytesIO()
+                            save_options = (
+                                {"quality": 90, "optimize": True}
+                                if output_format == "JPEG"
+                                else {}
+                            )
+                            image.convert(
+                                "RGBA" if has_alpha else "RGB"
+                            ).save(
+                                output,
+                                format=output_format,
+                                **save_options,
+                            )
+                    except (
+                        OSError,
+                        SyntaxError,
+                        ValueError,
+                        Image.DecompressionBombError,
+                    ) as exc:
+                        raise ApiError(
+                            400,
+                            "The selected TIFF photo could not be converted for viewing.",
+                        ) from exc
+                    file_data = output.getvalue()
+                    if len(file_data) > HOUSE_PLUMBING_PHOTO_MAX_BYTES:
+                        raise ApiError(
+                            400,
+                            "The converted photo exceeds the 8 MB upload limit.",
+                        )
+                    filename = str(
+                        Path(filename).with_suffix(
+                            ".png" if output_format == "PNG" else ".jpg"
+                        )
+                    )
+                    mime_type = Image.MIME[output_format]
+                else:
+                    mime_type = {
+                        "JPEG": "image/jpeg",
+                        "PNG": "image/png",
+                        "WEBP": "image/webp",
+                        "GIF": "image/gif",
+                        "BMP": "image/bmp",
+                    }[image_format]
+                with connect_db() as db:
+                    with db:
+                        assigned = db.execute(
+                            """
+                            SELECT 1
+                            FROM provided_houses provided
+                            JOIN house_role_assignments assignment
+                              ON assignment.house_id = provided.id
+                             AND assignment.role = 'supervisor'
+                            WHERE provided.id = ?
+                              AND assignment.user_id = ?
+                              AND provided.plan_plumber_required = 1
+                            """,
+                            (house_id, user["id"]),
+                        ).fetchone()
+                        if assigned is None:
+                            raise ApiError(
+                                404,
+                                "That Plumbing house is not assigned to you.",
+                            )
+                        count = db.execute(
+                            "SELECT COUNT(*) FROM house_plumbing_photos WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()[0]
+                        if count >= HOUSE_PLUMBING_PHOTO_MAX_COUNT:
+                            raise ApiError(
+                                409,
+                                "This house already has the maximum of 25 Plumbing team photos.",
+                            )
+                        uploaded_at = datetime.now().isoformat(timespec="seconds")
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_plumbing_photos
+                                (house_id, filename, mime_type, content, size_bytes,
+                                 uploaded_by, uploaded_at, activity)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                house_id,
+                                filename,
+                                mime_type,
+                                file_data,
+                                len(file_data),
+                                user["display_name"],
+                                uploaded_at,
+                                activity,
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": house_id,
+                        "filename": filename,
+                        "size_bytes": len(file_data),
+                        "uploaded_by": user["display_name"],
+                        "uploaded_at": uploaded_at,
+                        "activity": activity,
+                    },
+                )
+                return
+            if path == "/api/house-vent-photos":
+                if not _is_vent_photo_uploader(user):
+                    raise ApiError(
+                        403,
+                        "Only the assigned Vent team account can upload house photos.",
+                    )
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload an image using the file picker.")
+                body = self._body()
+                match = re.search(r'boundary="?([^";]+)"?', content_type)
+                if not match:
+                    raise ApiError(400, "Invalid image upload.")
+                try:
+                    boundary = match.group(1).encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ApiError(400, "Invalid image upload boundary.") from exc
+                house_id = ""
+                filename = ""
+                file_data = None
+                for part in body.split(b"--" + boundary):
+                    if b"\r\n\r\n" not in part:
+                        continue
+                    headers, content = part.split(b"\r\n\r\n", 1)
+                    disposition = re.search(
+                        rb'Content-Disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="([^"]*)")?',
+                        headers,
+                        re.IGNORECASE,
+                    )
+                    if not disposition:
+                        continue
+                    raw_content = content.rsplit(b"\r\n", 1)[0]
+                    if disposition.group(1) == b"house_id":
+                        try:
+                            house_id = raw_content.decode("utf-8").strip()
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid house ID.") from exc
+                    elif disposition.group(1) == b"file":
+                        if file_data is not None:
+                            raise ApiError(400, "Upload one image at a time.")
+                        raw_filename = disposition.group(2) or b""
+                        try:
+                            filename = raw_filename.decode("utf-8").replace("\\", "/").rsplit("/", 1)[-1].strip()
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid image filename.") from exc
+                        file_data = raw_content
+                if not house_id:
+                    raise ApiError(400, "A house ID is required.")
+                if not filename or len(filename) > 200:
+                    raise ApiError(400, "Choose a valid image filename.")
+                if not file_data:
+                    raise ApiError(400, "Choose an image to upload.")
+                if len(file_data) > HOUSE_VENT_PHOTO_MAX_BYTES:
+                    raise ApiError(400, "House photos must be 8 MB or smaller.")
+                suffix = Path(filename).suffix.lower()
+                extension_format = Image.registered_extensions().get(suffix)
+                try:
+                    with Image.open(BytesIO(file_data)) as image:
+                        image_format = image.format
+                        width, height = image.size
+                        mime_type = Image.MIME.get(image_format, "")
+                        if (
+                            not extension_format
+                            or image_format != extension_format
+                            or not mime_type.startswith("image/")
+                            or width < 1
+                            or height < 1
+                            or width > 10000
+                            or height > 10000
+                            or width * height > 40_000_000
+                        ):
+                            raise ValueError("Unsupported image format or dimensions.")
+                        image.verify()
+                except (
+                    OSError,
+                    SyntaxError,
+                    ValueError,
+                    Image.DecompressionBombError,
+                ) as exc:
+                    raise ApiError(
+                        400,
+                        "House photos must be valid image files with a matching extension and no larger than 40 megapixels.",
+                    ) from exc
+                if image_format not in {"JPEG", "PNG", "GIF", "WEBP", "BMP"}:
+                    try:
+                        with Image.open(BytesIO(file_data)) as image:
+                            image.seek(0)
+                            image = ImageOps.exif_transpose(image)
+                            has_alpha = (
+                                "A" in image.getbands()
+                                or "transparency" in image.info
+                            )
+                            output_format = "PNG" if has_alpha else "JPEG"
+                            output = BytesIO()
+                            save_options = (
+                                {"quality": 90, "optimize": True}
+                                if output_format == "JPEG"
+                                else {}
+                            )
+                            image.convert(
+                                "RGBA" if has_alpha else "RGB"
+                            ).save(
+                                output,
+                                format=output_format,
+                                **save_options,
+                            )
+                    except (
+                        OSError,
+                        SyntaxError,
+                        ValueError,
+                        Image.DecompressionBombError,
+                    ) as exc:
+                        raise ApiError(
+                            400,
+                            "The selected photo could not be converted for viewing.",
+                        ) from exc
+                    file_data = output.getvalue()
+                    if len(file_data) > HOUSE_VENT_PHOTO_MAX_BYTES:
+                        raise ApiError(
+                            400,
+                            "The converted house photo exceeds the 8 MB limit.",
+                        )
+                    filename = str(
+                        Path(filename).with_suffix(
+                            ".png" if output_format == "PNG" else ".jpg"
+                        )
+                    )
+                    mime_type = Image.MIME[output_format]
+                with connect_db() as db:
+                    with db:
+                        if not _ventilation_house_is_visible(
+                            db, house_id, user["id"]
+                        ):
+                            raise ApiError(404, "Assigned Vent house was not found.")
+                        count = db.execute(
+                            "SELECT COUNT(*) FROM house_vent_photos WHERE house_id = ?",
+                            (house_id,),
+                        ).fetchone()[0]
+                        if count >= HOUSE_VENT_PHOTO_MAX_COUNT:
+                            raise ApiError(409, "This house already has the maximum of 25 Vent team photos.")
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_vent_photos
+                                (house_id, filename, mime_type, content, size_bytes,
+                                 uploaded_by, uploaded_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                house_id,
+                                filename,
+                                mime_type,
+                                file_data,
+                                len(file_data),
+                                user["display_name"],
+                                datetime.now().isoformat(timespec="seconds"),
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": house_id,
+                        "filename": filename,
+                        "size_bytes": len(file_data),
+                    },
+                )
+                return
             if path == "/api/house-documents":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "surveyor")):
                     raise ApiError(403, "Surveyor access is required to upload house documents.")
@@ -8561,6 +9733,8 @@ class LegacyRouteHandlers:
                 "/api/house-checklist",
                 "/api/house-work-plan",
                 "/api/house-work-plan/complete",
+                "/api/house-vent-photos",
+                "/api/house-plumbing-photos",
                 "/api/seai-measure-variation",
                 "/api/teamlead/ewi-work/complete",
             }:
@@ -8923,6 +10097,50 @@ class LegacyRouteHandlers:
                                 409, "At least one active account must retain administrator access."
                             )
                 self._send_json(200, {"ok": True})
+            elif plumbing_photo_access_match := re.fullmatch(
+                r"/api/users/(\d+)/plumbing-photo-access", path
+            ):
+                if not self._admin_required(user):
+                    return
+                payload = self._json_body()
+                if (
+                    not isinstance(payload, dict)
+                    or set(payload) != {"can_view"}
+                    or not isinstance(payload["can_view"], bool)
+                ):
+                    raise ApiError(
+                        400, "Choose whether this account can view Plumbing photos."
+                    )
+                user_id = int(plumbing_photo_access_match.group(1))
+                with connect_db() as db:
+                    with db:
+                        if not db.execute(
+                            "SELECT 1 FROM app_users WHERE id = ?", (user_id,)
+                        ).fetchone():
+                            raise ApiError(404, "Account was not found.")
+                        if payload["can_view"]:
+                            db.execute(
+                                """
+                                INSERT INTO app_user_plumbing_photo_access
+                                    (user_id, granted_by, granted_at)
+                                VALUES (?, ?, ?)
+                                ON CONFLICT(user_id) DO UPDATE SET
+                                    granted_by = excluded.granted_by,
+                                    granted_at = excluded.granted_at
+                                """,
+                                (
+                                    user_id,
+                                    user["display_name"],
+                                    datetime.now().isoformat(timespec="seconds"),
+                                ),
+                            )
+                        else:
+                            db.execute(
+                                "DELETE FROM app_user_plumbing_photo_access "
+                                "WHERE user_id = ?",
+                                (user_id,),
+                            )
+                self._send_json(200, {"ok": True, "can_view": payload["can_view"]})
             elif organization_match := re.fullmatch(
                 r"/api/users/(\d+)/organization", path
             ):
@@ -9517,6 +10735,21 @@ class LegacyRouteHandlers:
                                 404,
                                 "That plumbing house is not assigned to you.",
                             )
+                        if (
+                            plumber_status == "done"
+                            and db.execute(
+                                """
+                                SELECT 1 FROM house_plumbing_photos
+                                WHERE house_id = ? LIMIT 1
+                                """,
+                                (house_id,),
+                            ).fetchone()
+                            is None
+                        ):
+                            raise ApiError(
+                                409,
+                                "Upload at least one Plumbing team photo before marking plumbing complete.",
+                            )
                         db.execute(
                             """
                             INSERT OR IGNORE INTO house_checklists (house_id)
@@ -9716,6 +10949,7 @@ class LegacyRouteHandlers:
                     raise ApiError(400, "House ID is required.")
                 required_values = {}
                 notes_values = {}
+                question_values = {}
                 for trade in WORK_PLAN_TRADES:
                     required = payload.get(f"{trade}_required")
                     if required is not None and not isinstance(required, bool):
@@ -9732,6 +10966,16 @@ class LegacyRouteHandlers:
                         None if required is None else int(required)
                     )
                     notes_values[trade] = notes.strip()
+                for question in WORK_PLAN_SURVEY_QUESTIONS:
+                    answer = payload.get(question)
+                    if answer is not None and not isinstance(answer, bool):
+                        raise ApiError(
+                            400,
+                            "Choose yes or no for each pre-start survey question.",
+                        )
+                    question_values[question] = (
+                        None if answer is None else int(answer)
+                    )
                 if any(
                     required_values[trade] is None
                     for trade in ("scaffolding", "esb", "plumber")
@@ -9748,11 +10992,26 @@ class LegacyRouteHandlers:
                         else bool(required_values[trade])
                     )
                     draft_data[f"{trade}_notes"] = notes_values[trade]
+                for question in WORK_PLAN_SURVEY_QUESTIONS:
+                    answer = question_values[question]
+                    draft_data[question] = (
+                        None if answer is None else bool(answer)
+                    )
                 assignments = ", ".join(
                     f"plan_{trade}_required = ?, plan_{trade}_notes = ?, "
                     f"plan_{trade}_done_by = CASE WHEN ? = 1 THEN plan_{trade}_done_by ELSE '' END, "
                     f"plan_{trade}_done_at = CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END"
                     for trade in WORK_PLAN_TRADES
+                )
+                assignments += ", " + ", ".join(
+                    f"plan_{question} = ?, "
+                    f"plan_{question}_done_by = CASE "
+                    f"WHEN plan_{question} IS ? THEN plan_{question}_done_by "
+                    "ELSE '' END, "
+                    f"plan_{question}_done_at = CASE "
+                    f"WHEN plan_{question} IS ? THEN plan_{question}_done_at "
+                    "ELSE '' END"
+                    for question in WORK_PLAN_SURVEY_QUESTIONS
                 )
                 values = []
                 for trade in WORK_PLAN_TRADES:
@@ -9765,6 +11024,9 @@ class LegacyRouteHandlers:
                             required or 0,
                         )
                     )
+                for question in WORK_PLAN_SURVEY_QUESTIONS:
+                    answer = question_values[question]
+                    values.extend((answer, answer, answer))
                 with connect_db() as db:
                     with db:
                         saved = db.execute(
@@ -9840,76 +11102,123 @@ class LegacyRouteHandlers:
                 if not isinstance(payload, dict):
                     raise ApiError(400, "Work plan update must be a JSON object.")
                 house_id = str(payload.get("house_id") or "").strip()
-                trade = payload.get("trade")
+                item = payload.get("item", payload.get("trade"))
                 done = payload.get("done")
                 if not house_id:
                     raise ApiError(400, "House ID is required.")
-                if trade not in WORK_PLAN_TRADES:
+                if item not in (*WORK_PLAN_TRADES, *WORK_PLAN_SURVEY_QUESTIONS):
                     raise ApiError(400, "Choose a valid work plan item.")
                 if not isinstance(done, bool):
                     raise ApiError(400, "Choose whether the work is done.")
                 with connect_db() as db:
                     with db:
-                        if not _can_complete_work_plan_trade(db, user, trade):
+                        if item in WORK_PLAN_SURVEY_QUESTIONS:
+                            if not _has_access_profile(user, "assign"):
+                                raise ApiError(
+                                    403,
+                                    "Only Assign access can check pre-start survey questions.",
+                                )
+                        elif not _can_complete_work_plan_trade(db, user, item):
                             raise ApiError(
                                 403,
                                 "Plumber work can only be checked by a Plumber."
-                                if trade == "plumber"
+                                if item == "plumber"
                                 else "Vent work can only be checked by a Vent team account."
-                                if trade == "vent"
+                                if item == "vent"
                                 else "Only Assign, External Wall Insulation supervisors and team leads can check this item.",
                             )
+                        if (
+                            item == "vent"
+                            and done
+                            and _is_vent_photo_uploader(user)
+                            and not db.execute(
+                                "SELECT 1 FROM house_vent_photos WHERE house_id = ? LIMIT 1",
+                                (house_id,),
+                            ).fetchone()
+                        ):
+                            raise ApiError(
+                                409,
+                                "Upload at least one Vent team photo before marking Vent work done.",
+                            )
                         completed_at = datetime.now().isoformat(timespec="seconds")
-                        saved = db.execute(
-                            f"""
-                            UPDATE provided_houses
-                            SET plan_{trade}_done_by = ?,
-                                plan_{trade}_done_at = ?
-                            WHERE id = ?
-                              AND plan_{trade}_required = 1
-                              AND (? = 1 OR plan_{trade}_done_at != '')
-                              AND (
-                                  (
-                                      ready_for_start = 1
-                                      AND NOT EXISTS (
-                                          SELECT 1 FROM houses
-                                          WHERE houses.id = provided_houses.id
+                        if item in WORK_PLAN_SURVEY_QUESTIONS:
+                            saved = db.execute(
+                                f"""
+                                UPDATE provided_houses
+                                SET plan_{item}_done_by = ?,
+                                    plan_{item}_done_at = ?
+                                WHERE id = ?
+                                  AND plan_{item} IS NOT NULL
+                                  AND (? = 1 OR plan_{item}_done_at != '')
+                                  AND (? = 0 OR plan_{item} = 1)
+                                  AND ready_for_start = 1
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM houses
+                                      WHERE houses.id = provided_houses.id
+                                  )
+                                """,
+                                (
+                                    user["display_name"] if done else "",
+                                    completed_at if done else "",
+                                    house_id,
+                                    int(done),
+                                    int(done),
+                                ),
+                            )
+                        else:
+                            saved = db.execute(
+                                f"""
+                                UPDATE provided_houses
+                                SET plan_{item}_done_by = ?,
+                                    plan_{item}_done_at = ?
+                                WHERE id = ?
+                                  AND plan_{item}_required = 1
+                                  AND (? = 1 OR plan_{item}_done_at != '')
+                                  AND (
+                                      (
+                                          ready_for_start = 1
+                                          AND NOT EXISTS (
+                                              SELECT 1 FROM houses
+                                              WHERE houses.id = provided_houses.id
+                                          )
+                                      )
+                                      OR (
+                                          ? = 'vent'
+                                          AND EXISTS (
+                                              SELECT 1 FROM houses
+                                              WHERE houses.id = provided_houses.id
+                                                AND houses.is_finished = 0
+                                          )
+                                          AND EXISTS (
+                                              SELECT 1 FROM house_vent_assignments assignment
+                                              WHERE assignment.house_id = provided_houses.id
+                                                AND assignment.teamlead_user_id = ?
+                                          )
                                       )
                                   )
-                                  OR (
-                                      ? = 'vent'
-                                      AND EXISTS (
-                                          SELECT 1 FROM houses
-                                          WHERE houses.id = provided_houses.id
-                                            AND houses.is_finished = 0
-                                      )
-                                      AND EXISTS (
-                                          SELECT 1 FROM house_vent_assignments assignment
-                                          WHERE assignment.house_id = provided_houses.id
-                                            AND assignment.teamlead_user_id = ?
-                                      )
-                                  )
-                              )
-                            """,
-                            (
-                                user["display_name"] if done else "",
-                                completed_at if done else "",
-                                house_id,
-                                int(done),
-                                trade,
-                                user["id"],
-                            ),
-                        )
+                                """,
+                                (
+                                    user["display_name"] if done else "",
+                                    completed_at if done else "",
+                                    house_id,
+                                    int(done),
+                                    item,
+                                    user["id"],
+                                ),
+                            )
                         if saved.rowcount == 0:
                             raise ApiError(
                                 409,
-                                "Only required work on Ready for start houses or assigned active Vent houses can be checked.",
+                                "Only Yes answers on Ready for start houses can be checked."
+                                if item in WORK_PLAN_SURVEY_QUESTIONS
+                                else "Only required work on Ready for start houses or assigned active Vent houses can be checked.",
                             )
                 self._send_json(
                     200,
                     {
                         "house_id": house_id,
-                        "trade": trade,
+                        "item": item,
+                        "trade": item,
                         "done_by": user["display_name"] if done else "",
                         "done_at": completed_at if done else "",
                     },

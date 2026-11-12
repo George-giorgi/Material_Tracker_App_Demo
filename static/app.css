@@ -514,6 +514,7 @@ body.plumbing-coordinator-mode #plumbing-house-list { grid-template-columns: min
 body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-card { display: grid; min-height: 220px; grid-template-columns: minmax(0, .88fr) minmax(0, 1.12fr); grid-template-rows: auto 1fr; align-items: start; column-gap: 22px; row-gap: 12px; padding: 20px; }
 body.plumbing-coordinator-mode #plumbing-house-list .ventilation-house-top { grid-column: 1; grid-row: 1; }
 body.plumbing-coordinator-mode #plumbing-house-list .plumbing-work-detail { grid-column: 1; grid-row: 2; }
+body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-detail-button { grid-column: 1; grid-row: 3; justify-self: start; }
 body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment { grid-column: 2; grid-row: 1 / span 2; align-self: stretch; align-content: center; margin: 0; border-top: 0; border-left: 1px solid #e8eee9; padding: 0 0 0 22px; }
 body.plumbing-coordinator-mode #plumbing-house-list .plumbing-assigned-supervisor,
 body.plumbing-coordinator-mode #plumbing-house-list .plumbing-completion-detail,
@@ -608,6 +609,8 @@ body.teamlead-workspace-mode .teamlead-ewi-complete-mark { justify-self: center;
 .user-row-specialty-edit input { min-width: 0; width: 190px; padding: 6px 8px; font-size: 11px; }
 .user-row-specialty-edit .button { min-height: 30px; padding: 5px 9px; font-size: 10px; }
 .user-organization-controls { display: grid; gap: 8px; }
+.user-plumbing-photo-access { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.user-plumbing-photo-access input { width: auto; margin: 0; }
 .user-department-options { display: flex; flex-wrap: wrap; gap: 5px 10px; margin: 0; border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; }
 .user-department-options legend { padding: 0 4px; color: var(--muted); }
 .user-department-options label { display: inline-flex; align-items: center; gap: 4px; }
@@ -1933,6 +1936,20 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 .kpi.closed { border-left-color: #b74745; background: #fff6f5; }
 .kpi.pending { border-left-color: #b98024; background: #fffaf0; }
 .kpi.ready { border-left-color: #347bc0; background: #f2f7fd; }
+.assign-house-kpis .kpi.seai { --assign-tab-accent: #607f8e; --assign-tab-selected-bg: #e4eef2; }
+.assign-house-kpis .kpi.pending { --assign-tab-accent: #a36b13; --assign-tab-selected-bg: #fff0cf; }
+.assign-house-kpis .kpi.ready { --assign-tab-accent: #286dad; --assign-tab-selected-bg: #dceafa; }
+.assign-house-kpis .kpi.active { --assign-tab-accent: #176c4c; --assign-tab-selected-bg: #dcefe5; }
+.assign-house-kpis .kpi.closed { --assign-tab-accent: #a63c3a; --assign-tab-selected-bg: #f8e1de; }
+.assign-house-kpis .kpi[aria-pressed="true"] {
+  border-color: var(--assign-tab-accent);
+  background: var(--assign-tab-selected-bg);
+  box-shadow: 0 0 0 2px var(--assign-tab-accent), 0 5px 14px #14223720;
+  transform: translateY(-1px);
+}
+.assign-house-kpis .kpi[aria-pressed="true"] .kpi-label,
+.assign-house-kpis .kpi[aria-pressed="true"] .kpi-value { color: var(--assign-tab-accent); }
+.assign-house-kpis .kpi:focus-visible { outline: 3px solid var(--assign-tab-accent); outline-offset: 3px; }
 .kpi-strip { color: #65756e; }
 .houses-teams-tabs { border-color: #dce6e1; border-radius: 11px; background: #eaf0ed; }
 .houses-teams-tab { min-height: 38px; border-radius: 8px; color: #52685d; font-size: 12px; }
@@ -3049,6 +3066,11 @@ html[data-theme="dark"] .kpi.active { border-left-color: #55c58e; background: #1
 html[data-theme="dark"] .kpi.closed { border-left-color: #e17f74; background: #382624; }
 html[data-theme="dark"] .kpi.pending { border-left-color: #e3b15e; background: #352f21; }
 html[data-theme="dark"] .kpi.ready { border-left-color: #75aee5; background: #202d3b; }
+html[data-theme="dark"] .assign-house-kpis .kpi.seai { --assign-tab-accent: #9cc4d5; --assign-tab-selected-bg: #2b4149; }
+html[data-theme="dark"] .assign-house-kpis .kpi.pending { --assign-tab-accent: #f0c56f; --assign-tab-selected-bg: #4a3c22; }
+html[data-theme="dark"] .assign-house-kpis .kpi.ready { --assign-tab-accent: #86baf0; --assign-tab-selected-bg: #2b4056; }
+html[data-theme="dark"] .assign-house-kpis .kpi.active { --assign-tab-accent: #77d6a5; --assign-tab-selected-bg: #254535; }
+html[data-theme="dark"] .assign-house-kpis .kpi.closed { --assign-tab-accent: #f09a91; --assign-tab-selected-bg: #4b302e; }
 html[data-theme="dark"] .kpi:where(button):hover {
   border-color: #587264;
   box-shadow: 0 7px 19px #050a0866;
@@ -4083,8 +4105,13 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .ventilation-house-top { display: flex; min-width: 0; align-items: center; gap: 13px; }
 .ventilation-house-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #edf5ef; color: #3a7d5f; font-size: 21px; }
 .ventilation-house-icon svg { display: block; width: 25px; height: 25px; }
-.plumbing-trade-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid #dcebe0; border-radius: 12px; background: #edf5ef; color: #32734e; }
-.plumbing-trade-icon svg { display: block; width: 25px; height: 25px; }
+.plumbing-trade-icon { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border: 1px solid #d7e8dc; border-radius: 14px; background: linear-gradient(145deg, #f8fcf9, #e8f3eb); box-shadow: inset 0 1px 0 #fff, 0 3px 8px #244a3210; color: #28714a; transition: transform .18s ease, box-shadow .18s ease; }
+.plumbing-trade-icon svg { display: block; width: 26px; height: 26px; }
+.plumbing-house-card:hover .plumbing-trade-icon { transform: translateY(-1px); box-shadow: inset 0 1px 0 #fff, 0 5px 12px #244a3218; }
+@media (prefers-reduced-motion: reduce) {
+  .plumbing-trade-icon,
+  .plumbing-house-card:hover .plumbing-trade-icon { transform: none; transition: none; }
+}
 .ventilation-house-identity { min-width: 0; flex: 1; }
 .ventilation-house-identity h3 { overflow-wrap: anywhere; margin: 0; color: #1d3729; font: 700 17px Manrope, sans-serif; }
 .ventilation-house-identity p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -4094,6 +4121,85 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .ventilation-house-card.is-complete .ventilation-house-completion { color: #247248; }
 .ventilation-house-notes, .ventilation-house-audit { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .ventilation-house-audit { color: #247248; font-weight: 650; }
+.vent-house-photo-summary { display: grid; gap: 6px; margin-top: 8px; border: 1px solid #e0e9e3; border-radius: 10px; padding: 8px; background: #f9fcfa; }
+.vent-house-photo-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: #365642; font-size: 11px; }
+.vent-house-photo-count { display: inline-flex; min-height: 24px; align-items: center; gap: 4px; border: 1px solid #d5e7d9; border-radius: 999px; padding: 0 7px; background: #edf7ef; color: #28643c; }
+.vent-house-photo-count svg { width: 15px; height: 15px; }
+.vent-house-photo-count > strong { font-size: 11px; }
+.vent-house-photo-count > span { font-size: 9px; font-weight: 650; }
+.vent-house-photo-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+.vent-house-photo-summary p { margin: 0; font-size: 10px; line-height: 1.35; }
+.vent-house-photo-thumbnails { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.vent-house-photo-thumbnails.is-vent-scrollable { display: flex; gap: 8px; overflow-x: auto; padding: 1px 1px 5px; overscroll-behavior-inline: contain; }
+.vent-house-photo-thumb { position: relative; min-width: 0; flex: 0 0 76px; }
+.vent-house-photo-thumb > .vent-house-photo { height: 66px; padding: 3px; }
+.vent-house-photo-thumb > .vent-house-photo img { height: 100%; aspect-ratio: auto; }
+.vent-photo-delete { position: absolute; top: 4px; right: 4px; display: grid; width: 23px; height: 23px; place-items: center; border: 1px solid #ffffffc7; border-radius: 50%; padding: 0; background: #24352ddd; color: #fff; box-shadow: 0 2px 6px #0003; transition: background .15s ease, transform .15s ease; }
+.vent-photo-delete:hover:not(:disabled) { transform: scale(1.08); background: #a63e38; }
+.vent-photo-delete:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.vent-photo-delete:disabled { cursor: progress; opacity: .6; }
+.vent-photo-delete svg { width: 13px; height: 13px; }
+.vent-photo-delete-all { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; margin-left: auto; border: 1px solid #e8c4c1; border-radius: 9px; padding: 0 11px; background: #fff5f4; color: #983d38; font-family: inherit; font-size: 10px; font-weight: 750; cursor: pointer; }
+.vent-photo-delete-all:hover:not(:disabled) { border-color: #cf8882; background: #fbe7e5; }
+.vent-photo-delete-all:focus-visible { outline: 3px solid #c46c64; outline-offset: 2px; }
+.vent-photo-delete-all:disabled { cursor: progress; opacity: .6; }
+.plumbing-photo-upload-control { display: grid; width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.plumbing-house-photo-summary .plumbing-photo-upload-control { width: auto; grid-template-columns: auto; }
+.plumbing-house-photo-summary .vent-photo-delete-all { margin-left: 0; }
+.vent-house-photo { display: grid; min-width: 0; gap: 5px; overflow: hidden; border: 1px solid #e0e9e3; border-radius: 9px; padding: 6px; background: #fff; color: #314c3b; text-decoration: none; }
+.vent-house-photo:hover { border-color: #9dc6a8; }
+.vent-house-photo img { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: 5px; background: #edf2ee; object-fit: cover; }
+.vent-house-photo.is-compact { padding: 3px; }
+.vent-house-photo span { overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.vent-house-photo small { color: #718078; font-size: 9px; }
+.vent-photo-attach { position: relative; display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 8px; border: 1px solid #cfe2d3; border-radius: 10px; padding: 0 12px; background: linear-gradient(135deg, #f3fbf5, #e8f5eb); color: #28643c; font-size: 10px; font-weight: 750; cursor: pointer; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background .16s ease; }
+.vent-photo-attach:hover { transform: translateY(-1px); border-color: #9dc6a8; background: #e8f5eb; box-shadow: 0 5px 13px #204a2d12; }
+.vent-photo-attach:focus-within { outline: 3px solid #77aa8b; outline-offset: 2px; }
+.vent-photo-attach svg { width: 17px; height: 17px; }
+.vent-photo-attach input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.vent-photo-attach.is-uploading { cursor: progress; opacity: .7; }
+.vent-photo-uploader { display: inline-flex; }
+.vent-photo-upload-button { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 9px; border: 1px solid #cfe2d3; border-radius: 11px; padding: 0 14px; background: linear-gradient(135deg, #f3fbf5, #e8f5eb); box-shadow: 0 2px 7px #204a2d0b; color: #28643c; font-family: inherit; font-size: 10px; font-weight: 750; line-height: 1.2; cursor: pointer; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background .16s ease, color .16s ease; }
+.vent-photo-upload-button:hover:not(:disabled) { transform: translateY(-1px); border-color: #9dc6a8; background: #e8f5eb; box-shadow: 0 5px 13px #204a2d12; }
+.vent-photo-upload-button:focus-visible { outline: 3px solid #77aa8b; outline-offset: 2px; }
+.vent-photo-upload-button:disabled { cursor: wait; box-shadow: none; opacity: 1; }
+.vent-photo-upload-button:disabled:not(.is-uploading) { cursor: not-allowed; opacity: .58; }
+button[data-plumbing-photo-trigger]:disabled { cursor: wait; opacity: .65; }
+button[data-plumbing-photo-trigger]:disabled:not(.is-uploading) { cursor: not-allowed; opacity: 1; }
+.vent-photo-upload-button.is-uploading { position: relative; isolation: isolate; overflow: hidden; border-color: #a9cdb2; background: linear-gradient(135deg, #edf7ef, #e4f1e7); box-shadow: 0 0 0 3px #dceee0; color: #426d4e; }
+.vent-photo-upload-button.is-uploading::after { position: absolute; z-index: 0; inset: 0; border-radius: inherit; background: linear-gradient(105deg, transparent 12%, #ffffff73 48%, transparent 84%); content: ""; pointer-events: none; transform: translateX(-110%); animation: vent-photo-shimmer 1.35s ease-in-out infinite; }
+.vent-photo-upload-button--vent.is-complete { border-color: #b9d1f1; background: linear-gradient(135deg, #eff6ff, #e1edff); color: #285b95; animation: vent-photo-success-in .24s ease-out both; }
+.vent-photo-upload-button--vent.is-complete:hover:not(:disabled) { border-color: #8db1e2; background: #e4efff; box-shadow: 0 5px 13px #285b9518; }
+.vent-photo-attach-icon { position: relative; z-index: 1; display: grid; width: 19px; height: 19px; flex: 0 0 auto; place-items: center; }
+.vent-photo-upload-button > [data-vent-photo-upload-label] { position: relative; z-index: 1; }
+.vent-photo-attach-glyph, .vent-photo-attach-success { width: 17px; height: 17px; }
+.vent-photo-attach-success, .vent-photo-upload-button .vent-photo-spinner { display: none; }
+.vent-photo-upload-button .vent-photo-spinner { width: 18px; height: 18px; border-width: 2.5px; border-bottom-color: transparent; box-shadow: 0 0 0 3px #28643c16; animation-duration: .62s; }
+.vent-photo-upload-button.is-uploading .vent-photo-attach-glyph,
+.vent-photo-upload-button.is-complete .vent-photo-attach-glyph { display: none; }
+.vent-photo-upload-button.is-uploading .vent-photo-spinner { display: block; }
+.vent-photo-upload-button.is-complete .vent-photo-attach-success { display: block; }
+.vent-photo-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.vent-photo-upload-status { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; color: #68796e; font-size: 10px; font-weight: 650; }
+.vent-photo-upload-status.is-uploading { color: #49745a; }
+.vent-photo-upload-status.is-complete { border: 1px solid #cce8d3; border-radius: 999px; padding: 0 10px; background: #eaf8ee; color: #247248; animation: vent-photo-success-in .24s ease-out both; }
+.plumbing-photo-upload-status.is-complete { border-color: #b9d1f1; background: linear-gradient(135deg, #eff6ff, #e1edff); color: #285b95; }
+.vent-photo-upload-status svg { width: 16px; height: 16px; }
+.vent-photo-spinner { width: 15px; height: 15px; flex: 0 0 auto; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: vent-photo-spin .7s linear infinite; }
+@keyframes vent-photo-spin { to { transform: rotate(360deg); } }
+@keyframes vent-photo-shimmer { to { transform: translateX(110%); } }
+@keyframes vent-photo-success-in { from { transform: scale(.88); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .vent-photo-spinner,
+  .vent-photo-upload-status.is-complete,
+  .vent-photo-upload-button.is-complete,
+  .vent-photo-upload-button.is-uploading::after { animation: none; }
+}
+.vent-house-photo-required { margin: 0 0 8px; color: #9b5531; font-size: 11px; line-height: 1.45; }
+.house-detail-vent-photos-card { margin-bottom: 14px; }
+.house-detail-vent-photos-card .card-heading { align-items: center; }
+.vent-house-photo-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.vent-house-photo-gallery .vent-house-photo img { aspect-ratio: 4 / 3; }
 .vent-survey-pdfs-button { display: flex; width: 100%; min-height: 66px; align-items: center; gap: 12px; margin-top: 15px; border: 1px solid #dce9df; border-radius: 13px; padding: 10px 13px; background: linear-gradient(110deg, #f8fcf9, #f0f7f2); color: #294d38; text-align: left; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease; }
 .vent-survey-pdfs-button:hover { transform: translateY(-1px); border-color: #9dc6a8; background: linear-gradient(110deg, #f2faf4, #eaf5ed); box-shadow: 0 7px 18px #204a2d12; }
 .vent-survey-pdfs-button:focus-visible { outline: 3px solid #77aa8b; outline-offset: 2px; }
@@ -4482,6 +4588,7 @@ body.surveyor-mode :is(button, input, a):focus-visible { outline: 3px solid #77a
   body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-card { min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 14px; padding: 16px; }
   body.plumbing-coordinator-mode #plumbing-house-list .ventilation-house-top,
   body.plumbing-coordinator-mode #plumbing-house-list .plumbing-work-detail,
+  body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-detail-button,
   body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment,
   body.plumbing-coordinator-mode #plumbing-house-list .plumbing-assigned-supervisor,
   body.plumbing-coordinator-mode #plumbing-house-list .plumbing-completion-detail,
@@ -4578,6 +4685,31 @@ html[data-theme="dark"] .vent-survey-pdf-empty { border-color: #405649; backgrou
 html[data-theme="dark"] .vent-survey-pdf-entry-actions [aria-pressed="true"] { border-color: #5a9070; background: #263d30; color: #cde8d4; }
 html[data-theme="dark"] .vent-survey-pdfs-loading { background: #1b2822; color: #b6c8bc; }
 html[data-theme="dark"] .vent-survey-pdfs-error { background: #382522; color: #ffc2b8; }
+html[data-theme="dark"] .vent-house-photo-summary { border-color: #35483f; background: #1b2822; }
+html[data-theme="dark"] .vent-house-photo-summary-heading { color: #d3e6d9; }
+html[data-theme="dark"] .vent-house-photo-count { border-color: #3d5949; background: #263d30; color: #c4e7cd; }
+html[data-theme="dark"] .vent-photo-attach { border-color: #3d5949; background: linear-gradient(135deg, #263d30, #1d3828); color: #c4e7cd; }
+html[data-theme="dark"] .vent-photo-attach:hover { border-color: #5a9070; background: #294332; }
+html[data-theme="dark"] .vent-photo-upload-button { border-color: #3d5949; background: linear-gradient(135deg, #263d30, #1d3828); color: #c4e7cd; }
+html[data-theme="dark"] .vent-photo-upload-button:disabled { opacity: 1; }
+html[data-theme="dark"] .vent-photo-upload-button:disabled:not(.is-uploading) { cursor: not-allowed; opacity: .58; }
+html[data-theme="dark"] button[data-plumbing-photo-trigger]:disabled { opacity: .65; }
+html[data-theme="dark"] button[data-plumbing-photo-trigger]:disabled:not(.is-uploading) { opacity: 1; }
+html[data-theme="dark"] .vent-photo-upload-button:hover:not(:disabled) { border-color: #5a9070; background: #294332; }
+html[data-theme="dark"] .vent-photo-upload-button.is-uploading { border-color: #45684f; background: linear-gradient(135deg, #273c30, #21382b); box-shadow: 0 0 0 3px #20362a; color: #b7ddc1; }
+html[data-theme="dark"] .vent-photo-upload-button.is-uploading::after { background: linear-gradient(105deg, transparent 12%, #ffffff24 48%, transparent 84%); }
+html[data-theme="dark"] .vent-photo-upload-button--vent.is-complete { border-color: #42638e; background: linear-gradient(135deg, #263c58, #20334b); color: #bdd9ff; }
+html[data-theme="dark"] .vent-photo-upload-button--vent.is-complete:hover:not(:disabled) { border-color: #668fbd; background: #2a4260; }
+html[data-theme="dark"] .vent-photo-upload-status.is-uploading { color: #b7ddc1; }
+html[data-theme="dark"] .vent-photo-upload-status.is-complete { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
+html[data-theme="dark"] .plumbing-photo-upload-status.is-complete { border-color: #42638e; background: linear-gradient(135deg, #263c58, #20334b); color: #bdd9ff; }
+html[data-theme="dark"] .vent-photo-delete { border-color: #293d33; background: #18251fdd; }
+html[data-theme="dark"] .vent-photo-delete:hover:not(:disabled) { background: #a63e38; }
+html[data-theme="dark"] .vent-photo-delete-all { border-color: #67413f; background: #352523; color: #ffc0b8; }
+html[data-theme="dark"] .vent-photo-delete-all:hover:not(:disabled) { border-color: #9f5b54; background: #492c29; }
+html[data-theme="dark"] .vent-house-photo { border-color: #35483f; background: #192622; color: #e0ebe3; }
+html[data-theme="dark"] .vent-house-photo small { color: #a7b8ad; }
+html[data-theme="dark"] .vent-house-photo-required { color: #f0bf94; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card,
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-empty { border-color: var(--line); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-empty { border-style: dashed; border-color: #476253; background: linear-gradient(145deg, #1d2b26, #192622); }
@@ -4592,7 +4724,8 @@ html[data-theme="dark"] body.ventilation-mode .ventilation-house-card:hover { bo
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card:hover { border-color: #527b62; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .ventilation-house-icon { background: #243d34; color: #a8dfbd; }
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-trade-icon { border-color: #3d5949; background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-trade-icon { border-color: #3b5b48; background: linear-gradient(145deg, #294735, #20382b); box-shadow: inset 0 1px 0 #ffffff0d, 0 3px 9px #0003; color: #b7ebc7; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-house-card:hover .plumbing-trade-icon { box-shadow: inset 0 1px 0 #ffffff12, 0 5px 13px #0004; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
@@ -4610,7 +4743,7 @@ html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-house-identi
 html[data-theme="dark"] body.plumbing-coordinator-mode .ventilation-workload-heading h2 { color: var(--ink); }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card { border-color: #35483f; background: var(--paper); box-shadow: 0 5px 18px #0002; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card:hover { border-color: #5b816b; box-shadow: 0 10px 25px #0004; }
-html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .plumbing-trade-icon { border-color: #3d5949; background: #243d34; color: #a8dfbd; }
+html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-card .plumbing-trade-icon { border-color: #3b5b48; background: linear-gradient(145deg, #294735, #20382b); color: #b7ebc7; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-kicker { color: #9dcfac; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-work-detail { border-color: #344b3d; border-left-color: #5c9d70; background: #1b2c23; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-surveyor-avatar { border-color: #3d5947; background: #263b2e; color: #a9dfb9; }
@@ -6251,7 +6384,11 @@ html[data-theme="dark"] #houses-list .surveyor-house-card:hover { border-color: 
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit strong { color: #315b3d; font-weight: 750; }
 :is(#houses-list, #plumbing-supervisor-house-list) .supervisor-house-assignment-credit time { color: #75867a; font-size: 9px; font-variant-numeric: tabular-nums; }
 :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs { margin-top: 10px; border: 1px solid #e3eae5; border-radius: 12px; padding: 10px 12px; background: #f8faf8; }
-:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #354d3d; cursor: pointer; font-size: 12px; font-weight: 750; list-style: none; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary { display: flex; align-items: center; justify-content: flex-start; gap: 8px; color: #354d3d; cursor: pointer; font-size: 12px; font-weight: 750; list-style: none; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary > span:first-child { margin-right: auto; }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary::after { width: 7px; height: 7px; flex: 0 0 auto; margin: -3px 1px 0 0; border-right: 1.8px solid currentColor; border-bottom: 1.8px solid currentColor; content: ""; transform: rotate(45deg); }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs[open] > summary::after { margin-top: 4px; transform: rotate(225deg); }
+:is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 3px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdfs summary::-webkit-details-marker { display: none; }
 :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-count { display: grid; min-width: 22px; height: 22px; place-items: center; border-radius: 999px; background: #e6efe8; color: #365b42; font-size: 11px; }
 :is(#houses-list, #plumbing-supervisor-house-list) .plumbing-survey-pdf-list { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
@@ -6598,11 +6735,15 @@ html[data-theme="dark"] .work-plan-detail { color: #b9d1c2; }
 .work-plan-empty-copy small { color: #66776c; font-size: 10px; line-height: 1.4; }
 .work-plan-count { border-radius: 999px; padding: 2px 9px; background: #e2f5e8; color: #17653a; font-size: 10px; font-weight: 700; }
 .work-plan-count.has-required { background: #fff0d1; color: #8a5400; }
+.work-plan-trade-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 7px; }
 .work-plan-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; border: 1px solid #e3ebe5; border-left-width: 4px; border-radius: 9px; padding: 7px 10px; background: #fbfdfb; }
 .work-plan-icon { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 800; line-height: 1; }
 .work-plan-label { display: grid; gap: 2px; min-width: 0; color: #294338; font-size: 12px; }
 .work-plan-label strong { font-size: 12px; font-weight: 700; }
 .work-plan-label small { color: #63786a; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.work-plan-label .work-plan-survey-answer { width: fit-content; border: 1px solid #d5ded8; border-radius: 999px; padding: 2px 8px; background: #f0f3f1; color: #52635a; font-size: 10px; font-weight: 750; line-height: 1.35; }
+.work-plan-label .work-plan-survey-answer.is-yes { border-color: #e09a1a; background: #fff3d6; color: #7a4a00; }
+.work-plan-label .work-plan-survey-answer.is-no { border-color: #3a9a63; background: #e6f7ed; color: #17653a; }
 .work-plan-badge { border-radius: 999px; padding: 4px 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .work-plan-row-required { border-color: #f0cf91; border-left-color: #e09a1a; background: #fffaf0; }
 .work-plan-row-required .work-plan-icon { background: #e09a1a; color: #fff; }
@@ -6613,6 +6754,21 @@ html[data-theme="dark"] .work-plan-detail { color: #b9d1c2; }
 .work-plan-row-unset { border-left-color: #9aa5a0; }
 .work-plan-row-unset .work-plan-icon { background: #eef0f2; color: #59636e; }
 .work-plan-row-unset .work-plan-badge { background: #eef0f2; color: #59636e; }
+.work-plan-question-summary { display: grid; gap: 6px; min-width: 0; container-type: inline-size; }
+.work-plan-question-summary > .work-plan-question-items { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
+.work-plan-question-row { grid-template-columns: 32px minmax(0, 1fr) auto; gap: 9px; }
+.work-plan-question-row .work-plan-check { width: 32px; height: 32px; }
+.work-plan-question-row.work-plan-row-clear .work-plan-badge { border: 1px solid #3a9a63; background: #f5fbf7; color: #17653a; }
+@container (min-width: 640px) {
+  .work-plan-question-summary > .work-plan-question-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  #houses-list.house-grid:has(> .assign-house-card) { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 460px) {
+  .work-plan-question-row { grid-template-columns: 32px minmax(0, 1fr); align-items: start; }
+  .work-plan-question-row .work-plan-badge { grid-column: 2; justify-self: start; }
+}
 html[data-theme="dark"] .work-plan-count { background: #1f4a31; color: #b9efc6; }
 html[data-theme="dark"] .work-plan-count.has-required { background: #5a3d0a; color: #ffd98a; }
 html[data-theme="dark"] .work-plan-empty { border-color: #3a5043; background: #202c26; color: #c1d0c6; }
@@ -6622,6 +6778,9 @@ html[data-theme="dark"] .work-plan-empty-copy small { color: #afc1b4; }
 html[data-theme="dark"] .work-plan-row { border-color: #35483f; background: #1f2b26; }
 html[data-theme="dark"] .work-plan-label { color: #e6efe9; }
 html[data-theme="dark"] .work-plan-label small { color: #aabfb2; }
+html[data-theme="dark"] .work-plan-label .work-plan-survey-answer { border-color: #465951; background: #263630; color: #c3d0c8; }
+html[data-theme="dark"] .work-plan-label .work-plan-survey-answer.is-yes { border-color: #f2b23a; background: #2c2617; color: #ffd98a; }
+html[data-theme="dark"] .work-plan-label .work-plan-survey-answer.is-no { border-color: #4fbf80; background: #1b2e24; color: #b9efc6; }
 html[data-theme="dark"] .work-plan-row-required { border-color: #7a5a1c; border-left-color: #f2b23a; background: #2c2617; }
 html[data-theme="dark"] .work-plan-row-required .work-plan-icon { background: #f2b23a; color: #2b1d00; }
 html[data-theme="dark"] .work-plan-row-required .work-plan-badge { background: #5a3d0a; color: #ffd98a; }
@@ -6647,12 +6806,74 @@ html[data-theme="dark"] .work-plan-check:hover { background: #3a2f14; }
 html[data-theme="dark"] .work-plan-check[aria-pressed="true"] { border-color: #4fbf80; background: #4fbf80; }
 html[data-theme="dark"] .work-plan-row-unset .work-plan-icon,
 html[data-theme="dark"] .work-plan-row-unset .work-plan-badge { background: #33413a; color: #c3d0c8; }
+html[data-theme="dark"] .work-plan-question-row.work-plan-row-clear .work-plan-badge { border-color: #4fbf80; background: #1b2e24; color: #b9efc6; }
 
 .work-plan-eyebrow { display: block; margin-bottom: 3px; color: #2f8a57; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.work-plan-progress { align-self: flex-start; border-radius: 999px; padding: 5px 12px; background: #e7f4ec; color: #1d6b40; font-size: 11px; font-weight: 700; white-space: nowrap; }
-.surveyor-work-plan-form { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.survey-room-work-plan-card > .card-heading { align-items: flex-start; gap: 18px; padding: 22px 24px 17px; }
+.survey-room-work-plan-card > .card-heading > div { max-width: 760px; }
+.survey-room-work-plan-card { overflow: visible; }
+.work-plan-progress { display: inline-flex; align-items: center; align-self: flex-start; flex: 0 0 auto; border: 1px solid #cfe5d6; border-radius: 999px; padding: 8px 13px; background: #edf7f0; box-shadow: inset 0 1px 0 #ffffffa6; color: #1d6b40; font-size: 11px; font-weight: 750; line-height: 1.3; white-space: nowrap; }
+.surveyor-work-plan-form { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-bottom: 22px; }
 .surveyor-work-plan-form .survey-room-notes-actions { grid-column: 1 / -1; }
-.work-plan-trade { display: grid; gap: 10px; border: 1px solid #e1eae4; border-top: 4px solid #9aa5a0; border-radius: 12px; padding: 12px; background: #fbfdfb; transition: border-color .18s ease, background .18s ease; }
+.work-plan-survey-questions { grid-column: 1 / -1; display: grid; gap: 14px; border: 1px solid #dce8df; border-radius: 15px; padding: 17px; background: linear-gradient(145deg, #f8fbf9, #f2f7f3); box-shadow: 0 4px 14px #193b2407; }
+.work-plan-questions-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.work-plan-questions-heading h3 { margin: 0; color: #294338; font-size: 14px; font-weight: 750; }
+.work-plan-questions-heading p { margin: 3px 0 0; color: #718078; font-size: 11px; line-height: 1.4; }
+.work-plan-questions-heading > span { flex: 0 0 auto; border: 1px solid #d9e8dd; border-radius: 999px; padding: 5px 9px; background: #fff; color: #52705c; font-size: 10px; font-weight: 700; }
+.work-plan-survey-questions .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.work-plan-survey-questions .field { display: grid; align-content: start; gap: 9px; min-width: 0; min-height: 112px; margin: 0; border: 1px solid #e0e9e3; border-radius: 12px; padding: 13px; background: #fff; box-shadow: 0 2px 7px #193b2408; color: #30493a; font-size: 12px; font-weight: 700; line-height: 1.4; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.work-plan-question-field { position: relative; }
+.work-plan-question-label { display: block; }
+.work-plan-survey-questions .field:focus-within { z-index: 4; transform: translateY(-1px); border-color: #8ebc9b; box-shadow: 0 5px 14px #193b2412; }
+.work-plan-dropdown { position: relative; min-width: 0; margin-top: auto; }
+.work-plan-dropdown-trigger { display: flex; width: 100%; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; border: 1.5px solid #d4e0d7; border-radius: 10px; padding: 8px 13px; background: #fbfdfb; color: #64746a; font: inherit; font-size: 13px; font-weight: 650; text-align: left; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.work-plan-dropdown-trigger:hover { border-color: #8bb99a; background: #fff; }
+.work-plan-dropdown-trigger[aria-expanded="true"] { border-color: #4c9a6d; background: #fff; box-shadow: 0 0 0 3px #4c9a6d20; color: #304b3a; }
+.work-plan-dropdown-trigger[data-selected-value="true"] { border-color: #e09a1a; background: #fff3d6; color: #7a4a00; }
+.work-plan-dropdown-trigger[data-selected-value="false"] { border-color: #3a9a63; background: #e6f7ed; color: #17653a; }
+.work-plan-dropdown-trigger[aria-invalid="true"] { border-color: #c65e54; background: #fff8f7; }
+.work-plan-dropdown-trigger:focus-visible { outline: 0; border-color: #4c9a6d; box-shadow: 0 0 0 3px #4c9a6d35; }
+.work-plan-dropdown-trigger[aria-expanded="true"] .work-plan-dropdown-chevron { transform: translateY(2px) rotate(225deg); }
+.work-plan-dropdown-chevron { width: 8px; height: 8px; flex: 0 0 8px; border-right: 2px solid #5b7e67; border-bottom: 2px solid #5b7e67; transform: translateY(-2px) rotate(45deg); transition: transform .16s ease, border-color .16s ease; }
+.work-plan-dropdown-trigger:hover .work-plan-dropdown-chevron,
+.work-plan-dropdown-trigger:focus-visible .work-plan-dropdown-chevron { border-color: #267344; }
+.work-plan-dropdown-list { position: absolute; z-index: 20; top: calc(100% + 7px); right: 0; left: 0; display: grid; gap: 4px; max-height: 128px; overflow-y: auto; border: 1px solid #dce7df; border-radius: 12px; padding: 6px; background: #fff; box-shadow: 0 12px 28px #193b241c, 0 2px 6px #193b240c; }
+.work-plan-dropdown-list[hidden] { display: none; }
+.work-plan-dropdown-option { display: flex; min-height: 42px; align-items: center; gap: 10px; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; color: #3e5546; font-size: 13px; font-weight: 650; cursor: pointer; outline: none; transition: border-color .14s ease, background-color .14s ease, color .14s ease; }
+.work-plan-dropdown-option::before { display: grid; width: 18px; height: 18px; flex: 0 0 18px; place-items: center; border: 1.5px solid #c9d8cd; border-radius: 50%; color: #fff; content: ""; font-size: 11px; font-weight: 800; }
+.work-plan-dropdown-option:hover,
+.work-plan-dropdown-option:focus-visible { border-color: #dcebe0; background: #f5faf6; color: #1c6a3d; }
+.work-plan-dropdown-option[data-value="true"][aria-selected="true"] { border-color: #e09a1a; background: #fff3d6; color: #7a4a00; }
+.work-plan-dropdown-option[data-value="true"][aria-selected="true"]::before { border-color: #e09a1a; background: #e09a1a; content: "✓"; }
+.work-plan-dropdown-option[data-value="false"][aria-selected="true"] { border-color: #3a9a63; background: #e6f7ed; color: #17653a; }
+.work-plan-dropdown-option[data-value="false"][aria-selected="true"]::before { border-color: #3a9a63; background: #3a9a63; content: "✓"; }
+html[data-theme="dark"] .work-plan-progress { border-color: #355a43; background: #1f4a31; box-shadow: inset 0 1px 0 #ffffff0d; color: #b9efc6; }
+html[data-theme="dark"] .work-plan-survey-questions { border-color: #35483f; background: linear-gradient(145deg, #1d2b25, #192622); }
+html[data-theme="dark"] .work-plan-questions-heading h3 { color: #e6efe9; }
+html[data-theme="dark"] .work-plan-questions-heading p { color: #aabfb2; }
+html[data-theme="dark"] .work-plan-questions-heading > span { border-color: #35483f; background: #26372f; color: #b9d1c2; }
+html[data-theme="dark"] .work-plan-survey-questions .field { border-color: #35483f; background: #202c26; color: #e0ebe4; box-shadow: 0 2px 7px #00000014; }
+html[data-theme="dark"] .work-plan-dropdown-trigger { border-color: #465951; background: #17211e; color: #aabbb0; }
+html[data-theme="dark"] .work-plan-dropdown-trigger:hover { border-color: #74c998; background: #1d2b26; }
+html[data-theme="dark"] .work-plan-dropdown-trigger[aria-expanded="true"] { border-color: #74c998; background: #1d2b26; color: #e4ece8; }
+html[data-theme="dark"] .work-plan-dropdown-trigger[data-selected-value="true"] { border-color: #f2b23a; background: #2c2617; color: #ffd98a; }
+html[data-theme="dark"] .work-plan-dropdown-trigger[data-selected-value="false"] { border-color: #4fbf80; background: #1b2e24; color: #b9efc6; }
+html[data-theme="dark"] .work-plan-dropdown-trigger[aria-invalid="true"] { border-color: #d17a70; background: #332322; }
+html[data-theme="dark"] .work-plan-dropdown-trigger:focus-visible { border-color: #74c998; box-shadow: 0 0 0 3px #74c99830; }
+html[data-theme="dark"] .work-plan-dropdown-chevron { border-color: #b9d1c2; }
+html[data-theme="dark"] .work-plan-dropdown-trigger:hover .work-plan-dropdown-chevron,
+html[data-theme="dark"] .work-plan-dropdown-trigger:focus-visible .work-plan-dropdown-chevron { border-color: #74c998; }
+html[data-theme="dark"] .work-plan-dropdown-list { border-color: #40564a; background: #1b2822; box-shadow: 0 12px 28px #0000004a, 0 2px 6px #00000030; }
+html[data-theme="dark"] .work-plan-dropdown-option { color: #c5d5cb; }
+html[data-theme="dark"] .work-plan-dropdown-option::before { border-color: #61766a; }
+html[data-theme="dark"] .work-plan-dropdown-option:hover,
+html[data-theme="dark"] .work-plan-dropdown-option:focus-visible { border-color: #3c6348; background: #23392b; color: #d5efdc; }
+html[data-theme="dark"] .work-plan-dropdown-option[data-value="true"][aria-selected="true"] { border-color: #f2b23a; background: #2c2617; color: #ffd98a; }
+html[data-theme="dark"] .work-plan-dropdown-option[data-value="true"][aria-selected="true"]::before { border-color: #f2b23a; background: #f2b23a; color: #06210f; content: "✓"; }
+html[data-theme="dark"] .work-plan-dropdown-option[data-value="false"][aria-selected="true"] { border-color: #4fbf80; background: #1b2e24; color: #b9efc6; }
+html[data-theme="dark"] .work-plan-dropdown-option[data-value="false"][aria-selected="true"]::before { border-color: #4fbf80; background: #4fbf80; color: #06210f; content: "✓"; }
+.work-plan-trade { display: grid; gap: 12px; border: 1px solid #e1eae4; border-top: 4px solid #9aa5a0; border-radius: 14px; padding: 15px; background: #fbfdfb; box-shadow: 0 3px 12px #193b2408; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease; }
+.work-plan-trade:hover { transform: translateY(-1px); box-shadow: 0 7px 18px #193b2410; }
 .work-plan-trade[data-state="required"] { border-color: #f0cf91; border-top-color: #e09a1a; background: #fffaf0; }
 .work-plan-trade[data-state="clear"] { border-color: #cfe6d8; border-top-color: #3a9a63; background: #f4fbf6; }
 .work-plan-trade-head { display: flex; align-items: center; gap: 9px; color: #284634; font-size: 13px; }
@@ -6668,7 +6889,8 @@ html[data-theme="dark"] .work-plan-row-unset .work-plan-badge { background: #334
 .work-plan-trade textarea:focus { border-color: #8bb99a; box-shadow: 0 0 0 3px #2c8b501a; outline: none; }
 html[data-theme="dark"] .work-plan-eyebrow { color: #7fd6a2; }
 html[data-theme="dark"] .work-plan-progress { background: #1f4a31; color: #b9efc6; }
-html[data-theme="dark"] .work-plan-trade { border-color: #35483f; border-top-color: #6f7f77; background: #192622; }
+html[data-theme="dark"] .work-plan-trade { border-color: #35483f; border-top-color: #6f7f77; background: #192622; box-shadow: 0 3px 12px #00000014; }
+html[data-theme="dark"] .work-plan-trade:hover { box-shadow: 0 7px 18px #00000024; }
 html[data-theme="dark"] .work-plan-trade[data-state="required"] { border-color: #7a5a1c; border-top-color: #f2b23a; background: #2c2617; }
 html[data-theme="dark"] .work-plan-trade[data-state="clear"] { border-color: #2f6a47; border-top-color: #4fbf80; background: #1b2e24; }
 html[data-theme="dark"] .work-plan-trade-head { color: #e6efe9; }
@@ -6681,6 +6903,14 @@ html[data-theme="dark"] .work-plan-trade select,
 html[data-theme="dark"] .work-plan-trade textarea { border-color: #465951; background: #17211e; color: #e4ece8; }
 @media (max-width: 760px) {
   .surveyor-work-plan-form { grid-template-columns: 1fr; }
+  .work-plan-survey-questions .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #surveyor-room .survey-room-work-plan-card > .card-heading { flex-direction: column; }
+}
+@media (max-width: 520px) {
+  .work-plan-survey-questions .form-grid { grid-template-columns: 1fr; }
+  .work-plan-survey-questions .field { min-height: 0; }
+  .work-plan-questions-heading { align-items: flex-start; }
+  .survey-room-work-plan-card > .card-heading { gap: 10px; }
 }
 .work-plan-trade select { appearance: none; -webkit-appearance: none; min-height: 44px; width: 100%; border: 1.5px solid #cfdcd3; border-radius: 10px; padding: 8px 40px 8px 12px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23567' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 14px center; color: #5d6d63; font-size: 13px; font-weight: 650; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease; }
 .work-plan-trade select:hover { border-color: #8bb99a; }
@@ -7144,9 +7374,28 @@ body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-ca
   padding: 18px;
   box-shadow: 0 5px 18px #203a2b0a;
 }
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-photo-summary {
+  margin-top: 0;
+}
 body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-card:hover {
   border-color: #9dc8aa;
   box-shadow: 0 10px 24px #203a2b12;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-card-completion {
+  display: grid;
+  gap: 9px;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-card-completion .vent-house-photo-required {
+  margin: 0;
+  border-left: 3px solid #d5a656;
+  border-radius: 0 8px 8px 0;
+  padding: 9px 11px;
+  background: #fff8eb;
+  line-height: 1.5;
+}
+body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-card-completion .plumbing-completion-toggle {
+  width: 100%;
+  min-height: 46px;
 }
 body.plumbing-supervisor-mode #plumbing-supervisor-house-list .house-status-stack {
   flex-wrap: wrap;
@@ -7299,6 +7548,11 @@ html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house
   border-color: #618c6d;
   box-shadow: 0 10px 26px #0005;
 }
+html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-card-completion .vent-house-photo-required {
+  border-left-color: #c99e52;
+  background: #352d20;
+  color: #f0d7a4;
+}
 html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house-list .house-meta h2 {
   color: #eff7f1;
 }
@@ -7361,6 +7615,39 @@ html[data-theme="dark"] body.plumbing-supervisor-mode #plumbing-supervisor-house
   color: #b7c8be;
 }
 @media (max-width: 680px) {
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-card .house-top {
+    display: grid !important;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px 10px;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    scrollbar-gutter: auto;
+  }
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-card .house-meta {
+    grid-column: 2;
+  }
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-card .house-status-stack {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list .supervisor-house-assignment-credit {
+    width: 100%;
+    margin: 0;
+  }
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-house-card .plumbing-photo-upload-control {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list [data-plumbing-photo-trigger] {
+    width: 100%;
+    min-height: 44px;
+  }
+  body.plumbing-supervisor-mode #plumbing-supervisor-house-list .plumbing-photo-delete-all {
+    min-height: 40px;
+  }
   body:is(.plumbing-supervisor-mode, .ventilation-mode) :is(#plumbing-supervisor-workload, #ventilation-workload) .ventilation-workload-heading {
     align-items: stretch;
   }

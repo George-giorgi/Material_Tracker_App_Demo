@@ -221,6 +221,7 @@ class TrackerTests(unittest.TestCase):
                     "access.plumber",
                     "access.plumbing_coordinator",
                     "access.ventilation_coordinator",
+                    "access.vent_photos",
                     "access.employee",
                 },
             )
@@ -2693,6 +2694,11 @@ class TrackerTests(unittest.TestCase):
                     "plumber_notes": "Coordinate with owner",
                     "vent_required": False,
                     "vent_notes": "",
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
                 surveyor_cookie,
             )
@@ -2782,6 +2788,11 @@ class TrackerTests(unittest.TestCase):
                     "esb_notes": "",
                     "plumber_required": True,
                     "plumber_notes": "Coordinate with owner",
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
                 admin_cookie,
             )
@@ -2840,6 +2851,11 @@ class TrackerTests(unittest.TestCase):
                     "esb_notes": "",
                     "plumber_required": False,
                     "plumber_notes": "",
+                    "ceramic_fuse_board": False,
+                    "solar_pv_required": False,
+                    "pir_required": False,
+                    "order_variations": False,
+                    "windows_required": False,
                 },
                 surveyor_cookie,
             )
@@ -3370,7 +3386,12 @@ class TrackerTests(unittest.TestCase):
                         UPDATE provided_houses
                         SET plan_scaffolding_required = 0,
                             plan_esb_required = 0,
-                            plan_plumber_required = 0
+                            plan_plumber_required = 0,
+                            plan_ceramic_fuse_board = 0,
+                            plan_solar_pv_required = 0,
+                            plan_pir_required = 0,
+                            plan_order_variations = 0,
+                            plan_windows_required = 0
                         WHERE id = 'H-READY'
                         """
                     )

@@ -101,6 +101,37 @@ console.log(JSON.stringify({initial, restored, otherAccount, invalidStoredValue}
             APP_JS,
         )
 
+    def test_leaving_assign_seai_map_persists_list_view(self):
+        start = APP_JS.index(
+            '$("#house-map-list-view").addEventListener("click", () => {'
+        )
+        end = APP_JS.index(
+            '$("#house-map-house-list").addEventListener("click",',
+            start,
+        )
+        map_list_handler = APP_JS[start:end]
+        self.assertIn('state.houseStatusFilter = "active";', map_list_handler)
+        self.assertRegex(
+            map_list_handler,
+            r"saveAssignHouseView\(\s*state\.user,\s*state\.houseStatusFilter,\s*"
+            r"state\.assignSurveyFilter,\s*\);",
+        )
+
+    def test_assign_home_icon_returns_to_and_persists_active_dashboard(self):
+        start = APP_JS.index("function goToHomeView(event)")
+        end = APP_JS.index("\nfunction nextPresentationHouseId", start)
+        home_handler = APP_JS[start:end]
+        self.assertIn(
+            'if (hasAccessProfile(state.user, "assign")) {',
+            home_handler,
+        )
+        self.assertIn('state.houseStatusFilter = "active";', home_handler)
+        self.assertRegex(
+            home_handler,
+            r"saveAssignHouseView\(state\.user,\s*\"active\",\s*\"all\"\);",
+        )
+        self.assertIn('setTab("houses");', home_handler)
+
     def test_navigation_and_shortcut_targets_have_matching_pages(self):
         parser = NavigationMarkupParser()
         parser.feed(HTML)
