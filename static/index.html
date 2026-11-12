@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261112-plumbing-house-photo-detail">
+    <link rel="stylesheet" href="/app.css?v=20261112-vent-coordinator-full-checklist">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -842,14 +842,19 @@
               <div class="card-heading"><div><h2>Plumbing team photos</h2><p>Photos attached to this house by the Plumbing team.</p></div><div id="house-detail-plumbing-photo-upload"></div></div>
               <div id="house-detail-plumbing-photos" aria-live="polite"></div>
             </article>
+            <article class="card house-detail-work-plan hidden" id="house-detail-work-plan">
+              <div class="card-heading">
+                <div>
+                  <span class="work-plan-source-tag">Surveyor plan</span>
+                  <h2>Pre-start work plan</h2>
+                  <p>Mark applicable items done. The checker and time are saved; only the original checker can undo a check.</p>
+                </div>
+              </div>
+              <div id="house-detail-work-plan-rows"></div>
+            </article>
             <article class="card house-detail-checklist-card" id="house-detail-checklist-card">
               <div class="card-heading"><div><h2>Pre-start checklist</h2><p>Saved preparation checks for this house.</p></div><span id="house-detail-checklist-summary" class="house-detail-checklist-summary"></span></div>
               <div id="house-detail-checklist" class="house-detail-checklist"></div>
-              <div id="house-detail-work-plan" class="house-detail-work-plan hidden">
-                <h3>Pre-start work plan</h3>
-                <p class="muted">Result recorded by the surveyor.</p>
-                <div id="house-detail-work-plan-rows"></div>
-              </div>
             </article>
             <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">
               <div class="card-heading"><div><h2>Materials used on this finished house</h2><p>Recorded usage plus the remaining on-site quantities automatically closed out when the house was finished.</p></div></div>
@@ -1342,6 +1347,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261112-plumbing-house-photo-detail" defer></script>
+    <script src="/app.js?v=20261112-vent-coordinator-full-checklist" defer></script>
   </body>
 </html>

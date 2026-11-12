@@ -432,6 +432,23 @@ class TrackerTests(unittest.TestCase):
             )
             self.assertTrue(assigned_house["assignment_assigned_at"])
             self.assertEqual(assigned_house["surveyor_name"], "Vent Role Admin")
+            status, house_detail, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/VENT-COORDINATOR-1",
+                cookie=coordinator_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(house_detail["house"]["photo_view_only"])
+            self.assertTrue(house_detail["house"]["can_view_vent_photos"])
+            self.assertEqual(house_detail["house"]["id"], "VENT-COORDINATOR-1")
+            hidden_detail_status, _, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/VENT-COORDINATOR-2",
+                cookie=coordinator_cookie,
+            )
+            self.assertEqual(hidden_detail_status, 403)
             status, _, teamlead_cookie = self.http_request(
                 httpd,
                 "POST",
@@ -2503,6 +2520,20 @@ class TrackerTests(unittest.TestCase):
                     "plumber_status": "not_necessary",
                 },
                 admin_cookie,
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("original checker", result["error"])
+            status, result, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/house-checklist",
+                {
+                    "house_id": "H-CHECKLIST",
+                    "scaffolding_status": "not_necessary",
+                    "esb_unclipped": "not_esb",
+                    "plumber_status": "not_necessary",
+                },
+                employee_cookie,
             )
             self.assertEqual(status, 200)
             self.assertTrue(result["saved"])

@@ -942,14 +942,18 @@ def _clear_house_survey_records(db, house_id):
             plan_plumber_notes = '',
             plan_scaffolding_done_by = '',
             plan_scaffolding_done_at = '',
+            plan_scaffolding_done_by_user_id = NULL,
             plan_esb_done_by = '',
             plan_esb_done_at = '',
+            plan_esb_done_by_user_id = NULL,
             plan_plumber_done_by = '',
             plan_plumber_done_at = '',
+            plan_plumber_done_by_user_id = NULL,
             plan_vent_required = NULL,
             plan_vent_notes = '',
             plan_vent_done_by = '',
             plan_vent_done_at = '',
+            plan_vent_done_by_user_id = NULL,
             plan_ceramic_fuse_board = NULL,
             plan_solar_pv_required = NULL,
             plan_pir_required = NULL,
@@ -957,14 +961,19 @@ def _clear_house_survey_records(db, house_id):
             plan_windows_required = NULL,
             plan_ceramic_fuse_board_done_by = '',
             plan_ceramic_fuse_board_done_at = '',
+            plan_ceramic_fuse_board_done_by_user_id = NULL,
             plan_solar_pv_required_done_by = '',
             plan_solar_pv_required_done_at = '',
+            plan_solar_pv_required_done_by_user_id = NULL,
             plan_pir_required_done_by = '',
             plan_pir_required_done_at = '',
+            plan_pir_required_done_by_user_id = NULL,
             plan_order_variations_done_by = '',
             plan_order_variations_done_at = '',
+            plan_order_variations_done_by_user_id = NULL,
             plan_windows_required_done_by = '',
-            plan_windows_required_done_at = ''
+            plan_windows_required_done_at = '',
+            plan_windows_required_done_by_user_id = NULL
         WHERE id = ?
         """,
         (house_id,),
@@ -1738,11 +1747,35 @@ def initialize_db():
                 for item in (*WORK_PLAN_TRADES, *WORK_PLAN_SURVEY_QUESTIONS)
                 for field in ("done_by", "done_at")
             ),
+            *(
+                (f"plan_{item}_done_by_user_id", "INTEGER")
+                for item in (*WORK_PLAN_TRADES, *WORK_PLAN_SURVEY_QUESTIONS)
+            ),
             ("latitude", "REAL"),
             ("longitude", "REAL"),
         ):
             if column not in provided_columns:
                 db.execute(f"ALTER TABLE provided_houses ADD COLUMN {column} {definition}")
+        for item in (*WORK_PLAN_TRADES, *WORK_PLAN_SURVEY_QUESTIONS):
+            db.execute(
+                f"""
+                UPDATE provided_houses
+                SET plan_{item}_done_by_user_id = (
+                    SELECT users.id
+                    FROM app_users users
+                    WHERE users.display_name = provided_houses.plan_{item}_done_by
+                        COLLATE NOCASE
+                )
+                WHERE plan_{item}_done_by_user_id IS NULL
+                  AND plan_{item}_done_by != ''
+                  AND (
+                      SELECT COUNT(*)
+                      FROM app_users users
+                      WHERE users.display_name = provided_houses.plan_{item}_done_by
+                          COLLATE NOCASE
+                  ) = 1
+                """
+            )
         # Every house the tracker already works on belongs to the provided list.
         db.execute(
             """
@@ -2277,6 +2310,29 @@ def _can_complete_work_plan_trade(db, user, trade):
         """,
         (user["id"],),
     ).fetchone() is not None
+
+
+def _require_work_plan_checker(db, user, house_id, item):
+    if item not in (*WORK_PLAN_TRADES, *WORK_PLAN_SURVEY_QUESTIONS):
+        raise ApiError(400, "Choose a valid work plan item.")
+    completion = db.execute(
+        f"""
+        SELECT plan_{item}_done_by AS done_by,
+               plan_{item}_done_at AS done_at,
+               plan_{item}_done_by_user_id AS done_by_user_id
+        FROM provided_houses
+        WHERE id = ?
+        """,
+        (house_id,),
+    ).fetchone()
+    if completion and (
+        completion["done_by"] or completion["done_at"]
+    ) and completion["done_by_user_id"] != user["id"]:
+        raise ApiError(
+            403,
+            "Only the original checker can change this work-plan status.",
+        )
+    return completion
 
 
 def _set_user_organization(db, user_id, department_ids, manager_user_id=None):
@@ -3577,33 +3633,42 @@ def _dashboard(db):
                        COALESCE(p.plan_scaffolding_notes, '') AS plan_scaffolding_notes,
                        COALESCE(p.plan_scaffolding_done_by, '') AS plan_scaffolding_done_by,
                        COALESCE(p.plan_scaffolding_done_at, '') AS plan_scaffolding_done_at,
+                       p.plan_scaffolding_done_by_user_id,
                        p.plan_esb_required,
                        COALESCE(p.plan_esb_notes, '') AS plan_esb_notes,
                        COALESCE(p.plan_esb_done_by, '') AS plan_esb_done_by,
                        COALESCE(p.plan_esb_done_at, '') AS plan_esb_done_at,
+                       p.plan_esb_done_by_user_id,
                        p.plan_plumber_required,
                        COALESCE(p.plan_plumber_notes, '') AS plan_plumber_notes,
                        COALESCE(p.plan_plumber_done_by, '') AS plan_plumber_done_by,
                        COALESCE(p.plan_plumber_done_at, '') AS plan_plumber_done_at,
+                       p.plan_plumber_done_by_user_id,
                        p.plan_vent_required,
                        COALESCE(p.plan_vent_notes, '') AS plan_vent_notes,
                        COALESCE(p.plan_vent_done_by, '') AS plan_vent_done_by,
                        COALESCE(p.plan_vent_done_at, '') AS plan_vent_done_at,
+                       p.plan_vent_done_by_user_id,
                        p.plan_ceramic_fuse_board,
                        p.plan_ceramic_fuse_board_done_by,
                        p.plan_ceramic_fuse_board_done_at,
+                       p.plan_ceramic_fuse_board_done_by_user_id,
                        p.plan_solar_pv_required,
                        p.plan_solar_pv_required_done_by,
                        p.plan_solar_pv_required_done_at,
+                       p.plan_solar_pv_required_done_by_user_id,
                        p.plan_pir_required,
                        p.plan_pir_required_done_by,
                        p.plan_pir_required_done_at,
+                       p.plan_pir_required_done_by_user_id,
                        p.plan_order_variations,
                        p.plan_order_variations_done_by,
                        p.plan_order_variations_done_at,
+                       p.plan_order_variations_done_by_user_id,
                        p.plan_windows_required,
                        p.plan_windows_required_done_by,
                        p.plan_windows_required_done_at,
+                       p.plan_windows_required_done_by_user_id,
                        assigned_surveyor.display_name AS assigned_surveyor_name,
                        assigned_surveyor.is_active AS assigned_surveyor_is_active,
                        surveyor_assignment.assigned_by AS surveyor_assigned_by,
@@ -3623,7 +3688,11 @@ def _dashboard(db):
                                    AND access.is_allowed = 1
                              )
                        ) AS has_assigned_surveyor,
-                       c.scaffolding_status, c.esb_unclipped, c.plumber_status
+                       c.scaffolding_status, c.esb_unclipped,
+                       CASE WHEN COALESCE(p.plan_plumber_done_at, '') != ''
+                            THEN 'done'
+                            ELSE c.plumber_status
+                       END AS plumber_status
                 FROM houses h
                 LEFT JOIN house_checklists c ON c.house_id = h.id
                 LEFT JOIN provided_houses p ON p.id = h.id
@@ -3657,6 +3726,7 @@ def _can_view_vent_house_photos(user):
         _is_vent_photo_uploader(user)
         or _has_access_profile(user, "vent_photos")
         or _has_access_profile(user, "admin")
+        or _has_access_profile(user, "ventilation_coordinator")
     )
 
 
@@ -3929,6 +3999,21 @@ def _ventilation_house_is_visible(db, house_id, teamlead_user_id):
     )
 
 
+def _ventilation_coordinator_house_is_visible(db, house_id):
+    return db.execute(
+        """
+        SELECT 1
+        FROM provided_houses houses
+        LEFT JOIN houses active ON active.id = houses.id
+        WHERE houses.id = ?
+          AND houses.plan_vent_required = 1
+          AND (active.id IS NULL OR active.is_finished = 0
+               OR houses.plan_vent_done_at != '')
+        """,
+        (house_id,),
+    ).fetchone() is not None
+
+
 def _plumbing_coordinator_dashboard(db):
     supervisors = [
         {"id": row["id"], "name": row["display_name"]}
@@ -3968,6 +4053,7 @@ def _plumbing_coordinator_dashboard(db):
                    COALESCE(surveyor.display_name, '') AS surveyor_name,
                    COALESCE(p.plan_plumber_done_by, '') AS plumber_done_by,
                    COALESCE(p.plan_plumber_done_at, '') AS plumber_done_at,
+                   p.plan_plumber_done_by_user_id,
                    CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
@@ -4653,6 +4739,41 @@ class LegacyRouteHandlers:
         path = urlparse(self.path).path
         is_plumbing_coordinator = _has_access_profile(user, "plumbing_coordinator")
         plumbing_photo_read_allowed = False
+        ventilation_coordinator_read_allowed = False
+        if (
+            self.command == "GET"
+            and _has_access_profile(user, "ventilation_coordinator")
+        ):
+            with connect_db() as db:
+                if path.startswith("/api/houses/"):
+                    house_id = unquote(path[len("/api/houses/"):])
+                    ventilation_coordinator_read_allowed = (
+                        bool(house_id)
+                        and "/" not in house_id
+                        and _ventilation_coordinator_house_is_visible(db, house_id)
+                    )
+                elif path.startswith("/api/house-vent-photos/"):
+                    photo_path = path[
+                        len("/api/house-vent-photos/"):
+                    ].split("/")
+                    if (
+                        len(photo_path) == 2
+                        and photo_path[0].isdigit()
+                        and photo_path[1] == "file"
+                    ):
+                        photo = db.execute(
+                            """
+                            SELECT house_id FROM house_vent_photos
+                            WHERE id = ?
+                            """,
+                            (int(photo_path[0]),),
+                        ).fetchone()
+                        ventilation_coordinator_read_allowed = bool(
+                            photo
+                            and _ventilation_coordinator_house_is_visible(
+                                db, photo["house_id"]
+                            )
+                        )
         if self.command == "GET" and (
             path.startswith("/api/houses/")
             or path.startswith("/api/house-plumbing-photos/")
@@ -4706,6 +4827,7 @@ class LegacyRouteHandlers:
                     "/api/auth/pin",
                     "/api/auth/logout",
                     "/api/plumbing-coordinator/assignment",
+                    "/api/house-work-plan/complete",
                 }
             )
         ):
@@ -4719,7 +4841,7 @@ class LegacyRouteHandlers:
                 self.command == "GET"
                 and (
                     path in {"/api/dashboard", "/api/updates"}
-                    or plumbing_photo_read_allowed
+                    or ventilation_coordinator_read_allowed
                 )
             )
             or (
@@ -4728,6 +4850,7 @@ class LegacyRouteHandlers:
                     "/api/auth/pin",
                     "/api/auth/logout",
                     "/api/ventilation-coordinator/assignment",
+                    "/api/house-work-plan/complete",
                 }
             )
         ):
@@ -5124,6 +5247,15 @@ class LegacyRouteHandlers:
                            p.plan_order_variations_done_at,
                            p.plan_windows_required_done_by,
                            p.plan_windows_required_done_at,
+                           p.plan_scaffolding_done_by_user_id,
+                           p.plan_esb_done_by_user_id,
+                           p.plan_plumber_done_by_user_id,
+                           p.plan_vent_done_by_user_id,
+                           p.plan_ceramic_fuse_board_done_by_user_id,
+                           p.plan_solar_pv_required_done_by_user_id,
+                           p.plan_pir_required_done_by_user_id,
+                           p.plan_order_variations_done_by_user_id,
+                           p.plan_windows_required_done_by_user_id,
                            hs.data AS survey_data, hs.notes AS survey_notes,
                            hs.updated_by AS survey_updated_by, hs.updated_at AS survey_updated_at,
                            assigned_surveyor.display_name AS assigned_surveyor_name,
@@ -6201,8 +6333,14 @@ class LegacyRouteHandlers:
                 if (
                     row is not None
                     and _is_vent_photo_uploader(user)
-                    and not _ventilation_house_is_visible(
-                        db, row["house_id"], user["id"]
+                    and not _ventilation_house_is_visible(db, row["house_id"], user["id"])
+                ):
+                    row = None
+                if (
+                    row is not None
+                    and _has_access_profile(user, "ventilation_coordinator")
+                    and not _ventilation_coordinator_house_is_visible(
+                        db, row["house_id"]
                     )
                 ):
                     row = None
@@ -6644,9 +6782,15 @@ class LegacyRouteHandlers:
                             """
                             SELECT p.id, p.postcode, p.address, p.owner_name,
                                    COALESCE(p.plan_plumber_notes, '') AS plumbing_notes,
-                                   COALESCE(
-                                       hc.plumber_status, p.plan_plumber, 'not_done'
-                                   ) AS plumber_status,
+                                   CASE WHEN COALESCE(p.plan_plumber_done_at, '') != ''
+                                        THEN 'done'
+                                        ELSE COALESCE(
+                                            hc.plumber_status, p.plan_plumber, 'not_done'
+                                        )
+                                   END AS plumber_status,
+                                   COALESCE(p.plan_plumber_done_by, '') AS plumber_done_by,
+                                   COALESCE(p.plan_plumber_done_at, '') AS plumber_done_at,
+                                   p.plan_plumber_done_by_user_id,
                                    COALESCE(surveyor.display_name, '') AS surveyor_name,
                                    assignment.assigned_by AS supervisor_assigned_by,
                                    assignment.assigned_at AS supervisor_assigned_at,
@@ -6705,6 +6849,11 @@ class LegacyRouteHandlers:
                                 "plumber_status": row["plumber_status"],
                                 "plan_plumber_required": 1,
                                 "plumbing_notes": row["plumbing_notes"],
+                                "plan_plumber_done_by": row["plumber_done_by"],
+                                "plan_plumber_done_at": row["plumber_done_at"],
+                                "plan_plumber_done_by_user_id": row[
+                                    "plan_plumber_done_by_user_id"
+                                ],
                                 "surveyor_name": row["surveyor_name"],
                                 "supervisor_assigned_by": row["supervisor_assigned_by"],
                                 "supervisor_assigned_at": row["supervisor_assigned_at"],
@@ -7082,6 +7231,9 @@ class LegacyRouteHandlers:
             is_admin = _has_access_profile(user, "admin")
             is_supervisor = _has_access_profile(user, "supervisor")
             is_plumbing_coordinator = _has_access_profile(user, "plumbing_coordinator")
+            is_ventilation_coordinator = _has_access_profile(
+                user, "ventilation_coordinator"
+            )
             is_vent_photo_uploader = _is_vent_photo_uploader(user)
             is_photo_viewer = (
                 not is_admin
@@ -7103,6 +7255,7 @@ class LegacyRouteHandlers:
                 and not is_photo_viewer
                 and not is_plumbing_photo_viewer
                 and not is_plumbing_coordinator
+                and not is_ventilation_coordinator
             ):
                 self._send_json(403, {"error": "Administrator or assigned Supervisor access is required."})
                 return
@@ -7132,6 +7285,10 @@ class LegacyRouteHandlers:
                         has_house_access = _plumbing_coordinator_house_is_visible(
                             db, house_id
                         )
+                    elif is_ventilation_coordinator:
+                        has_house_access = _ventilation_coordinator_house_is_visible(
+                            db, house_id
+                        )
                     elif is_photo_viewer:
                         has_house_access = db.execute(
                             "SELECT 1 FROM house_vent_photos WHERE house_id = ? LIMIT 1",
@@ -7158,7 +7315,10 @@ class LegacyRouteHandlers:
                            p.address, p.area_m2, p.perimeter_m,
                            COALESCE(hc.scaffolding_status, p.plan_scaffolding) AS scaffolding_status,
                            COALESCE(hc.esb_unclipped, p.plan_esb) AS esb_unclipped,
-                           COALESCE(hc.plumber_status, p.plan_plumber) AS plumber_status,
+                           CASE WHEN COALESCE(p.plan_plumber_done_at, '') != ''
+                                THEN 'done'
+                                ELSE COALESCE(hc.plumber_status, p.plan_plumber)
+                           END AS plumber_status,
                            COALESCE(h.is_finished, 0) AS is_finished,
                            CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
@@ -7166,12 +7326,35 @@ class LegacyRouteHandlers:
                                 ELSE 'active' END AS status,
                            COALESCE(p.notes, '') AS notes,
                            p.plan_scaffolding_required, p.plan_scaffolding_notes,
+                           p.plan_scaffolding_done_by, p.plan_scaffolding_done_at,
+                           p.plan_scaffolding_done_by_user_id,
                            p.plan_esb_required, p.plan_esb_notes,
+                           p.plan_esb_done_by, p.plan_esb_done_at,
+                           p.plan_esb_done_by_user_id,
                            p.plan_plumber_required, p.plan_plumber_notes,
+                           p.plan_plumber_done_by, p.plan_plumber_done_at,
+                           p.plan_plumber_done_by_user_id,
                            p.plan_vent_required, p.plan_vent_notes,
+                           p.plan_vent_done_by, p.plan_vent_done_at,
+                           p.plan_vent_done_by_user_id,
                            p.plan_ceramic_fuse_board, p.plan_solar_pv_required,
                            p.plan_pir_required, p.plan_order_variations,
                            p.plan_windows_required,
+                           p.plan_ceramic_fuse_board_done_by,
+                           p.plan_ceramic_fuse_board_done_at,
+                           p.plan_ceramic_fuse_board_done_by_user_id,
+                           p.plan_solar_pv_required_done_by,
+                           p.plan_solar_pv_required_done_at,
+                           p.plan_solar_pv_required_done_by_user_id,
+                           p.plan_pir_required_done_by,
+                           p.plan_pir_required_done_at,
+                           p.plan_pir_required_done_by_user_id,
+                           p.plan_order_variations_done_by,
+                           p.plan_order_variations_done_at,
+                           p.plan_order_variations_done_by_user_id,
+                           p.plan_windows_required_done_by,
+                           p.plan_windows_required_done_at,
+                           p.plan_windows_required_done_by_user_id,
                            hs.data AS survey_data,
                            COALESCE(hs.notes, '') AS survey_notes,
                            COALESCE(hs.updated_by, '') AS survey_updated_by,
@@ -7223,6 +7406,46 @@ class LegacyRouteHandlers:
                                 "owner_name": house["owner_name"],
                                 "address": house["address"],
                                 "status": house["status"],
+                                "plan_scaffolding_required": house["plan_scaffolding_required"],
+                                "plan_scaffolding_notes": house["plan_scaffolding_notes"],
+                                "plan_scaffolding_done_by": house["plan_scaffolding_done_by"],
+                                "plan_scaffolding_done_at": house["plan_scaffolding_done_at"],
+                                "plan_scaffolding_done_by_user_id": house["plan_scaffolding_done_by_user_id"],
+                                "plan_esb_required": house["plan_esb_required"],
+                                "plan_esb_notes": house["plan_esb_notes"],
+                                "plan_esb_done_by": house["plan_esb_done_by"],
+                                "plan_esb_done_at": house["plan_esb_done_at"],
+                                "plan_esb_done_by_user_id": house["plan_esb_done_by_user_id"],
+                                "plan_plumber_required": house["plan_plumber_required"],
+                                "plan_plumber_notes": house["plan_plumber_notes"],
+                                "plan_plumber_done_by": house["plan_plumber_done_by"],
+                                "plan_plumber_done_at": house["plan_plumber_done_at"],
+                                "plan_plumber_done_by_user_id": house["plan_plumber_done_by_user_id"],
+                                "plan_vent_required": house["plan_vent_required"],
+                                "plan_vent_notes": house["plan_vent_notes"],
+                                "plan_vent_done_by": house["plan_vent_done_by"],
+                                "plan_vent_done_at": house["plan_vent_done_at"],
+                                "plan_vent_done_by_user_id": house["plan_vent_done_by_user_id"],
+                                "plan_ceramic_fuse_board": house["plan_ceramic_fuse_board"],
+                                "plan_ceramic_fuse_board_done_by": house["plan_ceramic_fuse_board_done_by"],
+                                "plan_ceramic_fuse_board_done_at": house["plan_ceramic_fuse_board_done_at"],
+                                "plan_ceramic_fuse_board_done_by_user_id": house["plan_ceramic_fuse_board_done_by_user_id"],
+                                "plan_solar_pv_required": house["plan_solar_pv_required"],
+                                "plan_solar_pv_required_done_by": house["plan_solar_pv_required_done_by"],
+                                "plan_solar_pv_required_done_at": house["plan_solar_pv_required_done_at"],
+                                "plan_solar_pv_required_done_by_user_id": house["plan_solar_pv_required_done_by_user_id"],
+                                "plan_pir_required": house["plan_pir_required"],
+                                "plan_pir_required_done_by": house["plan_pir_required_done_by"],
+                                "plan_pir_required_done_at": house["plan_pir_required_done_at"],
+                                "plan_pir_required_done_by_user_id": house["plan_pir_required_done_by_user_id"],
+                                "plan_order_variations": house["plan_order_variations"],
+                                "plan_order_variations_done_by": house["plan_order_variations_done_by"],
+                                "plan_order_variations_done_at": house["plan_order_variations_done_at"],
+                                "plan_order_variations_done_by_user_id": house["plan_order_variations_done_by_user_id"],
+                                "plan_windows_required": house["plan_windows_required"],
+                                "plan_windows_required_done_by": house["plan_windows_required_done_by"],
+                                "plan_windows_required_done_at": house["plan_windows_required_done_at"],
+                                "plan_windows_required_done_by_user_id": house["plan_windows_required_done_by_user_id"],
                                 "can_view_plumbing_photos": True,
                                 "photo_view_only": True,
                                 "plumbing_photos": _plumbing_house_photo_metadata(
@@ -7233,20 +7456,46 @@ class LegacyRouteHandlers:
                         },
                     )
                     return
-                if is_photo_viewer:
+                if is_photo_viewer or is_ventilation_coordinator:
+                    house_data = {
+                        "id": house["id"],
+                        "postcode": house["postcode"],
+                        "owner_name": house["owner_name"],
+                        "address": house["address"],
+                        "status": house["status"],
+                        "can_view_vent_photos": True,
+                        "photo_view_only": True,
+                        "vent_photos": _vent_house_photo_metadata(db, house_id),
+                    }
+                    if is_ventilation_coordinator:
+                        work_plan_fields = [
+                            f"plan_{trade}_{suffix}"
+                            for trade in WORK_PLAN_TRADES
+                            for suffix in (
+                                "required",
+                                "notes",
+                                "done_by",
+                                "done_at",
+                                "done_by_user_id",
+                            )
+                        ]
+                        work_plan_fields.extend(
+                            field
+                            for item in WORK_PLAN_SURVEY_QUESTIONS
+                            for field in (
+                                f"plan_{item}",
+                                f"plan_{item}_done_by",
+                                f"plan_{item}_done_at",
+                                f"plan_{item}_done_by_user_id",
+                            )
+                        )
+                        house_data.update(
+                            {field: house[field] for field in work_plan_fields}
+                        )
                     self._send_json(
                         200,
                         {
-                            "house": {
-                                "id": house["id"],
-                                "postcode": house["postcode"],
-                                "owner_name": house["owner_name"],
-                                "address": house["address"],
-                                "status": house["status"],
-                                "can_view_vent_photos": True,
-                                "photo_view_only": True,
-                                "vent_photos": _vent_house_photo_metadata(db, house_id),
-                            },
+                            "house": house_data,
                             "movements": [],
                         },
                     )
@@ -7738,7 +7987,8 @@ class LegacyRouteHandlers:
                                 """
                                 UPDATE provided_houses
                                 SET plan_plumber_done_by = '',
-                                    plan_plumber_done_at = ''
+                                    plan_plumber_done_at = '',
+                                    plan_plumber_done_by_user_id = NULL
                                 WHERE id = ?
                                 """,
                                 (photo["house_id"],),
@@ -8829,12 +9079,15 @@ class LegacyRouteHandlers:
                                         plan_{trade}_done_by =
                                             CASE WHEN ? = 1 THEN plan_{trade}_done_by ELSE '' END,
                                         plan_{trade}_done_at =
-                                            CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END
+                                            CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END,
+                                        plan_{trade}_done_by_user_id =
+                                            CASE WHEN ? = 1 THEN plan_{trade}_done_by_user_id ELSE NULL END
                                     WHERE id = ?
                                     """,
                                     (
                                         int(required) if required is not None else None,
                                         notes,
+                                        int(required) if required is not None else 0,
                                         int(required) if required is not None else 0,
                                         int(required) if required is not None else 0,
                                         house_id,
@@ -8859,7 +9112,10 @@ class LegacyRouteHandlers:
                                 "ELSE '' END, "
                                 f"plan_{question}_done_at = CASE "
                                 f"WHEN plan_{question} IS ? THEN plan_{question}_done_at "
-                                "ELSE '' END"
+                                "ELSE '' END, "
+                                f"plan_{question}_done_by_user_id = CASE "
+                                f"WHEN plan_{question} IS ? THEN plan_{question}_done_by_user_id "
+                                "ELSE NULL END"
                                 for question in WORK_PLAN_SURVEY_QUESTIONS
                             )
                             question_values = []
@@ -8869,7 +9125,7 @@ class LegacyRouteHandlers:
                                     if isinstance(draft_data.get(question), bool)
                                     else None
                                 )
-                                question_values.extend((answer, answer, answer))
+                                question_values.extend((answer, answer, answer, answer))
                             db.execute(
                                 f"UPDATE provided_houses SET {question_assignments} WHERE id = ?",
                                 (*question_values, house_id),
@@ -9358,6 +9614,7 @@ class LegacyRouteHandlers:
                     }[image_format]
                 with connect_db() as db:
                     with db:
+                        db.execute("BEGIN IMMEDIATE")
                         assigned = db.execute(
                             """
                             SELECT 1
@@ -10717,6 +10974,7 @@ class LegacyRouteHandlers:
                     )
                 with connect_db() as db:
                     with db:
+                        db.execute("BEGIN IMMEDIATE")
                         assigned = db.execute(
                             """
                             SELECT 1
@@ -10735,6 +10993,9 @@ class LegacyRouteHandlers:
                                 404,
                                 "That plumbing house is not assigned to you.",
                             )
+                        _require_work_plan_checker(
+                            db, user, house_id, "plumber"
+                        )
                         if (
                             plumber_status == "done"
                             and db.execute(
@@ -10774,12 +11035,14 @@ class LegacyRouteHandlers:
                             """
                             UPDATE provided_houses
                             SET plan_plumber_done_by = ?,
-                                plan_plumber_done_at = ?
+                                plan_plumber_done_at = ?,
+                                plan_plumber_done_by_user_id = ?
                             WHERE id = ?
                             """,
                             (
                                 user["display_name"] if completed_at else "",
                                 completed_at,
+                                user["id"] if completed_at else None,
                                 house_id,
                             ),
                         )
@@ -10792,6 +11055,9 @@ class LegacyRouteHandlers:
                             user["display_name"] if plumber_status == "done" else ""
                         ),
                         "plumber_done_at": completed_at,
+                        "plumber_done_by_user_id": (
+                            user["id"] if plumber_status == "done" else None
+                        ),
                         "saved": True,
                     },
                 )
@@ -10832,6 +11098,16 @@ class LegacyRouteHandlers:
                         )
                 with connect_db() as db:
                     with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        for checklist_field in supplied_statuses:
+                            trade = {
+                                "scaffolding_status": "scaffolding",
+                                "esb_unclipped": "esb",
+                                "plumber_status": "plumber",
+                            }[checklist_field]
+                            _require_work_plan_checker(
+                                db, user, house_id, trade
+                            )
                         is_active = db.execute(
                             "SELECT is_finished FROM houses WHERE id = ?", (house_id,)
                         ).fetchone()
@@ -10855,7 +11131,8 @@ class LegacyRouteHandlers:
                             planned = db.execute(
                                 "UPDATE provided_houses SET plan_scaffolding = ?, "
                                 "plan_esb = ?, plan_plumber = ?, "
-                                "plan_plumber_done_by = ?, plan_plumber_done_at = ? "
+                                "plan_plumber_done_by = ?, plan_plumber_done_at = ?, "
+                                "plan_plumber_done_by_user_id = ? "
                                 "WHERE id = ?",
                                 (
                                     supplied_statuses["scaffolding_status"],
@@ -10867,12 +11144,37 @@ class LegacyRouteHandlers:
                                     datetime.now().isoformat(timespec="seconds")
                                     if supplied_statuses["plumber_status"] == "done"
                                     else "",
+                                    user["id"]
+                                    if supplied_statuses["plumber_status"] == "done"
+                                    else None,
                                     house_id,
                                 ),
                             )
                             if planned.rowcount == 0:
                                 raise ApiError(404, "House was not found.")
-                            self._send_json(200, {"house_id": house_id, "saved": True})
+                            plumber_done = (
+                                supplied_statuses["plumber_status"] == "done"
+                            )
+                            self._send_json(
+                                200,
+                                {
+                                    "house_id": house_id,
+                                    "saved": True,
+                                    "plumber_done_by": (
+                                        user["display_name"] if plumber_done else ""
+                                    ),
+                                    "plumber_done_at": (
+                                        db.execute(
+                                            "SELECT plan_plumber_done_at "
+                                            "FROM provided_houses WHERE id = ?",
+                                            (house_id,),
+                                        ).fetchone()["plan_plumber_done_at"]
+                                    ),
+                                    "plumber_done_by_user_id": (
+                                        user["id"] if plumber_done else None
+                                    ),
+                                },
+                            )
                             return
                         completion_updates = {}
                         if is_assign:
@@ -10923,11 +11225,20 @@ class LegacyRouteHandlers:
                             completed_by = user["display_name"] if completed else ""
                             db.execute(
                                 f"UPDATE provided_houses SET plan_{trade}_done_by = ?, "
-                                f"plan_{trade}_done_at = ? WHERE id = ?",
-                                (completed_by, completed_at, house_id),
+                                f"plan_{trade}_done_at = ?, "
+                                f"plan_{trade}_done_by_user_id = ? WHERE id = ?",
+                                (
+                                    completed_by,
+                                    completed_at,
+                                    user["id"] if completed else None,
+                                    house_id,
+                                ),
                             )
                             completion_updates[f"{trade}_done_by"] = completed_by
                             completion_updates[f"{trade}_done_at"] = completed_at
+                            completion_updates[f"{trade}_done_by_user_id"] = (
+                                user["id"] if completed else None
+                            )
                 self._send_json(
                     200,
                     {
@@ -11000,7 +11311,8 @@ class LegacyRouteHandlers:
                 assignments = ", ".join(
                     f"plan_{trade}_required = ?, plan_{trade}_notes = ?, "
                     f"plan_{trade}_done_by = CASE WHEN ? = 1 THEN plan_{trade}_done_by ELSE '' END, "
-                    f"plan_{trade}_done_at = CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END"
+                    f"plan_{trade}_done_at = CASE WHEN ? = 1 THEN plan_{trade}_done_at ELSE '' END, "
+                    f"plan_{trade}_done_by_user_id = CASE WHEN ? = 1 THEN plan_{trade}_done_by_user_id ELSE NULL END"
                     for trade in WORK_PLAN_TRADES
                 )
                 assignments += ", " + ", ".join(
@@ -11010,7 +11322,10 @@ class LegacyRouteHandlers:
                     "ELSE '' END, "
                     f"plan_{question}_done_at = CASE "
                     f"WHEN plan_{question} IS ? THEN plan_{question}_done_at "
-                    "ELSE '' END"
+                    "ELSE '' END, "
+                    f"plan_{question}_done_by_user_id = CASE "
+                    f"WHEN plan_{question} IS ? THEN plan_{question}_done_by_user_id "
+                    "ELSE NULL END"
                     for question in WORK_PLAN_SURVEY_QUESTIONS
                 )
                 values = []
@@ -11022,11 +11337,12 @@ class LegacyRouteHandlers:
                             notes_values[trade],
                             required or 0,
                             required or 0,
+                            required or 0,
                         )
                     )
                 for question in WORK_PLAN_SURVEY_QUESTIONS:
                     answer = question_values[question]
-                    values.extend((answer, answer, answer))
+                    values.extend((answer, answer, answer, answer))
                 with connect_db() as db:
                     with db:
                         saved = db.execute(
@@ -11110,9 +11426,42 @@ class LegacyRouteHandlers:
                     raise ApiError(400, "Choose a valid work plan item.")
                 if not isinstance(done, bool):
                     raise ApiError(400, "Choose whether the work is done.")
+                is_plumbing_coordinator = _has_access_profile(
+                    user, "plumbing_coordinator"
+                )
+                is_ventilation_coordinator = _has_access_profile(
+                    user, "ventilation_coordinator"
+                )
                 with connect_db() as db:
                     with db:
-                        if item in WORK_PLAN_SURVEY_QUESTIONS:
+                        db.execute("BEGIN IMMEDIATE")
+                        if is_plumbing_coordinator:
+                            if not _plumbing_coordinator_house_is_visible(
+                                db, house_id
+                            ):
+                                raise ApiError(
+                                    403,
+                                    "This house is outside your plumbing work queue.",
+                                )
+                            if item in {"plumber", "vent"}:
+                                raise ApiError(
+                                    403,
+                                    "Plumbing and Vent work must be checked from the appropriate team dashboard.",
+                                )
+                        elif is_ventilation_coordinator:
+                            if not _ventilation_coordinator_house_is_visible(
+                                db, house_id
+                            ):
+                                raise ApiError(
+                                    403,
+                                    "This house is outside your Vent work queue.",
+                                )
+                            if item in {"plumber", "vent"}:
+                                raise ApiError(
+                                    403,
+                                    "Plumbing and Vent work must be checked from the appropriate team dashboard.",
+                                )
+                        elif item in WORK_PLAN_SURVEY_QUESTIONS:
                             if not _has_access_profile(user, "assign"):
                                 raise ApiError(
                                     403,
@@ -11126,6 +11475,23 @@ class LegacyRouteHandlers:
                                 else "Vent work can only be checked by a Vent team account."
                                 if item == "vent"
                                 else "Only Assign, External Wall Insulation supervisors and team leads can check this item.",
+                            )
+                        completion = db.execute(
+                            f"""
+                            SELECT plan_{item}_done_by AS done_by,
+                                   plan_{item}_done_at AS done_at,
+                                   plan_{item}_done_by_user_id AS done_by_user_id
+                            FROM provided_houses
+                            WHERE id = ?
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if completion and (
+                            completion["done_by"] or completion["done_at"]
+                        ) and completion["done_by_user_id"] != user["id"]:
+                            raise ApiError(
+                                403,
+                                "Only the original checker can change this work-plan status.",
                             )
                         if (
                             item == "vent"
@@ -11146,23 +11512,42 @@ class LegacyRouteHandlers:
                                 f"""
                                 UPDATE provided_houses
                                 SET plan_{item}_done_by = ?,
-                                    plan_{item}_done_at = ?
+                                    plan_{item}_done_at = ?,
+                                    plan_{item}_done_by_user_id = ?
                                 WHERE id = ?
                                   AND plan_{item} IS NOT NULL
                                   AND (? = 1 OR plan_{item}_done_at != '')
                                   AND (? = 0 OR plan_{item} = 1)
-                                  AND ready_for_start = 1
-                                  AND NOT EXISTS (
-                                      SELECT 1 FROM houses
-                                      WHERE houses.id = provided_houses.id
+                                  AND (
+                                      ? = 1
+                                      OR (
+                                          ready_for_start = 1
+                                          AND NOT EXISTS (
+                                              SELECT 1 FROM houses
+                                              WHERE houses.id = provided_houses.id
+                                          )
+                                      )
+                                  )
+                                  AND (
+                                      (
+                                          COALESCE(plan_{item}_done_by, '') = ''
+                                          AND COALESCE(plan_{item}_done_at, '') = ''
+                                      )
+                                      OR plan_{item}_done_by_user_id = ?
                                   )
                                 """,
                                 (
                                     user["display_name"] if done else "",
                                     completed_at if done else "",
+                                    user["id"] if done else None,
                                     house_id,
                                     int(done),
                                     int(done),
+                                    int(
+                                        is_plumbing_coordinator
+                                        or is_ventilation_coordinator
+                                    ),
+                                    user["id"],
                                 ),
                             )
                         else:
@@ -11170,39 +11555,56 @@ class LegacyRouteHandlers:
                                 f"""
                                 UPDATE provided_houses
                                 SET plan_{item}_done_by = ?,
-                                    plan_{item}_done_at = ?
+                                    plan_{item}_done_at = ?,
+                                    plan_{item}_done_by_user_id = ?
                                 WHERE id = ?
                                   AND plan_{item}_required = 1
                                   AND (? = 1 OR plan_{item}_done_at != '')
                                   AND (
-                                      (
-                                          ready_for_start = 1
-                                          AND NOT EXISTS (
-                                              SELECT 1 FROM houses
-                                              WHERE houses.id = provided_houses.id
-                                          )
-                                      )
+                                      ? = 1
                                       OR (
-                                          ? = 'vent'
-                                          AND EXISTS (
-                                              SELECT 1 FROM houses
-                                              WHERE houses.id = provided_houses.id
-                                                AND houses.is_finished = 0
+                                          (
+                                              ready_for_start = 1
+                                              AND NOT EXISTS (
+                                                  SELECT 1 FROM houses
+                                                  WHERE houses.id = provided_houses.id
+                                              )
                                           )
-                                          AND EXISTS (
-                                              SELECT 1 FROM house_vent_assignments assignment
-                                              WHERE assignment.house_id = provided_houses.id
-                                                AND assignment.teamlead_user_id = ?
+                                          OR (
+                                              ? = 'vent'
+                                              AND EXISTS (
+                                                  SELECT 1 FROM houses
+                                                  WHERE houses.id = provided_houses.id
+                                                    AND houses.is_finished = 0
+                                              )
+                                              AND EXISTS (
+                                                  SELECT 1 FROM house_vent_assignments assignment
+                                                  WHERE assignment.house_id = provided_houses.id
+                                                    AND assignment.teamlead_user_id = ?
+                                              )
                                           )
                                       )
+                                  )
+                                  AND (
+                                      (
+                                          COALESCE(plan_{item}_done_by, '') = ''
+                                          AND COALESCE(plan_{item}_done_at, '') = ''
+                                      )
+                                      OR plan_{item}_done_by_user_id = ?
                                   )
                                 """,
                                 (
                                     user["display_name"] if done else "",
                                     completed_at if done else "",
+                                    user["id"] if done else None,
                                     house_id,
                                     int(done),
+                                    int(
+                                        is_plumbing_coordinator
+                                        or is_ventilation_coordinator
+                                    ),
                                     item,
+                                    user["id"],
                                     user["id"],
                                 ),
                             )
@@ -11221,6 +11623,7 @@ class LegacyRouteHandlers:
                         "trade": item,
                         "done_by": user["display_name"] if done else "",
                         "done_at": completed_at if done else "",
+                        "done_by_user_id": user["id"] if done else None,
                     },
                 )
             elif path == "/api/seai-measure-variation":

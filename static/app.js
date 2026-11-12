@@ -2548,6 +2548,7 @@ function renderOverview() {
               <div class="plumbing-surveyor-detail"><span class="plumbing-surveyor-avatar" aria-hidden="true">${escapeHtml((house.surveyor_name || "?").split(/\s+/).map((part) => part[0] || "").slice(0, 2).join("").toUpperCase())}</span><span class="plumbing-surveyor-label">Requested by surveyor</span><strong>${escapeHtml(house.surveyor_name || "Surveyor not recorded")}</strong></div>
               <strong>Required Vent work</strong>
               <p>${escapeHtml(house.notes || "Vent work is required. No extra survey notes were added.")}</p>
+              <button class="button button-secondary plumbing-house-detail-button" type="button" data-house-id="${escapeHtml(house.id)}">View house details</button>
             </div>
             ${complete
               ? `<div class="plumbing-completion-detail"><strong>Vent work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.done_at ? ` datetime="${escapeHtml(house.done_at)}"` : ""}>${escapeHtml(house.done_at ? formatAuditDateTime(house.done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.done_at))}</b></span></div></div>`
@@ -3777,8 +3778,15 @@ function renderSupervisorHouses() {
               ? "is-needed"
               : "";
           const plumbingPhotos = house.plumbing_photos || [];
+          const plumbingCompletionLocked =
+            isPlumbingComplete(house) &&
+            Boolean(
+              house.plan_plumber_done_by || house.plan_plumber_done_at,
+            ) &&
+            !workPlanCheckedByCurrentUser(house, "plumber");
           const canMarkPlumbingComplete =
-            isPlumbingComplete(house) || plumbingPhotos.length > 0;
+            !plumbingCompletionLocked &&
+            (isPlumbingComplete(house) || plumbingPhotos.length > 0);
           const plumbingPhotoSummary = plumbingHousePhotoSummary(house);
           const supervisorAssignmentCredit =
             isPlumbingSupervisor && house.supervisor_assigned_by
@@ -3805,7 +3813,7 @@ function renderSupervisorHouses() {
             ${supervisorAssignmentCredit}
             ${plumbingPhotoSummary}
             ${isPlumbingSupervisor ? plumbingSurveyPdfsHtml(house.survey_documents) : ""}
-            ${isPlumbingSupervisor && Number(house.plan_plumber_required) === 1 ? `<div class="plumbing-card-completion">${!canMarkPlumbingComplete ? '<p class="vent-house-photo-required">Upload at least one Plumbing team photo before marking this work complete.</p>' : ""}<button class="plumbing-completion-toggle${isPlumbingComplete(house) ? " is-complete" : ""}" type="button" data-house-id="${houseId}" data-plumber-status="${isPlumbingComplete(house) ? "not_done" : "done"}" aria-label="${isPlumbingComplete(house) ? "Reopen plumbing work" : "Mark plumbing complete"} for ${houseId}" aria-pressed="${isPlumbingComplete(house)}"${canMarkPlumbingComplete ? "" : " disabled"}>${isPlumbingComplete(house) ? '<span aria-hidden="true">↶</span> Reopen plumbing work' : '<span aria-hidden="true">✓</span> Mark plumbing complete'}</button></div>` : ""}
+            ${isPlumbingSupervisor && Number(house.plan_plumber_required) === 1 ? `<div class="plumbing-card-completion">${plumbingCompletionLocked ? `<p class="work-plan-lock-note">${escapeHtml(workPlanLockNotice(house, "plumber"))}</p>` : !canMarkPlumbingComplete ? '<p class="vent-house-photo-required">Upload at least one Plumbing team photo before marking this work complete.</p>' : ""}<button class="plumbing-completion-toggle${isPlumbingComplete(house) ? " is-complete" : ""}" type="button" data-house-id="${houseId}" data-plumber-status="${isPlumbingComplete(house) ? "not_done" : "done"}" aria-label="${plumbingCompletionLocked ? escapeHtml(workPlanLockNotice(house, "plumber")) : `${isPlumbingComplete(house) ? "Reopen plumbing work" : "Mark plumbing complete"} for ${houseId}`}" aria-pressed="${isPlumbingComplete(house)}"${canMarkPlumbingComplete ? "" : " disabled"}>${isPlumbingComplete(house) ? '<span aria-hidden="true">↶</span> Reopen plumbing work' : '<span aria-hidden="true">✓</span> Mark plumbing complete'}</button></div>` : ""}
             ${ewiSeaiDetails}
             ${canAssignEwiWork
               ? `<div class="supervisor-ewi-card-actions">
@@ -5892,6 +5900,16 @@ function workPlanDoneLabel(by, at, trade) {
   return `${action} by ${by}${time ? ` · ${time}` : ""}`;
 }
 
+function workPlanCheckedByCurrentUser(house, item) {
+  return Number(house[`plan_${item}_done_by_user_id`]) ===
+    Number(state.user?.id);
+}
+
+function workPlanLockNotice(house, item) {
+  const checker = house[`plan_${item}_done_by`] || "the original checker";
+  return `Checked by ${checker}. Only the original checker can change this status.`;
+}
+
 function activeHouseSurveyReferenceHtml(house) {
   const survey = house.survey;
   const formatMeasurement = (value) => {
@@ -6000,29 +6018,35 @@ function houseWorkPlanSummaryHtml(house) {
     const isDone = isDoneTrade(trade, required);
     const doneBy = house[`plan_${trade}_done_by`];
     const tone = !isSet ? "unset" : isDone ? "done" : isRequired ? "required" : "clear";
+    const isLocked = isDone && !workPlanCheckedByCurrentUser(house, trade);
     const canCheck = isRequired && permissions[trade] === true;
     const icon = canCheck
-      ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${trade}" aria-pressed="${isDone}" aria-label="${isDone ? "Uncheck" : "Mark as done:"} ${escapeHtml(label)}">${isDone ? "✓" : ""}</button>`
+      ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${trade}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, trade)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
       : `<span class="work-plan-icon" aria-hidden="true">${!isSet ? "?" : isDone ? "✓" : isRequired ? "!" : "✓"}</span>`;
     const badge = !isSet ? "Not set" : isDone ? "Done" : isRequired ? "Required" : "Not required";
-    return `<div class="work-plan-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${trade}_done_at`], trade))}</small>` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
+    return `<div class="work-plan-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${trade}_done_at`], trade))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
   }).join("")}</div>` : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}${questionsRecorded ? `<div class="work-plan-question-summary" role="group" aria-label="Survey questions"><div class="work-plan-question-items">${questions.map(([key, label, answer]) => {
     const isAnswered = answer !== null && answer !== undefined;
     const isNotRequired = isAnswered && Number(answer) !== 1;
     const isDone = isAnswered && !isNotRequired && Boolean(house[`plan_${key}_done_by`]);
     const canCheck = isAnswered && !isNotRequired && permissions[key] === true;
     const tone = !isAnswered ? "unset" : isNotRequired ? "clear" : isDone ? "done" : "required";
-    const control = canCheck
-      ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${key}" aria-pressed="${isDone}" aria-label="${isDone ? "Mark as Not Done:" : "Mark as Done:"} ${escapeHtml(label)}">${isDone ? "✓" : ""}</button>`
-      : `<span class="work-plan-icon" aria-hidden="true">${!isAnswered ? "?" : isNotRequired || isDone ? "✓" : "!"}</span>`;
     const doneBy = house[`plan_${key}_done_by`];
-    return `<div class="work-plan-row work-plan-row-${tone} work-plan-question-row">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${key}_done_at`], key))}</small>` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
+    const isLocked = isDone && !workPlanCheckedByCurrentUser(house, key);
+    const control = canCheck
+      ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${key}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, key)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
+      : `<span class="work-plan-icon" aria-hidden="true">${!isAnswered ? "?" : isNotRequired || isDone ? "✓" : "!"}</span>`;
+    return `<div class="work-plan-row work-plan-row-${tone} work-plan-question-row">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${key}_done_at`], key))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
   }).join("")}</div></div>` : ""}</div>`;
 }
 async function toggleWorkPlanDone(button) {
+  if (button.disabled) return;
   const { houseId, trade } = button.dataset;
   const done = button.getAttribute("aria-pressed") !== "true";
+  const previousAriaLabel = button.getAttribute("aria-label");
   button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.setAttribute("aria-label", "Saving work-plan status");
   try {
     const result = await request("/api/house-work-plan/complete", {
       method: "POST",
@@ -6034,17 +6058,28 @@ async function toggleWorkPlanDone(button) {
         if (house.id !== houseId) continue;
         house[`plan_${trade}_done_by`] = result.done_by;
         house[`plan_${trade}_done_at`] = result.done_at;
+        house[`plan_${trade}_done_by_user_id`] = result.done_by_user_id;
       }
     }
     for (const house of state.houseMapData || []) {
       if (house.id !== houseId) continue;
       house[`plan_${trade}_done_by`] = result.done_by;
       house[`plan_${trade}_done_at`] = result.done_at;
+      house[`plan_${trade}_done_by_user_id`] = result.done_by_user_id;
     }
-    renderNotStartedHouses($("#house-search").value.trim().toLocaleLowerCase(), "ready");
+    if (state.viewingHouseId === houseId) {
+      await loadHouseDetail(houseId);
+    } else {
+      renderNotStartedHouses($("#house-search").value.trim().toLocaleLowerCase(), "ready");
+    }
   } catch (error) {
     showToast(error.message, true);
-    button.disabled = false;
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      if (previousAriaLabel) button.setAttribute("aria-label", previousAriaLabel);
+    }
   }
 }
 async function updateVentilationHouseCompletion(button) {
@@ -6756,6 +6791,8 @@ async function updateHouseChecklistStatus(event) {
         : checklistField.replace("_status", "");
       house[`plan_${trade}_done_by`] = result[`${trade}_done_by`];
       house[`plan_${trade}_done_at`] = result[`${trade}_done_at`];
+      house[`plan_${trade}_done_by_user_id`] =
+        result[`${trade}_done_by_user_id`];
       const audit = checkbox.closest(".checklist-card-row")
         .querySelector(".checklist-completion-audit");
       if (audit) {
@@ -7932,18 +7969,112 @@ function renderHouseDetail(result) {
         .join("")
     : `<p class="muted">No pre-start checklist has been recorded.</p>`;
   const workPlanRows = [
-    ["Scaffolding", house.plan_scaffolding_required, house.plan_scaffolding_notes],
-    ["ESB work", house.plan_esb_required, house.plan_esb_notes],
-    ["Plumber work", house.plan_plumber_required, house.plan_plumber_notes],
-    ["Vent work", house.plan_vent_required, house.plan_vent_notes],
-  ].filter(([, required]) => required !== null && required !== undefined);
-  $("#house-detail-work-plan").classList.toggle("hidden", !workPlanRows.length);
-  $("#house-detail-work-plan-rows").innerHTML = workPlanRows
-    .map(([label, required, notes]) => {
-      const isRequired = Number(required) === 1;
-      return `<div class="checklist-card-row"><span>${escapeHtml(label)}${notes ? `<small class="work-plan-detail">${escapeHtml(notes)}</small>` : ""}</span><strong class="checklist-value checklist-value-${isRequired ? "negative" : "unnecessary"}">${isRequired ? "Required" : "Not required"}</strong></div>`;
-    })
-    .join("");
+    ["scaffolding", "Scaffolding", house.plan_scaffolding_required, house.plan_scaffolding_notes],
+    ["esb", "ESB work", house.plan_esb_required, house.plan_esb_notes],
+    ["plumber", "Plumber work", house.plan_plumber_required, house.plan_plumber_notes],
+    ["vent", "Vent work", house.plan_vent_required, house.plan_vent_notes],
+  ]
+    .filter(([, , required, notes]) =>
+      (required !== null && required !== undefined) || Boolean(notes),
+    )
+    .map(([item, label, required, notes]) => ({
+      item,
+      label,
+      value: required === null || required === undefined
+        ? "Not specified"
+        : Number(required) === 1
+          ? "Required"
+          : "Not required",
+      tone: required === null || required === undefined
+        ? "unset"
+        : Number(required) === 1
+          ? "required"
+          : "clear",
+      applicable: Number(required) === 1,
+      doneBy: house[`plan_${item}_done_by`],
+      doneAt: house[`plan_${item}_done_at`],
+      doneByUserId: house[`plan_${item}_done_by_user_id`],
+      notes,
+    }));
+  const workPlanQuestions = WORK_PLAN_SURVEY_QUESTIONS
+    .filter(([key]) => house[`plan_${key}`] !== null && house[`plan_${key}`] !== undefined)
+    .map(([key, label]) => {
+      const answer = Number(house[`plan_${key}`]) === 1;
+      return {
+        item: key,
+        label,
+        value: answer ? "Required" : "Not required",
+        tone: answer ? "required" : "clear",
+        applicable: answer,
+        doneBy: house[`plan_${key}_done_by`],
+        doneAt: house[`plan_${key}_done_at`],
+        doneByUserId: house[`plan_${key}_done_by_user_id`],
+      };
+    });
+  const isPlumbingCoordinator = hasAccessProfile(
+    state.user,
+    "plumbing_coordinator",
+  );
+  const isVentilationCoordinator = hasAccessProfile(
+    state.user,
+    "ventilation_coordinator",
+  );
+  const renderWorkPlanItems = (items) => items.map(
+    ({ item, label, value, tone, applicable, doneBy, doneAt, doneByUserId, notes }) => {
+      const isDone = Boolean(doneBy || doneAt);
+      const isLocked =
+        isDone && Number(doneByUserId) !== Number(state.user?.id);
+      const lockNotice = `Checked by ${doneBy || "the original checker"}. Only the original checker can change this status.`;
+      const controlLabel = isDone ? `Mark ${label} not done` : `Mark ${label} as done`;
+      const coordinatorCanCheckItem =
+        (isPlumbingCoordinator || isVentilationCoordinator) &&
+        !["plumber", "vent"].includes(item);
+      const needsTeamCompletion =
+        (isPlumbingCoordinator || isVentilationCoordinator) &&
+        applicable &&
+        !isDone &&
+        ["plumber", "vent"].includes(item);
+      const control = coordinatorCanCheckItem && applicable
+        ? `<button class="work-plan-detail-toggle work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${item}" aria-pressed="${isDone}" aria-label="${escapeHtml(isLocked ? lockNotice : controlLabel)}"${isLocked ? " disabled" : ""}><span class="work-plan-detail-checkbox" aria-hidden="true">${isDone ? "✓" : ""}</span></button>`
+        : "";
+      const status = isDone ? "Done" : value;
+      const teamMark = needsTeamCompletion
+        ? `<span class="work-plan-team-required-mark" role="img" aria-label="Required; pending ${item === "plumber" ? "Plumbing" : "Vent"} team completion">!</span>`
+        : "";
+      const teamHint = needsTeamCompletion
+          ? `<small class="work-plan-team-hint">Mark complete from the ${item === "plumber" ? "Plumbing" : "Vent"} team dashboard.</small>`
+          : "";
+      const audit = isDone && doneBy
+        ? `<small class="work-plan-detail-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, item))}${isLocked ? "<span>Only the original checker can change this.</span>" : ""}</small>`
+        : "";
+      return `
+        <article class="work-plan-detail-item work-plan-detail-item-${tone}${isDone ? " is-done" : ""}">
+        <div class="work-plan-detail-item-heading">
+          <div class="work-plan-detail-item-title">${teamMark}<strong>${escapeHtml(label)}</strong></div>
+          <div class="work-plan-detail-actions">
+            <span class="work-plan-detail-status">${escapeHtml(status)}</span>
+            ${control}
+          </div>
+        </div>
+        ${notes ? `<p>${escapeHtml(notes)}</p>` : ""}
+        ${teamHint}
+        ${audit}
+      </article>`;
+    },
+  ).join("");
+  const workPlanGroups = [
+    ["Work packages", workPlanRows],
+    ["Survey checks", workPlanQuestions],
+  ].filter(([, items]) => items.length);
+  const allWorkPlanRows = [...workPlanRows, ...workPlanQuestions];
+  $("#house-detail-work-plan").classList.toggle("hidden", !allWorkPlanRows.length);
+  $("#house-detail-work-plan-rows").innerHTML = `
+    <div class="work-plan-detail-groups">
+      ${workPlanGroups.map(([label, items]) => `
+        <section class="work-plan-detail-group" aria-label="${escapeHtml(label)}">
+          <div class="work-plan-detail-grid">${renderWorkPlanItems(items)}</div>
+        </section>`).join("")}
+    </div>`;
   const preStart = house.status === "ready" || house.status === "not_started";
   $("#house-detail-snag-section").classList.toggle("hidden", preStart);
   $("#house-detail-records-title").textContent = preStart
@@ -8544,7 +8675,8 @@ function openHouseDetail(houseId) {
   $("#back-to-houses").textContent =
     isVentPhotoUploader(state.user) ||
     isPlumbingSupervisorUser(state.user) ||
-    hasAccessProfile(state.user, "plumbing_coordinator")
+    hasAccessProfile(state.user, "plumbing_coordinator") ||
+    hasAccessProfile(state.user, "ventilation_coordinator")
       ? "← Back to dashboard"
       : "← Back to houses & teams";
   if (activeTab !== "houses") {
@@ -10765,6 +10897,10 @@ function bindEvents() {
   $("#seai-search").addEventListener("focus", searchSeaiHouses);
   $("#seai-results").addEventListener("click", pickSeaiHouse);
   $("#houses-list").addEventListener("click", toggleHouseFinished);
+  $("#house-detail").addEventListener("click", (event) => {
+    const planCheck = event.target.closest(".work-plan-check");
+    if (planCheck) toggleWorkPlanDone(planCheck);
+  });
   $("#house-map-list-view").addEventListener("click", () => {
     if (hasAccessProfile(state.user, "assign") && state.houseStatusFilter === "seai") {
       state.houseStatusFilter = "active";
@@ -12021,6 +12157,13 @@ function bindEvents() {
     const detailButton = event.target.closest(".plumbing-house-detail-button");
     if (detailButton) openHouseDetail(detailButton.dataset.houseId);
   });
+  $("#ventilation-coordinator-house-list").addEventListener(
+    "click",
+    (event) => {
+      const detailButton = event.target.closest(".plumbing-house-detail-button");
+      if (detailButton) openHouseDetail(detailButton.dataset.houseId);
+    },
+  );
   $("#ventilation-coordinator-house-list").addEventListener(
     "submit",
     submitVentilationAssignment,

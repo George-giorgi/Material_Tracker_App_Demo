@@ -898,9 +898,10 @@ class NavigationBrowserTests(unittest.TestCase):
                 """
                 INSERT INTO provided_houses
                     (id, postcode, address, owner_name, plan_plumber_required,
-                     plan_plumber_notes)
+                     plan_plumber_notes, plan_ceramic_fuse_board,
+                     plan_solar_pv_required, plan_vent_required)
                 VALUES ('PLUMBING-DASHBOARD', 'P1 1AA', '1 Pipe Road',
-                        'Plumbing Owner', 1, 'Check water pressure')
+                        'Plumbing Owner', 1, 'Check water pressure', 1, 0, 1)
                 """
             )
             db.execute(
@@ -1066,8 +1067,109 @@ class NavigationBrowserTests(unittest.TestCase):
         card.get_by_role("button", name="View house details").click()
         self.page.locator("#house-detail").wait_for(state="visible")
         self.assertEqual(self.page.locator("#house-detail-title").inner_text(), "PLUMBING-DASHBOARD")
+        self.page.locator("#house-detail-plumbing-photos-card").wait_for(
+            state="visible"
+        )
         self.assertTrue(self.page.locator("#house-detail-plumbing-photos-card").is_visible())
         self.assertTrue(self.page.locator("#house-detail-plumbing-photos img").is_visible())
+        work_plan = self.page.locator("#house-detail-work-plan")
+        self.assertTrue(work_plan.is_visible())
+        self.assertEqual(work_plan.locator("h3").count(), 0)
+        self.assertTrue(work_plan.get_by_text("Plumber work", exact=True).is_visible())
+        self.assertTrue(work_plan.get_by_text("Check water pressure", exact=True).is_visible())
+        self.assertTrue(work_plan.get_by_text("Is there a ceramic fuse board?", exact=True).is_visible())
+        ceramic_board = work_plan.locator(".work-plan-detail-item").filter(
+            has_text="Is there a ceramic fuse board?"
+        )
+        self.assertTrue(ceramic_board.get_by_text("Required", exact=True).is_visible())
+        self.assertTrue(work_plan.get_by_text("Is solar PV required?", exact=True).is_visible())
+        self.assertTrue(work_plan.get_by_text("Not required", exact=True).is_visible())
+        self.assertEqual(
+            work_plan.locator(".work-plan-check[data-trade='plumber']").count(),
+            0,
+        )
+        self.assertEqual(
+            work_plan.locator(".work-plan-check[data-trade='vent']").count(),
+            0,
+        )
+        self.assertTrue(
+            work_plan.get_by_text(
+                "Mark complete from the Plumbing team dashboard.", exact=True
+            ).is_visible()
+        )
+        self.assertTrue(
+            work_plan.get_by_text(
+                "Mark complete from the Vent team dashboard.", exact=True
+            ).is_visible()
+        )
+        self.assertIsNone(
+            work_plan.locator(".work-plan-check").first.get_attribute("title")
+        )
+        vent_item = work_plan.locator(".work-plan-detail-item").filter(
+            has_text="Vent work"
+        )
+        self.assertEqual(
+            vent_item.locator(".work-plan-team-required-mark").inner_text(),
+            "!",
+        )
+        plumber_item = work_plan.locator(".work-plan-detail-item").filter(
+            has_text="Plumber work"
+        )
+        self.assertEqual(
+            plumber_item.locator(".work-plan-team-required-mark").inner_text(),
+            "!",
+        )
+        original_theme = self.page.locator("html").get_attribute("data-theme")
+        if original_theme != "dark":
+            self.page.locator("#theme-toggle").click()
+        self.page.mouse.move(0, 0)
+        self.page.wait_for_function(
+            """() => getComputedStyle(document.querySelector(
+              '#house-detail-work-plan .work-plan-detail-toggle.work-plan-check'
+            )).color === 'rgb(228, 236, 232)'"""
+        )
+        dark_check_style = self.page.locator(
+            "#house-detail-work-plan .work-plan-detail-toggle.work-plan-check"
+        ).first.evaluate(
+            """element => {
+              const style = getComputedStyle(element);
+              return {
+                color: style.color,
+                background: style.backgroundColor,
+                disabled: element.disabled
+              };
+            }"""
+        )
+        self.assertEqual(dark_check_style["color"], "rgb(228, 236, 232)")
+        self.assertEqual(dark_check_style["background"], "rgb(38, 53, 47)")
+        self.assertFalse(dark_check_style["disabled"])
+        if original_theme != "dark":
+            self.page.locator("#theme-toggle").click()
+        work_plan_check = work_plan.locator(
+            ".work-plan-check[data-trade='ceramic_fuse_board']"
+        )
+        self.assertTrue(work_plan_check.is_enabled())
+        work_plan_check.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '#house-detail-work-plan .work-plan-check[data-trade="ceramic_fuse_board"]'
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        self.assertEqual(work_plan_check.inner_text(), "✓")
+        self.assertEqual(
+            work_plan_check.get_attribute("aria-label"),
+            "Mark Is there a ceramic fuse board? not done",
+        )
+        self.assertIn("Checked by Plumbing Dashboard", work_plan.inner_text())
+        self.page.locator(
+            "#house-detail-work-plan .work-plan-check[data-trade='ceramic_fuse_board']"
+        ).click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              '#house-detail-work-plan .work-plan-check[data-trade="ceramic_fuse_board"]'
+            )?.getAttribute("aria-pressed") === "false" """
+        )
+        self.assertEqual(work_plan_check.inner_text(), "")
         self.page.wait_for_function(
             """(() => {
               const image = document.querySelector('#house-detail-plumbing-photos img');
@@ -1075,6 +1177,88 @@ class NavigationBrowserTests(unittest.TestCase):
             })()"""
         )
         self.assertTrue(self.page.locator("#house-detail-facts").is_hidden())
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_ceramic_fuse_board = 0,
+                    plan_ceramic_fuse_board_done_by = '',
+                    plan_ceramic_fuse_board_done_at = '',
+                    plan_ceramic_fuse_board_done_by_user_id = NULL
+                WHERE id = 'PLUMBING-DASHBOARD'
+                """
+            )
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_vent_done_by = 'Cathy',
+                    plan_vent_done_at = '2026-11-12T10:00:00'
+                WHERE id = 'PLUMBING-DASHBOARD'
+                """
+            )
+        refreshed_details = self.page.request.get(
+            f"{self.base_url}/api/houses/PLUMBING-DASHBOARD"
+        )
+        self.assertEqual(refreshed_details.status, 200, refreshed_details.text())
+        self.assertEqual(
+            refreshed_details.json()["house"]["plan_ceramic_fuse_board"],
+            0,
+        )
+        self.assertEqual(
+            refreshed_details.json()["house"]["plan_ceramic_fuse_board_done_by_user_id"],
+            None,
+        )
+        self.assertEqual(
+            refreshed_details.json()["house"]["plan_ceramic_fuse_board_done_by"],
+            "",
+        )
+        self.assertEqual(
+            refreshed_details.json()["house"]["plan_ceramic_fuse_board_done_at"],
+            "",
+        )
+        self.page.locator("#back-to-houses").click()
+        self.page.locator("#plumbing-coordinator-workload").wait_for(state="visible")
+        house_detail_button = self.page.locator(
+            '#plumbing-house-list button.house-open[data-house-id="PLUMBING-DASHBOARD"]'
+        )
+        with self.page.expect_response(
+            "**/api/houses/PLUMBING-DASHBOARD"
+        ) as detail_response:
+            house_detail_button.click()
+        self.assertEqual(
+            detail_response.value.json()["house"]["plan_ceramic_fuse_board"],
+            0,
+            detail_response.value.text(),
+        )
+        self.page.locator("#house-detail-work-plan").wait_for(state="visible")
+        ceramic_board = self.page.locator(
+            "#house-detail-work-plan .work-plan-detail-item"
+        ).filter(has_text="Is there a ceramic fuse board?")
+        self.assertTrue(
+            ceramic_board.get_by_text("Not required", exact=True).is_visible(),
+            f"Work-plan item: {ceramic_board.inner_text()}",
+        )
+        self.assertEqual(ceramic_board.get_by_text("No", exact=True).count(), 0)
+        vent_item = self.page.locator(
+            "#house-detail-work-plan .work-plan-detail-item"
+        ).filter(has_text="Vent work")
+        self.assertIn("is-done", vent_item.get_attribute("class"))
+        self.assertEqual(
+            vent_item.locator(".work-plan-team-required-mark").count(),
+            0,
+        )
+        vent_item_style = vent_item.evaluate(
+            """element => ({
+              background: getComputedStyle(element).backgroundColor,
+              borderLeft: getComputedStyle(element).borderLeftColor
+            })"""
+        )
+        if self.page.locator("html").get_attribute("data-theme") == "dark":
+            self.assertEqual(vent_item_style["background"], "rgb(30, 51, 41)")
+            self.assertEqual(vent_item_style["borderLeft"], "rgb(101, 189, 128)")
+        else:
+            self.assertEqual(vent_item_style["background"], "rgb(241, 250, 244)")
+            self.assertEqual(vent_item_style["borderLeft"], "rgb(60, 155, 98)")
         self.page.locator("#back-to-houses").click()
         self.page.locator("#plumbing-coordinator-workload").wait_for(state="visible")
         self.assertEqual(
@@ -1473,6 +1657,15 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(created.status, 201, created.text())
         teamlead_id = created.json()["user"]["id"]
         with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_vent_done_by = 'Ventilation Dashboard',
+                    plan_vent_done_by_user_id = ?
+                WHERE id = 'VENT-DASHBOARD-COMPLETE'
+                """,
+                (teamlead_id,),
+            )
             db.execute(
                 """
                 INSERT INTO team_roster_members (teamlead_user_id, member_name)
@@ -1958,7 +2151,7 @@ class NavigationBrowserTests(unittest.TestCase):
             has_text="VENT-DASHBOARD-COMPLETE"
         )
         self.assertIn("Ventilation complete", ventilation_house.inner_text())
-        self.assertIn("Completed by Ventilation Teammate", ventilation_house.inner_text())
+        self.assertIn("Completed by Ventilation Dashboard", ventilation_house.inner_text())
         ventilation_house.get_by_role(
             "button", name="Mark Vent work outstanding"
         ).click()
@@ -5143,6 +5336,17 @@ class NavigationBrowserTests(unittest.TestCase):
             tuple(plan),
             (1, "Replace the supply line", 1, "Check extractor and airflow"),
         )
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_scaffolding_required = 1,
+                    plan_esb_required = 1,
+                    plan_ceramic_fuse_board = 1
+                WHERE id = ?
+                """,
+                (house_id,),
+            )
 
         sign_in("flow-vent-coordinator", "456784", "Vent Flow Coordinator")
         self.assertTrue(
@@ -5174,6 +5378,75 @@ class NavigationBrowserTests(unittest.TestCase):
                 (house_id,),
             ).fetchone()
         self.assertEqual(assignment["teamlead_user_id"], vent_teamlead_id)
+        vent_coordinator_card.locator(".plumbing-house-detail-button").click()
+        self.page.locator("#house-detail-work-plan").wait_for(state="visible")
+        vent_work_item = self.page.locator(
+            "#house-detail-work-plan .work-plan-detail-item"
+        ).filter(has_text="Vent work")
+        plumber_work_item = self.page.locator(
+            "#house-detail-work-plan .work-plan-detail-item"
+        ).filter(has_text="Plumber work")
+        for label in (
+            "Scaffolding",
+            "ESB work",
+            "Plumber work",
+            "Vent work",
+            "Is there a ceramic fuse board?",
+            "Is solar PV required?",
+            "Is PIR required?",
+            "Are there any variations to the order?",
+            "Are windows required?",
+        ):
+            self.assertTrue(
+                self.page.locator("#house-detail-work-plan").get_by_text(
+                    label, exact=True
+                ).is_visible(),
+                label,
+            )
+        for trade in ("plumber", "vent"):
+            trade_item = self.page.locator(
+                "#house-detail-work-plan .work-plan-detail-item"
+            ).filter(has_text="Plumber work" if trade == "plumber" else "Vent work")
+            self.assertEqual(
+                trade_item.locator(f".work-plan-check[data-trade='{trade}']").count(),
+                0,
+            )
+            self.assertTrue(
+                trade_item.locator(".work-plan-team-required-mark").is_visible()
+            )
+        for trade in ("scaffolding", "esb", "ceramic_fuse_board"):
+            checklist_check = self.page.locator(
+                f"#house-detail-work-plan .work-plan-check[data-trade='{trade}']"
+            )
+            self.assertTrue(checklist_check.is_enabled(), trade)
+            checklist_check.click()
+            self.page.wait_for_function(
+                """trade => document.querySelector(
+                  `#house-detail-work-plan .work-plan-check[data-trade="${trade}"]`
+                )?.getAttribute("aria-pressed") === "true" """,
+                arg=trade,
+            )
+            checklist_check = self.page.locator(
+                f"#house-detail-work-plan .work-plan-check[data-trade='{trade}']"
+            )
+            self.assertIn("Vent Flow Coordinator", self.page.locator(
+                "#house-detail-work-plan"
+            ).inner_text())
+            checklist_check.click()
+            self.page.wait_for_function(
+                """trade => document.querySelector(
+                  `#house-detail-work-plan .work-plan-check[data-trade="${trade}"]`
+                )?.getAttribute("aria-pressed") === "false" """,
+                arg=trade,
+            )
+        self.assertTrue(
+            plumber_work_item.locator(".work-plan-team-hint").is_visible()
+        )
+        self.assertTrue(
+            vent_work_item.locator(".work-plan-team-hint").is_visible()
+        )
+        self.page.locator("#back-to-houses").click()
+        vent_coordinator_card.wait_for()
 
         sign_in("flow-plumber", "456783", "Plumber Flow")
         self.page.locator("#stat-ready").click()
@@ -5231,6 +5504,29 @@ class NavigationBrowserTests(unittest.TestCase):
                 (house_id,),
             ).fetchone()
         self.assertEqual(completion["plan_vent_done_by"], "Vent Teamlead Flow")
+        sign_in("flow-vent-coordinator", "456784", "Vent Flow Coordinator")
+        vent_coordinator_card = self.page.locator(
+            "#ventilation-coordinator-house-list .ventilation-house-card"
+        ).filter(has_text=house_id)
+        vent_coordinator_card.locator(".plumbing-house-detail-button").click()
+        self.page.locator("#house-detail-work-plan").wait_for(state="visible")
+        vent_work_item = self.page.locator(
+            "#house-detail-work-plan .work-plan-detail-item"
+        ).filter(has_text="Vent work")
+        self.assertIn("is-done", vent_work_item.get_attribute("class"))
+        self.assertEqual(
+            vent_work_item.locator(".work-plan-check[data-trade='vent']").count(),
+            0,
+        )
+        self.assertEqual(
+            vent_work_item.locator(".work-plan-team-required-mark").count(),
+            0,
+        )
+        self.assertIn("Vent Teamlead Flow", vent_work_item.inner_text())
+        self.assertIn(
+            "Only the original checker can change this.",
+            vent_work_item.inner_text(),
+        )
 
         sign_in("flow-cathy", "234567", "Cathy Flow")
         self.page.locator("[data-assign-house-filter='ready']").click()
@@ -5285,33 +5581,16 @@ class NavigationBrowserTests(unittest.TestCase):
             f"#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='{house_id}']"
         )
         active_plumbing_work.wait_for()
-        active_plumbing_work.click()
-        self.page.wait_for_function(
-            """() => document.querySelector(
-              "#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='ROLE-FLOW-1']"
-            )?.getAttribute("aria-pressed") === "true" """
-        )
-        active_plumbing_work = self.page.locator(
-            f"#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='{house_id}']"
-        )
-        active_plumbing_work.click()
-        self.page.wait_for_function(
-            """() => document.querySelector(
-              "#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='ROLE-FLOW-1']"
-            )?.getAttribute("aria-pressed") === "false" """
-        )
-        active_plumbing_work.click()
-        self.page.wait_for_function(
-            """() => document.querySelector(
-              "#plumbing-supervisor-house-list .plumbing-completion-toggle[data-house-id='ROLE-FLOW-1']"
-            )?.getAttribute("aria-pressed") === "true" """
-        )
+        self.assertTrue(active_plumbing_work.is_disabled())
+        self.assertIn("Only the original checker", active_plumbing_work.get_attribute("aria-label"))
         with server.connect_db() as db:
             checklist = db.execute(
-                "SELECT plumber_status FROM house_checklists WHERE house_id = ?",
+                "SELECT plan_plumber_done_by, plan_plumber_done_by_user_id "
+                "FROM provided_houses WHERE id = ?",
                 (house_id,),
             ).fetchone()
-        self.assertEqual(checklist["plumber_status"], "done")
+        self.assertEqual(checklist["plan_plumber_done_by"], "Plumber Flow")
+        self.assertIsNotNone(checklist["plan_plumber_done_by_user_id"])
 
         sign_in("flow-vent-teamlead", "456785", "Vent Teamlead Flow")
         self.page.locator("#ventilation-house-list").wait_for(state="visible")

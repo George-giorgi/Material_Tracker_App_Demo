@@ -6561,6 +6561,95 @@ class WorkPlanCompletionTests(HttpBase):
             (None, "", None, None, None, None, None),
         )
 
+    def test_ventilation_coordinator_can_check_scoped_non_trade_work_with_checker_ownership(
+        self,
+    ):
+        coordinator = self.login(
+            "vent-coordinator-checker",
+            "Vent Coordinator",
+            "ventilation_coordinator",
+        )
+        other_coordinator = self.login(
+            "vent-coordinator-checker-other",
+            "Other Vent Coordinator",
+            "ventilation_coordinator",
+        )
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_vent_required = 1, plan_vent_notes = 'Vent notes',
+                    plan_plumber_required = 1,
+                    plan_ceramic_fuse_board = 1
+                WHERE id = 'PLAN-1'
+                """
+            )
+        self.provide("OUTSIDE-VENT-QUEUE")
+
+        status, details, _ = self.call(
+            "GET",
+            "/api/houses/PLAN-1",
+            cookie=coordinator,
+        )
+        self.assertEqual(status, 200, details)
+        self.assertEqual(details["house"]["plan_vent_required"], 1)
+        self.assertEqual(details["house"]["plan_vent_notes"], "Vent notes")
+        self.assertEqual(details["house"]["plan_scaffolding_required"], 1)
+        self.assertEqual(details["house"]["plan_plumber_required"], 1)
+        self.assertEqual(details["house"]["plan_ceramic_fuse_board"], 1)
+
+        for trade in ("plumber", "vent"):
+            status, result, _ = self.complete(coordinator, trade)
+            self.assertEqual(status, 403, result)
+            self.assertIn("appropriate team dashboard", result["error"])
+
+        status, result, _ = self.complete(coordinator, "scaffolding")
+        self.assertEqual((status, result["done_by"]), (200, "Vent Coordinator"))
+        with server.connect_db() as db:
+            checker_id = db.execute(
+                "SELECT id FROM app_users WHERE username = ?",
+                ("vent-coordinator-checker",),
+            ).fetchone()["id"]
+        self.assertEqual(result["done_by_user_id"], checker_id)
+
+        status, result, _ = self.complete(
+            other_coordinator, "scaffolding", done=False
+        )
+        self.assertEqual(status, 403, result)
+        self.assertIn("original checker", result["error"])
+
+        status, result, _ = self.complete(
+            coordinator, "ceramic_fuse_board"
+        )
+        self.assertEqual((status, result["done_by"]), (200, "Vent Coordinator"))
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": "PLAN-1", "item": "plumber", "done": True},
+            cookie=coordinator,
+        )
+        self.assertEqual(status, 403, result)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": "OUTSIDE-VENT-QUEUE", "item": "scaffolding", "done": True},
+            cookie=coordinator,
+        )
+        self.assertEqual(status, 403, result)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": "PLAN-1", "item": "ceramic_fuse_board", "done": False},
+            cookie=coordinator,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, result, _ = self.complete(coordinator, "scaffolding", done=False)
+        self.assertEqual((status, result["done_by"]), (200, ""))
+
     def test_only_permitted_roles_can_check_each_item(self):
         cathy = self.login("cathy-plan", "Cathy", "assign")
         ewi_supervisor = self.login(
@@ -6592,7 +6681,8 @@ class WorkPlanCompletionTests(HttpBase):
                     (department,),
                 ).fetchone()
             )
-        self.assertEqual(self.complete(teamlead, "esb", False)[0], 200)
+        self.assertEqual(self.complete(teamlead, "esb", False)[0], 403)
+        self.assertEqual(self.complete(ewi_supervisor, "esb", False)[0], 200)
 
     def test_assign_can_check_published_survey_questions(self):
         cathy = self.login("cathy-question-check", "Cathy", "assign")
@@ -9083,7 +9173,14 @@ class PlumbingCoordinatorTests(HttpBase):
         self.provide("OUTSIDE-PLUMBING-QUEUE")
         with server.connect_db() as db:
             db.execute(
-                "UPDATE provided_houses SET plan_plumber_required = 1 WHERE id = ?",
+                """
+                UPDATE provided_houses
+                SET plan_plumber_required = 1,
+                    plan_plumber_notes = 'Repair leak',
+                    plan_ceramic_fuse_board = 1,
+                    plan_solar_pv_required = 0
+                WHERE id = ?
+                """,
                 (house_id,),
             )
             photo_ids = []
@@ -9119,11 +9216,55 @@ class PlumbingCoordinatorTests(HttpBase):
                 "owner_name",
                 "address",
                 "status",
+                "plan_scaffolding_required",
+                "plan_scaffolding_notes",
+                "plan_esb_required",
+                "plan_esb_notes",
+                "plan_plumber_required",
+                "plan_plumber_notes",
+                "plan_plumber_done_by",
+                "plan_plumber_done_at",
+                "plan_plumber_done_by_user_id",
+                "plan_vent_required",
+                "plan_vent_notes",
+                "plan_vent_done_by",
+                "plan_vent_done_at",
+                "plan_vent_done_by_user_id",
+                "plan_ceramic_fuse_board",
+                "plan_ceramic_fuse_board_done_by",
+                "plan_ceramic_fuse_board_done_at",
+                "plan_ceramic_fuse_board_done_by_user_id",
+                "plan_solar_pv_required",
+                "plan_solar_pv_required_done_by",
+                "plan_solar_pv_required_done_at",
+                "plan_solar_pv_required_done_by_user_id",
+                "plan_pir_required",
+                "plan_pir_required_done_by",
+                "plan_pir_required_done_at",
+                "plan_pir_required_done_by_user_id",
+                "plan_order_variations",
+                "plan_order_variations_done_by",
+                "plan_order_variations_done_at",
+                "plan_order_variations_done_by_user_id",
+                "plan_windows_required",
+                "plan_windows_required_done_by",
+                "plan_windows_required_done_at",
+                "plan_windows_required_done_by_user_id",
+                "plan_scaffolding_done_by",
+                "plan_scaffolding_done_at",
+                "plan_scaffolding_done_by_user_id",
+                "plan_esb_done_by",
+                "plan_esb_done_at",
+                "plan_esb_done_by_user_id",
                 "can_view_plumbing_photos",
                 "photo_view_only",
                 "plumbing_photos",
             },
         )
+        self.assertEqual(result["house"]["plan_plumber_required"], 1)
+        self.assertEqual(result["house"]["plan_plumber_notes"], "Repair leak")
+        self.assertEqual(result["house"]["plan_ceramic_fuse_board"], 1)
+        self.assertEqual(result["house"]["plan_solar_pv_required"], 0)
         self.assertEqual(result["movements"], [])
         status, _, _ = self.call(
             "GET",
@@ -9132,21 +9273,133 @@ class PlumbingCoordinatorTests(HttpBase):
         )
         self.assertEqual(status, 403)
 
-        connection = http.client.HTTPConnection(
-            "127.0.0.1",
-            self.httpd.server_address[1],
-            timeout=5,
+    def test_plumbing_coordinator_work_plan_checks_are_owned_by_the_checker(self):
+        house_id = "PLUMBING-WORK-PLAN-OWNER"
+        self.provide(house_id)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1, plan_plumber_required = 1,
+                    plan_scaffolding_required = 1, plan_vent_required = 1
+                WHERE id = ?
+                """,
+                (house_id,),
+            )
+        status, other_coordinator, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "plumbing.coordinator.other",
+                "display_name": "Other Plumbing Coordinator",
+                "pin": "654322",
+                "role": "plumbing_coordinator",
+            },
         )
-        connection.request(
-            "GET",
-            f"/api/house-plumbing-photos/{photo_ids[0]}/file",
-            headers={"Cookie": self.coordinator_cookie},
+        self.assertEqual(status, 201)
+        other_coordinator_id = other_coordinator["user"]["id"]
+        _, _, other_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {
+                "username": "plumbing.coordinator.other",
+                "pin": "654322",
+            },
         )
-        photo_response = connection.getresponse()
-        self.assertEqual(photo_response.status, 200)
-        self.assertEqual(photo_response.read(), photo_content)
-        connection.close()
 
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": house_id, "item": "plumber", "done": True},
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 403, result)
+        self.assertIn("appropriate team dashboard", result["error"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": house_id, "item": "vent", "done": True},
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 403, result)
+        self.assertIn("appropriate team dashboard", result["error"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": house_id, "item": "scaffolding", "done": True},
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["done_by_user_id"], self.coordinator_id)
+
+        status, details, _ = self.call(
+            "GET",
+            f"/api/houses/{house_id}",
+            cookie=other_cookie,
+        )
+        self.assertEqual(status, 200, details)
+        self.assertEqual(
+            details["house"]["plan_scaffolding_done_by"],
+            "Plumbing Coordinator",
+        )
+        self.assertEqual(
+            details["house"]["plan_scaffolding_done_by_user_id"],
+            self.coordinator_id,
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": house_id, "item": "scaffolding", "done": True},
+            cookie=other_cookie,
+        )
+        self.assertEqual(status, 403, result)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": house_id, "item": "scaffolding", "done": False},
+            cookie=other_cookie,
+        )
+        self.assertEqual(status, 403, result)
+        self.assertIn("original checker", result["error"])
+        self.assertNotEqual(other_coordinator_id, self.coordinator_id)
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-checklist",
+            {
+                "house_id": house_id,
+                "scaffolding_status": "not_done",
+                "esb_unclipped": "no",
+                "plumber_status": "not_done",
+            },
+            cookie=self.cookie,
+        )
+        self.assertEqual(status, 403, result)
+        self.assertIn("original checker", result["error"])
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {"house_id": house_id, "item": "scaffolding", "done": False},
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertIsNone(result["done_by_user_id"])
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {
+                "house_id": "OUTSIDE-PLUMBING-QUEUE",
+                "item": "scaffolding",
+                "done": True,
+            },
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 403, result)
 
 if __name__ == "__main__":
     unittest.main()
