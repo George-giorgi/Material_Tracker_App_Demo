@@ -156,9 +156,10 @@ let pendingMovementRefresh = false;
 let pendingUserRefresh = false;
 let pendingDocumentRefresh = false;
 const pendingDashboardViews = new Set();
-let changePollInProgress = false;
-let pendingRefreshInProgress = false;
+let changePollPromise = null;
+let pendingRefreshPromise = null;
 let changePollFailureShown = false;
+let snagScrollSnapshot = null;
 function setTheme(theme) {
   const isDark = theme === "dark";
   document.documentElement.dataset.theme = isDark ? "dark" : "light";
@@ -788,15 +789,32 @@ function houseAuditHtml(house, readyOnly = false) {
   return `<div class="house-audit${readyOnly ? " house-audit-ready" : ""}" aria-label="House activity">${highlights}</div>`;
 }
 
-function houseSurveyorAssignmentAlertHtml(house) {
-  if (house.has_assigned_surveyor) return "";
+function houseSurveyorAssignmentSummaryHtml(house) {
+  const hasAssignedSurveyor = Boolean(house.has_assigned_surveyor);
   const value = house.assigned_surveyor_name
-    ? `${house.assigned_surveyor_name}${house.assigned_surveyor_is_active === 0 ? " (inactive)" : ""}`
+    ? `${house.assigned_surveyor_name}${Number(house.assigned_surveyor_is_active) === 0 ? " (inactive)" : ""}`
     : "Not assigned";
-  const assignedAt = house.surveyor_assigned_at
-    ? `<small>Last assignment ${escapeHtml(formatAuditDateTime(house.surveyor_assigned_at))}</small>`
+  const history = Array.isArray(house.activity_history) && house.activity_history.length
+    ? house.activity_history
+    : house.status_history || [];
+  const activation = history
+    .filter((entry) => entry.status === "active")
+    .sort((left, right) =>
+      String(right.changed_at || "").localeCompare(String(left.changed_at || "")),
+    )[0];
+  const assignmentDetails = [
+    house.surveyor_assigned_by
+      ? `Assigned by ${house.surveyor_assigned_by}`
+      : "",
+    house.surveyor_assigned_at
+      ? formatAuditDateTime(house.surveyor_assigned_at)
+      : "",
+  ].filter(Boolean).join(" · ");
+  const assignmentAudit = assignmentDetails
+    ? `<small>${escapeHtml(assignmentDetails)}</small>`
     : "";
-  return `<div class="house-audit-summary house-audit-summary-active" role="status"><div class="house-audit-summary-field surveyor-assignment-field surveyor-assignment-missing"><strong>Assigned Surveyor</strong><span>${escapeHtml(value)}</span>${assignedAt}</div></div>`;
+  const activationAudit = `<div class="house-audit-summary-field house-activation-field"><strong>Marked active by</strong><span>${escapeHtml(activation?.changed_by || "Not recorded")}</span><small>${escapeHtml(activation?.changed_at ? formatAuditDateTime(activation.changed_at) : "Activation time not recorded")}</small></div>`;
+  return `<div class="house-audit-summary house-audit-summary-active" aria-label="House assignment and activation"><div class="house-audit-summary-field surveyor-assignment-field${hasAssignedSurveyor ? "" : " surveyor-assignment-missing"}"><strong>Assigned Surveyor</strong><span>${escapeHtml(value)}</span>${assignmentAudit}</div>${activationAudit}</div>`;
 }
 
 function houseAuditCount(house) {
@@ -1370,7 +1388,6 @@ function showWorkspace(user) {
   $("#open-house").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
   $("#open-import-empty").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
   $("#start-presentation").classList.toggle("hidden", !hasAccessProfile(user, "admin"));
-  $("#go-overview").classList.add("hidden");
   updateMovementFields();
   if (!hasAccessProfile(user, "admin")) closePresentation();
   if (isSurveyor) closeNavigationTour();
@@ -1392,10 +1409,6 @@ function setTab(tab) {
   if (tab === "overview" && state.housesTeamsTab !== "houses") {
     state.housesTeamsTab = "houses";
     renderHouses();
-  }
-  $("#go-overview").classList.toggle("hidden", tab === "overview");
-  if ((hasAccessProfile(state.user, "assign") || hasAccessProfile(state.user, "surveyor"))) {
-    $("#go-overview").classList.add("hidden");
   }
   $$(".nav-item").forEach((button) => {
     const active = button.dataset.tab === tab;
@@ -2822,14 +2835,29 @@ function checklistRequirementBadge(required, status) {
   return '<span class="checklist-requirement requirement-unknown">Requirement not set</span>';
 }
 
-function activeChecklistToggle(houseId, field, label, status, required, showRequirement = true) {
+function activeChecklistToggle(
+  houseId,
+  field,
+  label,
+  status,
+  required,
+  showRequirement = true,
+  doneOverride,
+  locked = false,
+) {
   const requirement = showRequirement ? checklistRequirementBadge(required, status) : "";
   if (required === 0 || required === false || status === "not_necessary" || status === "not_esb") {
     return requirement;
   }
-  const done = status === "done" || status === "yes";
+  const done = doneOverride ?? (status === "done" || status === "yes");
   const notDoneStatus = field === "esb_unclipped" ? "no" : "not_done";
-  return `<div class="checklist-toggle-wrap">${requirement}<label class="checklist-toggle${done ? " is-done" : ""}"><input type="checkbox" class="house-checklist-status" data-house-id="${escapeHtml(houseId)}" data-checklist-field="${field}" data-saved-value="${status || notDoneStatus}" aria-label="Mark ${escapeHtml(label)} done"${done ? " checked" : ""}><span class="checklist-toggle-indicator" aria-hidden="true">${done ? "✓" : ""}</span><span class="checklist-toggle-label">${done ? "Done" : "Not done yet"}</span></label></div>`;
+  const savedValue = done
+    ? field === "esb_unclipped" ? "yes" : "done"
+    : status || notDoneStatus;
+  const ariaLabel = locked
+    ? "Only the original checker can change this work-plan status."
+    : `Mark ${escapeHtml(label)} done`;
+  return `<div class="checklist-toggle-wrap">${requirement}<label class="checklist-toggle${done ? " is-done" : ""}${locked ? " is-locked" : ""}"><input type="checkbox" class="house-checklist-status" data-house-id="${escapeHtml(houseId)}" data-checklist-field="${field}" data-saved-value="${savedValue}" aria-label="${ariaLabel}"${locked ? " disabled" : ""}${done ? " checked" : ""}><span class="checklist-toggle-indicator" aria-hidden="true">${done ? "✓" : ""}</span><span class="checklist-toggle-label">${done ? "Done" : "Not done yet"}</span></label></div>`;
 }
 function snagRowHtml(snag, houseId) {
   return `<button type="button" class="snag-row${snag.done ? " done" : ""}" data-snag-id="${snag.id}" data-house-id="${escapeHtml(houseId)}" data-done="${snag.done ? "false" : "true"}" aria-pressed="${snag.done}" title="${snag.done ? "Mark as not done" : "Mark as done"}"><span class="snag-box">${snag.done ? "✓" : ""}</span><span class="snag-text">${escapeHtml(snag.text)}</span></button>`;
@@ -2861,6 +2889,20 @@ function openHouseSnags(houseId) {
   $("#house-snag-form").elements.text.focus();
 }
 async function saveSnag(payload) {
+  const currentSnag = [
+    ...document.querySelectorAll(
+      "#houses-list .snag-row, #house-snag-list .snag-row",
+    ),
+  ].find((element) => element.dataset.snagId === String(payload.snag_id));
+  const scrollSnapshot =
+    snagScrollSnapshot?.snagId === String(payload.snag_id)
+      ? snagScrollSnapshot
+      : {
+          pageScrollLeft: window.scrollX,
+          pageScrollTop: window.scrollY,
+          cardScrollTop: currentSnag?.closest(".house-body")?.scrollTop || 0,
+        };
+  snagScrollSnapshot = null;
   try {
     const result = await request("/api/houses/snags", {
       method: "POST",
@@ -2869,8 +2911,38 @@ async function saveSnag(payload) {
     });
     const house = findAnyHouse(result.id);
     if (house) house.snags = result.snags;
-    renderHouses();
+    if (payload.delete || !currentSnag) {
+      renderHouses();
+    } else {
+      const updatedSnag = result.snags.find(
+        (snag) => snag.id === Number(payload.snag_id),
+      );
+      if (updatedSnag) {
+        [...document.querySelectorAll(".snag-row")]
+          .filter((element) => element.dataset.snagId === String(payload.snag_id))
+          .forEach((element) => {
+            element.classList.toggle("done", updatedSnag.done);
+            element.dataset.done = String(!updatedSnag.done);
+            element.setAttribute("aria-pressed", String(updatedSnag.done));
+            element.title = updatedSnag.done ? "Mark as not done" : "Mark as done";
+            element.querySelector(".snag-box").textContent =
+              updatedSnag.done ? "✓" : "";
+          });
+        const body = [...document.querySelectorAll(".house-body")].find(
+          (element) => element.dataset.houseId === result.id,
+        );
+        const title = body?.querySelector(".snag-block .house-stock-title");
+        if (title) {
+          title.textContent = `Snags (${result.snags.filter((snag) => !snag.done).length} open)`;
+        }
+      }
+    }
     if ($("#house-snag-dialog").open) renderSnagDialog();
+    const body = [...document.querySelectorAll(".house-body")].find(
+      (element) => element.dataset.houseId === result.id,
+    );
+    if (body) body.scrollTop = scrollSnapshot.cardScrollTop;
+    window.scrollTo(scrollSnapshot.pageScrollLeft, scrollSnapshot.pageScrollTop);
     return true;
   } catch (error) {
     showToast(error.message, true);
@@ -2892,6 +2964,8 @@ function houseMapButtonHtml(houseId) {
 function houseActionIcon(name) {
   const paths = {
     details: '<path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path>',
+    pdf: '<path d="M6.5 3.75h8l4 4v12.5H7a1 1 0 0 1-1-1V4.75a1 1 0 0 1 .5-1Z"></path><path d="M14.5 3.75v4h4M9 12h6m-6 3.5h6"></path>',
+    delivery: '<path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z"></path><circle cx="7.5" cy="18" r="1.5"></circle><circle cx="17.5" cy="18" r="1.5"></circle>',
     activate: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8m-4-4h8"></path>',
     assign: '<circle cx="9" cy="8" r="3"></circle><path d="M3.5 19a5.5 5.5 0 0 1 11 0m3-8v6m-3-3h6"></path>',
     change: '<path d="M20 7h-9a4 4 0 0 0-4 4m-3 0 3 3 3-3M4 17h9a4 4 0 0 0 4-4m3 0-3-3-3 3"></path>',
@@ -3282,7 +3356,10 @@ function renderSupervisorAssignmentSummary(houses) {
       : `<p class="supervisor-assignment-summary-empty">${emptyMessage}</p>`;
   };
   const summary = $("#supervisor-assignment-summary");
-  summary.classList.toggle("hidden", !houses.length);
+  const shouldShowSummary =
+    houses.length > 0 && !isEwiSupervisorUser(state.user);
+  summary.classList.toggle("hidden", !shouldShowSummary);
+  if (!shouldShowSummary) return;
   renderAssignmentSummary(
     $("#supervisor-delivery-summary"),
     "delivery_person",
@@ -3623,8 +3700,8 @@ function renderSupervisorHouses() {
     const filterLabels = canAssignEwiWork
       ? {
           all: "All houses",
-          needs_assignment: "Needs assignment",
-          active: "Assigned",
+          needs_assignment: "Needs Teamlead",
+          active: "EWI in progress",
           closed: "Completed",
         }
       : {
@@ -3737,11 +3814,12 @@ function renderSupervisorHouses() {
           const ewiAssignmentStatus = house.ewi_teamlead_user_id
             ? house.ewi_completed_at
               ? "EWI work completed"
-              : `Assigned to ${house.ewi_teamlead_name}`
+              : "Assigned"
             : "No Teamlead assigned";
           const needsAssignment = canAssignEwiWork
             ? !house.ewi_teamlead_user_id
-            : !house.delivery_person || !house.delivery_team;
+            : !isPlumbingSupervisor &&
+              (!house.delivery_person || !house.delivery_team);
           const seaiApplication = house.seai_summary?.["Application Details"] || {};
           const seaiProperty = house.seai_summary?.["Property Details"] || {};
           const ewiMeasure = (house.seai_summary?.Measures || []).find((measure) =>
@@ -3817,44 +3895,44 @@ function renderSupervisorHouses() {
             ${ewiSeaiDetails}
             ${canAssignEwiWork
               ? `<div class="supervisor-ewi-card-actions">
-                  <button class="button button-secondary house-open" type="button" data-house-id="${houseId}">View house details</button>
-                  <button class="button button-secondary" type="button" data-ewi-house-pdfs="${houseId}">Annotated PDFs</button>
+                  <button class="button button-secondary supervisor-ewi-card-action house-open" type="button" data-house-id="${houseId}">${houseActionIcon("details")}<span>View house details</span></button>
+                  <button class="button button-secondary supervisor-ewi-card-action" type="button" data-ewi-house-pdfs="${houseId}">${houseActionIcon("pdf")}<span>Annotated PDFs</span></button>
                 </div>
               </div>
               <div class="supervisor-ewi-card-workflow">`
               : ""}
-            ${!canAssignEwiWork && !house.plumbing_assignment_pending_activation ? `<form class="supervisor-house-assignment" data-house-id="${houseId}" aria-label="Delivery assignments for ${houseId}">
+            ${!isPlumbingSupervisor && !canAssignEwiWork && !house.plumbing_assignment_pending_activation ? `<form class="supervisor-house-assignment" data-house-id="${houseId}" aria-label="Delivery assignments for ${houseId}">
               <div class="supervisor-assignment-heading">
                 <div><h3>Delivery assignments</h3><p>Choose who delivers and the Teamlead responsible.</p></div>
                 <span class="supervisor-assignment-status${needsAssignment ? " is-needed" : ""}" aria-live="polite">${needsAssignment ? "Needs assignment" : "Assigned"}</span>
               </div>
-              <label>Delivery person<select name="delivery_person" required aria-label="Delivery person for ${houseId}"><option value="" disabled${house.delivery_person ? "" : " selected"}>Choose a delivery person</option>${deliveryPersonOptions}</select></label>
+              <label>Delivery person<select name="delivery_person" required aria-label="Delivery person for ${houseId}"${deliveryPeople.length ? "" : " disabled"}><option value="" disabled${house.delivery_person ? "" : " selected"}>${deliveryPeople.length ? "Choose a delivery person" : "No delivery people available"}</option>${deliveryPersonOptions}</select></label>
               <label>Teamlead<select name="delivery_team" required aria-label="Teamlead for ${houseId}"${hasTeamLeads || house.delivery_team ? "" : " disabled"}><option value="" disabled${house.delivery_team ? "" : " selected"}>${hasTeamLeads ? "Choose a Teamlead" : "No active Teamleads"}</option>${teamOptions}</select></label>
               ${hasTeamLeads ? "" : '<p class="supervisor-assignment-help">Ask an administrator to add an active Teamlead account before assigning a team.</p>'}
               <button class="button button-primary" type="submit"${!house.delivery_person || !house.delivery_team ? " disabled" : ""}>Save assignments</button>
             </form>`
               : ""}
             ${canAssignEwiWork && !house.plumbing_assignment_pending_activation
-              ? `<form class="supervisor-house-assignment supervisor-ewi-delivery-assignment" data-house-id="${houseId}" aria-label="Delivery person assignment for ${houseId}">
+              ? `<form class="supervisor-house-assignment supervisor-ewi-delivery-assignment" data-house-id="${houseId}" data-current-delivery-person="${escapeHtml(house.delivery_person || "")}" aria-label="Delivery person assignment for ${houseId}">
                   <div class="supervisor-assignment-heading">
-                    <div><h3>Delivery person</h3><p>${house.delivery_person ? `Currently assigned to ${escapeHtml(house.delivery_person)}.` : "Choose the person responsible for delivery."}</p></div>
+                    <div><h3>Delivery person assignment</h3></div>
                     <span class="supervisor-assignment-status${house.delivery_person ? "" : " is-needed"}" aria-live="polite">${house.delivery_person ? "Assigned" : "Needs assignment"}</span>
                   </div>
-                  <label>Delivery person<select name="delivery_person" required aria-label="Delivery person for ${houseId}"><option value="" disabled${house.delivery_person ? "" : " selected"}>Choose a delivery person</option>${deliveryPersonOptions}</select></label>
+                  <label>Delivery person<select name="delivery_person" aria-label="Delivery person for ${houseId}"${deliveryPeople.length ? "" : " disabled"}><option value=""${house.delivery_person ? "" : " selected"}>No assignment</option>${deliveryPersonOptions}</select></label>
                   <input type="hidden" name="delivery_team" value="${escapeHtml(house.delivery_team || "")}">
-                  <button class="button button-primary" type="submit"${!deliveryPeople.length ? " disabled" : ""}>Save delivery person</button>
+                  <button class="button button-primary" type="submit" disabled>${houseActionIcon(house.delivery_person ? "change" : "assign")}<span>${house.delivery_person ? "Change delivery person" : "Assign delivery person"}</span></button>
                 </form>`
               : ""}
             ${canAssignEwiWork && !house.plumbing_assignment_pending_activation
-              ? `<form class="supervisor-ewi-assignment" data-house-id="${houseId}" aria-label="EWI work assignment for ${houseId}">
+              ? `<form class="supervisor-ewi-assignment" data-house-id="${houseId}" data-current-teamlead-user-id="${escapeHtml(house.ewi_teamlead_user_id || "")}" aria-label="EWI work assignment for ${houseId}">
                   <div class="supervisor-ewi-assignment-heading">
-                    <div><h3>EWI work assignment</h3><p>Assign this house to one of your reporting EWI Teamleads.</p></div>
+                    <div><h3>EWI work assignment</h3></div>
                     <span class="supervisor-ewi-assignment-status${house.ewi_teamlead_user_id ? " is-assigned" : ""}" aria-live="polite">${escapeHtml(ewiAssignmentStatus)}</span>
                   </div>
                   <label>EWI Teamlead<select name="teamlead_user_id" aria-label="EWI Teamlead for ${houseId}">
                     <option value="">Not assigned</option>${ewiTeamleadOptions}
                   </select>                  </label>
-                  <button class="button button-secondary" type="submit"${!ewiTeamleads.length && !house.ewi_teamlead_user_id ? " disabled" : ""}>Save EWI assignment</button>
+                  <button class="button button-secondary" type="submit" disabled>${houseActionIcon("assign")}<span>Save EWI assignment</span></button>
                 </form>`
               : ""}
             ${canAssignEwiWork ? "</div>" : ""}
@@ -3930,8 +4008,9 @@ async function saveSupervisorHouseAssignment(event) {
   event.preventDefault();
   if (!form.reportValidity()) return;
   const button = form.querySelector('button[type="submit"]');
+  const buttonLabel = button.querySelector("span") || button;
   button.disabled = true;
-  button.textContent = "Saving…";
+  buttonLabel.textContent = "Saving…";
   try {
     const result = await request("/api/supervisor/house-assignment", {
       method: "POST",
@@ -3958,7 +4037,11 @@ async function saveSupervisorHouseAssignment(event) {
     }
     if (isEwiSupervisorUser(state.user)) {
       renderSupervisorHouses();
-      showToast(`Delivery person saved for ${result.house_id}.`);
+      showToast(
+        result.delivery_person
+          ? `Delivery person saved for ${result.house_id}.`
+          : `Delivery person assignment cleared for ${result.house_id}.`,
+      );
       return;
     }
     renderSupervisorAssignmentSummary(state.dashboard.house_list);
@@ -3981,18 +4064,16 @@ async function saveSupervisorHouseAssignment(event) {
     if (supervisorHouseFilter === "needs_assignment") {
       renderSupervisorHouses();
     }
-    button.textContent = "Saved";
+    buttonLabel.textContent = "Saved";
     button.classList.add("is-saved");
     showToast(`Delivery assignments saved for ${result.house_id}.`);
   } catch (error) {
-    button.textContent = form.classList.contains("supervisor-ewi-delivery-assignment")
-      ? "Save delivery person"
+    buttonLabel.textContent = form.classList.contains("supervisor-ewi-delivery-assignment")
+      ? supervisorDeliveryAssignmentButtonLabel(form)
       : "Save assignments";
     showToast(error.message, true);
   } finally {
-    button.disabled = !form.elements.delivery_person.value ||
-      (!form.classList.contains("supervisor-ewi-delivery-assignment") &&
-        !form.elements.delivery_team.value);
+    button.disabled = supervisorAssignmentButtonDisabled(form);
   }
 }
 async function saveSupervisorEwiAssignment(event) {
@@ -4000,7 +4081,9 @@ async function saveSupervisorEwiAssignment(event) {
   if (!form) return;
   event.preventDefault();
   const button = form.querySelector('button[type="submit"]');
+  const buttonLabel = button.querySelector("span");
   button.disabled = true;
+  buttonLabel.textContent = "Saving…";
   try {
     const result = await request("/api/supervisor/ewi-assignment", {
       method: "POST",
@@ -4028,9 +4111,10 @@ async function saveSupervisorEwiAssignment(event) {
         : `EWI work assignment removed from ${result.house_id}.`,
     );
   } catch (error) {
+    buttonLabel.textContent = "Save EWI assignment";
     showToast(error.message, true);
   } finally {
-    button.disabled = false;
+    button.disabled = supervisorEwiAssignmentButtonDisabled(form);
   }
 }
 async function completeTeamleadEwiWork(button) {
@@ -4093,18 +4177,57 @@ async function updatePlumbingCompletion(button) {
     showToast(error.message, true);
   }
 }
+function supervisorAssignmentButtonDisabled(form) {
+  const isEwiDelivery = form.classList.contains(
+    "supervisor-ewi-delivery-assignment",
+  );
+  const deliveryPerson = form.elements.delivery_person.value;
+  if (isEwiDelivery) {
+    return deliveryPerson === (form.dataset.currentDeliveryPerson || "");
+  }
+  return (
+    !deliveryPerson ||
+    !form.elements.delivery_team.value
+  );
+}
+function supervisorDeliveryAssignmentButtonLabel(form) {
+  const currentDeliveryPerson = form.dataset.currentDeliveryPerson || "";
+  const selectedDeliveryPerson = form.elements.delivery_person.value || "";
+  if (currentDeliveryPerson && !selectedDeliveryPerson) {
+    return "Remove assignment";
+  }
+  return currentDeliveryPerson
+    ? "Change delivery person"
+    : "Assign delivery person";
+}
+function supervisorEwiAssignmentButtonDisabled(form) {
+  return (
+    form.elements.teamlead_user_id.value ===
+    (form.dataset.currentTeamleadUserId || "")
+  );
+}
 function updateSupervisorAssignmentFormState(event) {
   const form = event.target.closest(".supervisor-house-assignment");
   if (!form) return;
   const button = form.querySelector('button[type="submit"]');
-  if (button.classList.contains("is-saved")) {
-    button.textContent = "Save assignments";
+  const buttonLabel = button.querySelector("span") || button;
+  const isEwiDelivery = form.classList.contains(
+    "supervisor-ewi-delivery-assignment",
+  );
+  if (isEwiDelivery) {
+    buttonLabel.textContent = supervisorDeliveryAssignmentButtonLabel(form);
+    button.classList.remove("is-saved");
+  } else if (button.classList.contains("is-saved")) {
+    buttonLabel.textContent = "Save assignments";
     button.classList.remove("is-saved");
   }
-  button.disabled =
-    !form.elements.delivery_person.value ||
-    (!form.classList.contains("supervisor-ewi-delivery-assignment") &&
-      !form.elements.delivery_team.value);
+  button.disabled = supervisorAssignmentButtonDisabled(form);
+}
+function updateSupervisorEwiAssignmentFormState(event) {
+  const form = event.target.closest(".supervisor-ewi-assignment");
+  if (!form) return;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = supervisorEwiAssignmentButtonDisabled(form);
 }
 function surveyRow(list, value = {}) {
   const isLength = list.endsWith("corners");
@@ -5910,6 +6033,37 @@ function workPlanLockNotice(house, item) {
   return `Checked by ${checker}. Only the original checker can change this status.`;
 }
 
+function houseWorkPlanQuestionSection(house, questions) {
+  const permissions = house.work_plan_permissions || {};
+  const recorded = questions.some(
+    ([, , answer]) => answer !== null && answer !== undefined,
+  );
+  const openCount = recorded
+    ? questions.filter(
+      ([key, , answer]) =>
+        answer === null ||
+        answer === undefined ||
+        (Number(answer) === 1 && !house[`plan_${key}_done_by`]),
+    ).length
+    : 0;
+  const html = recorded
+    ? `<div class="work-plan-question-summary" role="group" aria-label="Survey questions"><div class="work-plan-question-items">${questions.map(([key, label, answer]) => {
+      const isAnswered = answer !== null && answer !== undefined;
+      const isNotRequired = isAnswered && Number(answer) !== 1;
+      const isDone = isAnswered && !isNotRequired && Boolean(house[`plan_${key}_done_by`]);
+      const canCheck = isAnswered && !isNotRequired && permissions[key] === true;
+      const tone = !isAnswered ? "unset" : isNotRequired ? "clear" : isDone ? "done" : "required";
+      const doneBy = house[`plan_${key}_done_by`];
+      const isLocked = isDone && !workPlanCheckedByCurrentUser(house, key);
+      const control = canCheck
+        ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${key}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, key)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
+        : `<span class="work-plan-icon" aria-hidden="true">${!isAnswered ? "?" : isNotRequired || isDone ? "✓" : "!"}</span>`;
+      return `<div class="work-plan-row work-plan-row-${tone} work-plan-question-row">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${key}_done_at`], key))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
+    }).join("")}</div></div>`
+    : "";
+  return { html, recorded, openCount };
+}
+
 function activeHouseSurveyReferenceHtml(house) {
   const survey = house.survey;
   const formatMeasurement = (value) => {
@@ -5981,9 +6135,8 @@ function houseWorkPlanSummaryHtml(house) {
     label,
     house[`plan_${key}`],
   ]);
-  const questionsRecorded = questions.some(
-    ([, , answer]) => answer !== null && answer !== undefined,
-  );
+  const questionSection = houseWorkPlanQuestionSection(house, questions);
+  const questionsRecorded = questionSection.recorded;
   const recorded =
     rows.some(([, , required]) => required !== null && required !== undefined) ||
     questionsRecorded;
@@ -5996,14 +6149,7 @@ function houseWorkPlanSummaryHtml(house) {
   const trackedQuestionCount = questionsRecorded ? questions.length : 0;
   const openCount =
     rows.filter(([trade, , required]) => Number(required) === 1 && !isDoneTrade(trade, required)).length +
-    (questionsRecorded
-      ? questions.filter(
-        ([key, , answer]) =>
-          answer === null ||
-          answer === undefined ||
-          (Number(answer) === 1 && !house[`plan_${key}_done_by`]),
-      ).length
-      : 0);
+    questionSection.openCount;
   const trackedCount = requiredCount + trackedQuestionCount;
   const summary = !recorded
     ? ""
@@ -6025,19 +6171,7 @@ function houseWorkPlanSummaryHtml(house) {
       : `<span class="work-plan-icon" aria-hidden="true">${!isSet ? "?" : isDone ? "✓" : isRequired ? "!" : "✓"}</span>`;
     const badge = !isSet ? "Not set" : isDone ? "Done" : isRequired ? "Required" : "Not required";
     return `<div class="work-plan-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${trade}_done_at`], trade))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
-  }).join("")}</div>` : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}${questionsRecorded ? `<div class="work-plan-question-summary" role="group" aria-label="Survey questions"><div class="work-plan-question-items">${questions.map(([key, label, answer]) => {
-    const isAnswered = answer !== null && answer !== undefined;
-    const isNotRequired = isAnswered && Number(answer) !== 1;
-    const isDone = isAnswered && !isNotRequired && Boolean(house[`plan_${key}_done_by`]);
-    const canCheck = isAnswered && !isNotRequired && permissions[key] === true;
-    const tone = !isAnswered ? "unset" : isNotRequired ? "clear" : isDone ? "done" : "required";
-    const doneBy = house[`plan_${key}_done_by`];
-    const isLocked = isDone && !workPlanCheckedByCurrentUser(house, key);
-    const control = canCheck
-      ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${key}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, key)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
-      : `<span class="work-plan-icon" aria-hidden="true">${!isAnswered ? "?" : isNotRequired || isDone ? "✓" : "!"}</span>`;
-    return `<div class="work-plan-row work-plan-row-${tone} work-plan-question-row">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${key}_done_at`], key))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
-  }).join("")}</div></div>` : ""}</div>`;
+  }).join("")}</div>` : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}${questionSection.html}</div>`;
 }
 async function toggleWorkPlanDone(button) {
   if (button.disabled) return;
@@ -6659,12 +6793,12 @@ async function renderNotStartedHouses(query, mode = "not_started") {
         ${isAssign && isReady ? `
           <button class="text-button assign-house-activate" type="button" data-house-id="${id}"${h.has_assigned_surveyor && surveyIsComplete(h) && h.has_surveyed_perimeter ? "" : ` disabled title="${!h.has_assigned_surveyor ? "Assign a Surveyor first." : !surveyIsComplete(h) ? "Waiting for the assigned Surveyor to complete the survey." : "A valid surveyed perimeter is required."}"`}>${houseActionIcon("activate")}<span>Activate house</span></button>
           <button class="text-button assign-house-team ${h.has_assigned_surveyor ? "change-surveyor-action" : "assign-surveyor-action"}" type="button" data-house-id="${id}">${houseActionIcon(h.has_assigned_surveyor ? "change" : "assign")}<span>${h.has_assigned_surveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button>
-          <button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>
+          ${h.is_returned_house ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>`}
         ` : `
           ${!isReady ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${isAssign ? `${houseActionIcon("ready")}<span>Mark ready for start</span>` : "Mark ready for start"}</button>` : `
               <button class="text-button seai-activate" type="button" data-house-id="${id}"${surveyIsComplete(h) ? "" : ' disabled title="Complete a survey before activation."'}>${surveyIsComplete(h) ? "&#43; Activate house" : "Survey required to activate"}</button>
             ${canSurveyHouses ? `<button class="text-button house-survey-open ${surveyIsComplete(h) ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${surveyIsComplete(h) ? "Review completed survey" : "Open surveyor room"}">${surveyIsComplete(h) ? "Review survey" : "Surveyor room"}</button>` : ""}
-            ${hasAccessProfile(state.user, "assign") ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}
+            ${hasAccessProfile(state.user, "assign") || h.is_returned_house ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}
             ${houseMapButtonHtml(h.id)}
             `}
         `}
@@ -6782,6 +6916,7 @@ async function updateHouseChecklistStatus(event) {
       }),
     });
     const house = state.dashboard.house_list.find((item) => item.id === houseId);
+    const row = checkbox.closest(".checklist-card-row");
     if (house) {
       const checklistBody = checkbox.closest(".house-body");
       const checklistScrollTop = checklistBody?.scrollTop;
@@ -6793,8 +6928,7 @@ async function updateHouseChecklistStatus(event) {
       house[`plan_${trade}_done_at`] = result[`${trade}_done_at`];
       house[`plan_${trade}_done_by_user_id`] =
         result[`${trade}_done_by_user_id`];
-      const audit = checkbox.closest(".checklist-card-row")
-        .querySelector(".checklist-completion-audit");
+      const audit = row.querySelector(".checklist-completion-audit");
       if (audit) {
         audit.textContent = result[`${trade}_done_by`]
           ? workPlanDoneLabel(
@@ -6804,6 +6938,48 @@ async function updateHouseChecklistStatus(event) {
           )
           : "";
         audit.classList.toggle("hidden", !result[`${trade}_done_by`]);
+      }
+      const required = house[`plan_${trade}_required`];
+      const isSet = required !== null && required !== undefined;
+      const isRequired = Number(required) === 1;
+      row.classList.remove(
+        "work-plan-row-done",
+        "work-plan-row-required",
+        "work-plan-row-clear",
+        "work-plan-row-unset",
+      );
+      row.classList.add(
+        `work-plan-row-${checked ? "done" : !isSet ? "unset" : isRequired ? "required" : "clear"}`,
+      );
+      const badge = row.querySelector(".work-plan-badge");
+      if (badge) {
+        badge.textContent = !isSet
+          ? "Not set"
+          : checked
+            ? "Done"
+            : isRequired
+              ? "Required"
+              : "Not required";
+      }
+      const summary = checkbox.closest(".house-card")
+        .querySelector(".work-plan-count");
+      if (summary) {
+        const currentCount = Number.parseInt(summary.textContent, 10);
+        const outstanding = summary.textContent.trim() === "All done"
+          ? 0
+          : Number.isFinite(currentCount)
+            ? currentCount
+            : null;
+        if (outstanding !== null) {
+          const nextOutstanding = Math.max(
+            0,
+            outstanding + (checked ? -1 : 1),
+          );
+          summary.textContent = nextOutstanding
+            ? `${nextOutstanding} outstanding`
+            : "All done";
+          summary.classList.toggle("has-required", nextOutstanding > 0);
+        }
       }
       if (checklistBody && checklistScrollTop !== undefined) {
         checklistBody.scrollTop = checklistScrollTop;
@@ -7169,14 +7345,14 @@ function mapHouseActions(house) {
       : !surveyIsComplete(house)
         ? "Waiting for the assigned Surveyor to complete the survey."
         : "A valid surveyed perimeter is required.";
-    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${houseActionIcon("ready")}<span>Mark ready for start</span></button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-activate" type="button" data-house-id="${id}"${canActivate ? "" : ` disabled title="${activationTitle}"`}>${houseActionIcon("activate")}<span>Activate house</span></button><button class="text-button assign-house-team ${hasAssignedSurveyor ? "change-surveyor-action" : "assign-surveyor-action"}" type="button" data-house-id="${id}">${houseActionIcon(hasAssignedSurveyor ? "change" : "assign")}<span>${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button><button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>` : ""}`;
+    return `<button class="text-button assign-seai-details" type="button" data-house-id="${id}">${houseActionIcon("details")}<span>View SEAI details</span></button>${house.status === "not_started" ? `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">${houseActionIcon("ready")}<span>Mark ready for start</span></button>` : ""}${house.status === "ready" ? `<button class="text-button assign-house-activate" type="button" data-house-id="${id}"${canActivate ? "" : ` disabled title="${activationTitle}"`}>${houseActionIcon("activate")}<span>Activate house</span></button><button class="text-button assign-house-team ${hasAssignedSurveyor ? "change-surveyor-action" : "assign-surveyor-action"}" type="button" data-house-id="${id}">${houseActionIcon(hasAssignedSurveyor ? "change" : "assign")}<span>${hasAssignedSurveyor ? "Change Surveyor" : "Assign Surveyor"}</span></button>${house.is_returned_house ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">${houseActionIcon("reset")}<span>Back to Not started</span></button>`}` : ""}`;
   }
   if (house.status === "not_started") {
     return `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="true">Mark ready for start</button><button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${id}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open survey-needed" type="button" data-house-id="${id}">View Surveyor room</button>` : ""}`;
   }
   if (house.status === "ready") {
     const surveyCompleted = surveyIsComplete(house);
-    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${surveyCompleted ? "" : " disabled"}>＋ Activate house</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open ${surveyCompleted ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${surveyCompleted ? "Review completed survey" : "Open surveyor room"}">${surveyCompleted ? "Review survey" : "Surveyor room"}</button>` : ""}<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`;
+    return `<button class="text-button seai-activate" type="button" data-house-id="${id}"${surveyCompleted ? "" : " disabled"}>＋ Activate house</button>${(hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor")) ? `<button class="text-button house-survey-open ${surveyCompleted ? "survey-reviewed" : "survey-needed"}" type="button" data-house-id="${id}" aria-label="${surveyCompleted ? "Review completed survey" : "Open surveyor room"}">${surveyCompleted ? "Review survey" : "Surveyor room"}</button>` : ""}${house.is_returned_house ? "" : `<button class="text-button plan-ready-toggle" type="button" data-house-id="${id}" data-ready="false">Back to not started</button>`}`;
   }
   if (house.status === "closed") {
     return `<button class="text-button house-finish-toggle" type="button" data-house-id="${id}" data-finished="true">Reopen house</button>${admin ? `<button class="text-button house-open" type="button" data-house-id="${id}">View details &amp; history</button>` : ""}`;
@@ -7479,8 +7655,9 @@ function renderHouses() {
   $("#houses-list").classList.toggle("house-grid-closed", visibleStatus === "closed");
   const matchingHouses = data.house_list.filter((house) =>
     (!filteredHouseIds || filteredHouseIds.includes(house.id)) &&
+    !house.ready_for_start &&
     (!teamFilter || Boolean(house.is_finished) === (teamFilter.status === "closed")) &&
-    (visibleStatus === "closed" ? Boolean(house.is_finished) : visibleStatus === "active" ? !house.is_finished : true) &&
+    (visibleStatus === "closed" ? Boolean(house.is_finished) : visibleStatus === "active" ? !house.is_finished && !house.ready_for_start : true) &&
     [house.id, house.owner_name, house.employee_name, house.postcode]
       .filter(Boolean)
       .join(" ")
@@ -7488,27 +7665,10 @@ function renderHouses() {
       .includes(query),
   );
   const houseCards = matchingHouses.map((house) => {
-    const checklistStatus = (value, labels) =>
-      value === null || value === undefined
-        ? "Not set"
-        : labels[value];
-    const checklistTone = (value) => {
-      if (value === "done" || value === "yes") return "positive";
-      if (value === "not_done" || value === "no") return "negative";
-      if (value === "not_necessary" || value === "not_esb") {
-        return "unnecessary";
-      }
-      return "unset";
-    };
     const checklist = [
       [
         "Scaffolding",
         house.scaffolding_status,
-        checklistStatus(house.scaffolding_status, {
-          done: "Done",
-          not_done: "Not done yet",
-          not_necessary: "Not necessary",
-        }),
         "scaffolding_status",
         house.plan_scaffolding_notes,
         house.plan_scaffolding_required,
@@ -7518,11 +7678,6 @@ function renderHouses() {
       [
         "ESB work",
         house.esb_unclipped,
-        checklistStatus(house.esb_unclipped, {
-          yes: "Done",
-          no: "Not done yet",
-          not_esb: "Not necessary",
-        }),
         "esb_unclipped",
         house.plan_esb_notes,
         house.plan_esb_required,
@@ -7532,11 +7687,6 @@ function renderHouses() {
       [
         "Plumber work",
         house.plumber_status,
-        checklistStatus(house.plumber_status, {
-          done: "Done",
-          not_done: "Not done yet",
-          not_necessary: "Not necessary",
-        }),
         "plumber_status",
         house.plan_plumber_notes,
         house.plan_plumber_required,
@@ -7544,15 +7694,56 @@ function renderHouses() {
         house.plan_plumber_done_at,
       ],
     ];
+    const requiredChecklist = checklist.filter(([, , , , required]) =>
+      Number(required) === 1,
+    );
+    const workPlanQuestions = WORK_PLAN_SURVEY_QUESTIONS.map(([key, label]) => [
+      key,
+      label,
+      house[`plan_${key}`],
+    ]);
+    const questionSection = houseWorkPlanQuestionSection(house, workPlanQuestions);
+    const ventRequired = Number(house.plan_vent_required) === 1;
+    const requiredWorkCount = requiredChecklist.length + (ventRequired ? 1 : 0);
+    const trackedWorkCount = requiredWorkCount + (questionSection.recorded ? workPlanQuestions.length : 0);
+    const completedWorkCount = requiredChecklist.filter(
+      ([, status, field, , , doneBy]) =>
+        field === "plumber_status"
+          ? status === "done" || Boolean(doneBy)
+          : status === "done" || status === "yes" || Boolean(doneBy),
+    ).length + (ventRequired && house.plan_vent_done_by ? 1 : 0);
+    const hasWorkPlan = checklist.some(([, , , , required]) =>
+      required !== null && required !== undefined,
+    ) || (house.plan_vent_required !== null && house.plan_vent_required !== undefined) || questionSection.recorded;
+    const openWorkCount = requiredWorkCount - completedWorkCount + questionSection.openCount;
+    const workPlanSummary = !hasWorkPlan
+      ? ""
+      : !trackedWorkCount
+        ? "Nothing to arrange"
+        : openWorkCount
+          ? `${openWorkCount} outstanding`
+          : "All done";
     const checklistRows = checklist.map(
-      ([label, status, value, field, notes, required, doneBy, doneAt]) => {
-        const isPlumber = field === "plumber_status";
+      ([label, status, field, notes, required, doneBy, doneAt]) => {
+        const isSet = required !== null && required !== undefined;
+        const isRequired = Number(required) === 1;
+        const isDone = isRequired && (
+          field === "plumber_status"
+            ? status === "done" || Boolean(doneBy)
+            : status === "done" || status === "yes" || Boolean(doneBy)
+        );
+        const tone = !isSet ? "unset" : isDone ? "done" : isRequired ? "required" : "clear";
+        const badge = !isSet ? "Not set" : isDone ? "Done" : isRequired ? "Required" : "Not required";
         const assignCanEdit =
           isAssign &&
           (field === "scaffolding_status" || field === "esb_unclipped") &&
           Number(required) === 1;
         const canEdit = !house.is_finished && (canEditHouseChecklist || assignCanEdit);
-        const showRequirement = !isPlumber;
+        const trade = field === "esb_unclipped"
+          ? "esb"
+          : field.replace("_status", "");
+        const isLocked = isDone && Boolean(doneBy) &&
+          !workPlanCheckedByCurrentUser(house, trade);
         const cannotToggle =
           required === 0 ||
           required === false ||
@@ -7565,18 +7756,24 @@ function renderHouses() {
             label,
             status,
             required,
-            showRequirement,
+            false,
+            isDone,
+            isLocked,
           )
-          : `<span class="checklist-static-status">${showRequirement ? checklistRequirementBadge(required, status) : ""}<strong class="checklist-value checklist-value-${checklistTone(status)}">${escapeHtml(value)}</strong></span>`;
-        const trade = field === "esb_unclipped"
-          ? "esb"
-          : field.replace("_status", "");
+          : `<span class="work-plan-icon" aria-hidden="true">${isDone || !isRequired && isSet ? "✓" : isSet ? "!" : "?"}</span>`;
         const completionAudit = doneBy
-          ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, trade))}</small>`
+          ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, trade))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}`
           : `<small class="work-plan-done-by checklist-completion-audit hidden"></small>`;
-        return `<div class="checklist-card-row"><span class="checklist-card-label">${escapeHtml(label)}${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${completionAudit}</span>${statusHtml}</div>`;
+        return `<div class="checklist-card-row work-plan-row work-plan-row-${tone}">${statusHtml}<span class="work-plan-label checklist-card-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${completionAudit}</span><span class="work-plan-badge">${badge}</span></div>`;
       },
     );
+    const ventIsSet = house.plan_vent_required !== null && house.plan_vent_required !== undefined;
+    const ventDone = ventRequired && Boolean(house.plan_vent_done_by);
+    const ventTone = !ventIsSet ? "unset" : ventDone ? "done" : ventRequired ? "required" : "clear";
+    const ventBadge = !ventIsSet ? "Not set" : ventDone ? "Done" : ventRequired ? "Required" : "Not required";
+    const ventRow = ventIsSet
+      ? `<div class="checklist-card-row work-plan-row work-plan-row-${ventTone}"><span class="work-plan-icon" aria-hidden="true">${ventDone || !ventRequired ? "✓" : "!"}</span><span class="work-plan-label checklist-card-label"><strong>Vent work</strong>${house.plan_vent_notes ? `<small>${escapeHtml(house.plan_vent_notes)}</small>` : ""}${house.plan_vent_done_by ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(house.plan_vent_done_by, house.plan_vent_done_at, "vent"))}</small>` : ""}</span><span class="work-plan-badge">${ventBadge}</span></div>`
+      : "";
     const held = canViewMaterials ? data.materials.flatMap((material) => {
       const quantity = material.balances[`house:${house.id}`] || 0;
       return Math.abs(quantity) > 1e-9
@@ -7587,16 +7784,22 @@ function renderHouses() {
     const assignedTeams = houseTeams.get(house.id) || [];
     return `
       <article class="card house-card ${isAssign ? "assign-house-card " : ""}${house.is_finished ? "house-finished" : "house-active"}">
-        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${isAssign ? houseSurveyorAssignmentAlertHtml(house) : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
+        <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${isAssign ? houseSurveyorAssignmentSummaryHtml(house) : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
         <div class="house-body" data-house-id="${escapeHtml(house.id)}">${houseWorkflowHtml(house.is_finished ? 4 : 3)}${canViewMaterials ? `<div class="house-stock"><div class="house-stock-title">Materials on site</div>
           ${held.length ? `<div class="stock-rows${expandedStock.has(house.id) || house.is_finished ? " expanded" : ""}">${held.map((item, index) => `<div class="balance-row${index >= STOCK_PREVIEW ? " stock-extra" : ""}"><span>${escapeHtml(item.name)}</span><span class="${item.qty < 0 ? "qty-negative" : ""}">${escapeHtml(formatQuantity(item.qty, item.unit))}</span></div>`).join("")}</div>${!house.is_finished && held.length > STOCK_PREVIEW ? `<button class="stock-more-btn" type="button" data-house-id="${escapeHtml(house.id)}" data-extra="${held.length - STOCK_PREVIEW}">${expandedStock.has(house.id) ? "Show less" : `… Show more (${held.length - STOCK_PREVIEW})`}</button>` : ""}` : `<div class="balance-row"><span>No balance recorded</span><span>—</span></div>`}
         </div>` : ""}
         ${noteHtml(house.notes)}${house.is_finished ? "" : snagsHtml(house)}
-        ${canManageHouses || hasAccessProfile(state.user, "supervisor") || hasAccessProfile(state.user, "surveyor") || isAssign ? activeHouseSurveyReferenceHtml(house) : ""}
-        <div class="house-checklist-card">
-          <div class="house-stock-title">Ready-stage work checklist</div>
-          ${checklistRows.join("")}
-          ${house.plan_vent_required === null || house.plan_vent_required === undefined ? "" : `<div class="checklist-card-row"><span class="checklist-card-label">Vent work${house.plan_vent_notes ? `<small>${escapeHtml(house.plan_vent_notes)}</small>` : ""}${house.plan_vent_done_by ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(house.plan_vent_done_by, house.plan_vent_done_at, "vent"))}</small>` : ""}</span><span class="checklist-static-status"><strong class="checklist-value checklist-value-${Number(house.plan_vent_required) !== 1 ? "unnecessary" : house.plan_vent_done_by ? "positive" : "negative"}">${Number(house.plan_vent_required) !== 1 ? "Not required" : house.plan_vent_done_by ? "Complete" : "Outstanding"}</strong></span></div>`}
+        ${canManageHouses || hasAccessProfile(state.user, "supervisor") || hasAccessProfile(state.user, "surveyor") ? activeHouseSurveyReferenceHtml(house) : ""}
+        <div class="house-checklist-card house-work-plan-summary">
+          <div class="work-plan-heading">
+            <span class="house-stock-title">Pre-start work plan</span>
+            ${workPlanSummary ? `<span class="work-plan-count${openWorkCount ? " has-required" : ""}">${workPlanSummary}</span>` : ""}
+          </div>
+          <div class="work-plan-trade-items">
+            ${checklistRows.join("")}
+            ${ventRow}
+          </div>
+          ${questionSection.html}
         </div>
                   </div>
                   <div class="house-card-actions">
@@ -7606,6 +7809,7 @@ function renderHouses() {
             ${canManageHouses ? `<button class="text-button house-open" type="button" data-house-id="${escapeHtml(house.id)}">View details &amp; history <span>→</span></button>` : ""}
           ` : `
           ${houseMapButtonHtml(house.id)}
+          ${(canManageHouses || isAssign) ? `<button class="text-button house-return-ready" type="button" data-house-id="${escapeHtml(house.id)}" aria-label="Return ${escapeHtml(house.id)} to Ready for start">↩<span>Return to Ready for start</span></button>` : ""}
           ${canViewMaterials ? `<button class="text-button house-record-movement" type="button" data-house-id="${escapeHtml(house.id)}">＋ Record movement</button>` : ""}
           ${!isAssign ? `<button class="text-button house-note-open ${houseNoteActionClass(house.notes)}" type="button" data-house-id="${escapeHtml(house.id)}">${house.notes?.trim() ? "Edit note" : "Add note"}</button>
           <span class="stage-switch" role="group" aria-label="Stage">${[1, 2].map((n) => `<button class="stage-btn${(Number(house.stage) || 1) === n ? " on" : ""}" type="button" data-house-id="${escapeHtml(house.id)}" data-stage="${n}" aria-pressed="${(Number(house.stage) || 1) === n}"${house.is_finished ? " disabled" : ""}>Stage ${n}</button>`).join("")}</span>
@@ -7828,7 +8032,6 @@ function renderHouseDetail(result) {
   $("#house-detail-nav").classList.toggle("hidden", photoViewOnly);
   $("#house-detail-facts").classList.toggle("hidden", photoViewOnly);
   [
-    "#house-detail-checklist-card",
     "#house-detail-stock-card",
     "#house-detail-records-card",
     "#house-history-card",
@@ -7931,43 +8134,6 @@ function renderHouseDetail(result) {
     )
     .join("");
 
-  const checklistItems = [
-    [
-      "Scaffolding",
-      house.scaffolding_status,
-      { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
-    ],
-    [
-      "ESB work",
-      house.esb_unclipped,
-      { yes: "Done", no: "Not done", not_esb: "Not necessary" },
-    ],
-    [
-      "Plumber work",
-      house.plumber_status,
-      { done: "Done", not_done: "Not done", not_necessary: "Not necessary" },
-    ],
-  ];
-  const checklistHasValues = checklistItems.some(([, value]) => value !== null && value !== undefined);
-  const recordedChecklistCount = checklistItems.filter(
-    ([, value]) => value !== null && value !== undefined,
-  ).length;
-  $("#house-detail-checklist-summary").textContent =
-    `${recordedChecklistCount} of ${checklistItems.length} recorded`;
-  $("#house-detail-checklist").innerHTML = checklistHasValues
-    ? checklistItems
-        .map(([label, value, labels]) => {
-          const tone = value === "done" || value === "yes"
-            ? "positive"
-            : value === "not_done" || value === "no"
-              ? "negative"
-              : value === "not_necessary" || value === "not_esb"
-                ? "unnecessary"
-                : "unset";
-          return `<div class="checklist-card-row"><span>${escapeHtml(label)}</span><strong class="checklist-value checklist-value-${tone}">${escapeHtml(labels[value] || "Not set")}</strong></div>`;
-        })
-        .join("")
-    : `<p class="muted">No pre-start checklist has been recorded.</p>`;
   const workPlanRows = [
     ["scaffolding", "Scaffolding", house.plan_scaffolding_required, house.plan_scaffolding_notes],
     ["esb", "ESB work", house.plan_esb_required, house.plan_esb_notes],
@@ -8045,7 +8211,7 @@ function renderHouseDetail(result) {
           ? `<small class="work-plan-team-hint">Mark complete from the ${item === "plumber" ? "Plumbing" : "Vent"} team dashboard.</small>`
           : "";
       const audit = isDone && doneBy
-        ? `<small class="work-plan-detail-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, item))}${isLocked ? "<span>Only the original checker can change this.</span>" : ""}</small>`
+        ? `<small class="work-plan-detail-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, item))}${isLocked ? '<span class="work-plan-lock-note">Only the original checker can change this.</span>' : ""}</small>`
         : "";
       return `
         <article class="work-plan-detail-item work-plan-detail-item-${tone}${isDone ? " is-done" : ""}">
@@ -8690,8 +8856,6 @@ function openHouseDetail(houseId) {
   $("#house-detail-title").textContent = houseId;
   $("#house-detail-subtitle").textContent = "Loading house record…";
   $("#house-detail-facts").innerHTML = "";
-  $("#house-detail-checklist").innerHTML = "";
-  $("#house-detail-checklist-summary").textContent = "";
   $("#house-detail-status").textContent = "";
   $("#house-detail-stock").innerHTML = "";
   $("#house-detail-notes").innerHTML = "";
@@ -8881,6 +9045,13 @@ async function openSupervisorActivation(button) {
     const ewiSupervisors = result.users.supervisor.filter(
       (account) => account.is_ewi,
     );
+    const assignedSupervisor = result.assignments.find(
+      (assignment) =>
+        assignment.role === "supervisor" &&
+        ewiSupervisors.some(
+          (account) => account.id === assignment.user_id,
+        ),
+    );
     if (!ewiSupervisors.length) {
       throw new Error(
         "Create an active External Wall Insulation Supervisor account before activating this house.",
@@ -8889,24 +9060,25 @@ async function openSupervisorActivation(button) {
     $("#activate-house-supervisor-options").innerHTML =
       ewiSupervisors
         .map((account) => {
+          const isSelected = account.id === assignedSupervisor?.user_id;
           const initials = account.display_name
             .split(/\s+/)
             .filter(Boolean)
             .slice(0, 2)
             .map((part) => part[0].toLocaleUpperCase())
             .join("");
-          return `<label class="supervisor-account-option">
-            <input type="radio" name="supervisor_user_id" value="${account.id}" required>
+          return `<label class="supervisor-account-option${isSelected ? " selected" : ""}">
+            <input type="radio" name="supervisor_user_id" value="${account.id}"${isSelected ? " checked" : ""} required>
             <span class="supervisor-account-avatar" aria-hidden="true">${escapeHtml(initials || "S")}</span>
             <span class="supervisor-account-identity"><strong>${escapeHtml(account.display_name)}</strong><small>@${escapeHtml(account.username)}</small></span>
-            <span class="supervisor-account-status">Available</span>
+            <span class="supervisor-account-status">${isSelected ? "Selected" : "Available"}</span>
           </label>`;
         })
         .join("");
     state.houseActivationHouseId = houseId;
     $("#assign-supervisor-house-label").textContent =
       `Choose the Supervisor responsible for ${houseId}.`;
-    $("#confirm-house-activation").disabled = true;
+    $("#confirm-house-activation").disabled = !assignedSupervisor;
     $("#assign-supervisor-dialog").showModal();
   } catch (error) {
     showToast(error.message, true);
@@ -9198,10 +9370,11 @@ async function initializeChangeTracking() {
 }
 
 async function refreshPendingChanges() {
-  if (!state.user || pendingRefreshInProgress) return;
-  pendingRefreshInProgress = true;
-  let dashboardFetched = false;
-  try {
+  if (!state.user) return;
+  if (pendingRefreshPromise) await pendingRefreshPromise;
+  if (!state.user) return;
+  const refresh = (async () => {
+    let dashboardFetched = false;
     const activeTab =
       $(".page.active")?.dataset.page ||
       $(".nav-item[data-tab].active")?.dataset.tab;
@@ -9301,17 +9474,20 @@ async function refreshPendingChanges() {
       );
       pendingDocumentRefresh = false;
     }
+  })();
+  pendingRefreshPromise = refresh;
+  try {
+    await refresh;
   } finally {
-    pendingRefreshInProgress = false;
+    if (pendingRefreshPromise === refresh) pendingRefreshPromise = null;
   }
 }
 
 async function pollTrackerChanges() {
-  if (!state.user || document.visibilityState === "hidden" || changePollInProgress) {
-    return;
-  }
-  changePollInProgress = true;
-  try {
+  if (!state.user || document.visibilityState === "hidden") return;
+  if (changePollPromise) await changePollPromise;
+  if (!state.user || document.visibilityState === "hidden") return;
+  const poll = (async () => {
     const result = await request("/api/updates");
     const revisions = result.revisions;
     if (!knownChangeRevisions) {
@@ -9332,8 +9508,12 @@ async function pollTrackerChanges() {
     }
     knownChangeRevisions = revisions;
     await refreshPendingChanges();
+  })();
+  changePollPromise = poll;
+  try {
+    await poll;
   } finally {
-    changePollInProgress = false;
+    if (changePollPromise === poll) changePollPromise = null;
   }
 }
 
@@ -9664,6 +9844,59 @@ async function submitHouse(event) {
 
 const pendingHouseStatus = new Set();
 
+async function returnHouseToReady(button) {
+  const houseId = button.dataset.houseId;
+  if (!houseId || pendingHouseStatus.has(houseId)) return;
+  if (
+    !window.confirm(
+      `Return ${houseId} to Ready for start?\n\nIts survey, assignments, checklist, notes, work-plan progress, and PDFs will be preserved.`,
+    )
+  ) {
+    return;
+  }
+  pendingHouseStatus.add(houseId);
+  button.disabled = true;
+  try {
+    await request("/api/houses/return-ready", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: houseId }),
+    });
+    state.houseMapMode = false;
+    state.selectedMapHouseId = "";
+    state.houseMapCamera = null;
+    state.assignSeaiReturnToMap = false;
+    state.assignSeaiHouseViewId = "";
+    state.assignSeaiHouseRequest += 1;
+    state.houseStatusFilter = "ready";
+    state.assignSurveyFilter = "all";
+    state.houseTeamFilter = null;
+    state.housesTeamsTab = "houses";
+    state.readyHouseArrivalId = houseId;
+    $("#house-search").value = "";
+    delete planCache.ready;
+    planStale.delete("ready");
+    showHousesOverview();
+    try {
+      await refresh();
+    } catch (error) {
+      showToast(
+        `${houseId} was returned to Ready for start with its records preserved, but the tracker could not refresh: ${error.message}`,
+        true,
+      );
+      return;
+    }
+    showToast(
+      `${houseId} is Ready for start. Its survey, assignments, and work records were preserved.`,
+    );
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    pendingHouseStatus.delete(houseId);
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
 async function toggleHouseFinished(event) {
   const seaiDetailsButton = event.target.closest(".assign-seai-details");
   if (seaiDetailsButton) {
@@ -9678,6 +9911,11 @@ async function toggleHouseFinished(event) {
   const assignActivateButton = event.target.closest(".assign-house-activate");
   if (assignActivateButton) {
     openSupervisorActivation(assignActivateButton);
+    return;
+  }
+  const returnReadyButton = event.target.closest(".house-return-ready");
+  if (returnReadyButton) {
+    returnHouseToReady(returnReadyButton);
     return;
   }
   const mapButton = event.target.closest(".house-map-open");
@@ -9807,7 +10045,7 @@ async function toggleHouseFinished(event) {
       summary.closed += finished ? 1 : -1;
     }
     state.dashboard.houses = state.dashboard.house_list.filter(
-      (item) => !item.is_finished,
+      (item) => !item.is_finished && !item.ready_for_start,
     ).length;
     renderOverview();
     renderHouses();
@@ -9842,7 +10080,7 @@ async function toggleHouseFinished(event) {
       house.is_finished = previous;
       if (previousSummary) state.dashboard.house_summary = previousSummary;
       state.dashboard.houses = state.dashboard.house_list.filter(
-        (item) => !item.is_finished,
+        (item) => !item.is_finished && !item.ready_for_start,
       ).length;
       renderOverview();
       renderHouses();
@@ -10681,7 +10919,6 @@ function bindEvents() {
   $$(".nav-item[data-tab]").forEach((button) =>
     button.addEventListener("click", () => setTab(button.dataset.tab)),
   );
-  $("#go-overview").addEventListener("click", goToHomeView);
   $$("[data-house-view]").forEach((tile) =>
     tile.addEventListener("click", () => {
       state.houseTeamFilter = null;
@@ -11642,6 +11879,16 @@ function bindEvents() {
     renderHouses();
     $("#houses-list").scrollIntoView({ behavior: "smooth", block: "start" });
   });
+  document.addEventListener("pointerdown", (event) => {
+    const snag = event.target.closest(".snag-row");
+    if (!snag) return;
+    snagScrollSnapshot = {
+      snagId: snag.dataset.snagId,
+      pageScrollLeft: window.scrollX,
+      pageScrollTop: window.scrollY,
+      cardScrollTop: snag.closest(".house-body")?.scrollTop || 0,
+    };
+  }, true);
   $("#houses-list").addEventListener("click", (event) => {
     const button = event.target.closest(".house-checklist-open");
     if (button) openHouseChecklist(button.dataset.houseId);
@@ -11867,6 +12114,10 @@ function bindEvents() {
   $("#supervisor-house-list").addEventListener(
     "change",
     updateSupervisorAssignmentFormState,
+  );
+  $("#supervisor-house-list").addEventListener(
+    "change",
+    updateSupervisorEwiAssignmentFormState,
   );
   $("#plumbing-supervisor-house-list").addEventListener(
     "submit",

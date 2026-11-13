@@ -192,12 +192,11 @@ const makeNode = (dataset = {}) => {
 };
 const tabs = ["overview", "inventory", "houses", "movements"].map(tab => makeNode({tab}));
 const pages = ["overview", "inventory", "houses", "movements"].map(page => makeNode({page}));
-const overviewShortcut = makeNode();
 const searchFields = new Map([
   ["#house-search", makeNode()],
   ["#team-search", makeNode()],
 ]);
-const $ = selector => selector === "#go-overview" ? overviewShortcut : searchFields.get(selector);
+const $ = selector => searchFields.get(selector);
 const $$ = selector => selector === ".nav-item" ? tabs : selector === ".page" ? pages : [];
 let movementRenders = 0;
 let houseRenders = 0;

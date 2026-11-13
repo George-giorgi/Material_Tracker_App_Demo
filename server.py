@@ -1480,6 +1480,22 @@ def initialize_db():
         )
         db.execute(
             """
+            CREATE TABLE IF NOT EXISTS house_plumbing_assignments (
+                house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
+                supervisor_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                assigned_by TEXT NOT NULL DEFAULT '',
+                assigned_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS house_plumbing_assignments_supervisor_idx
+            ON house_plumbing_assignments(supervisor_user_id, house_id)
+            """
+        )
+        db.execute(
+            """
             CREATE TABLE IF NOT EXISTS house_ewi_assignments (
                 house_id TEXT PRIMARY KEY REFERENCES provided_houses(id) ON DELETE CASCADE,
                 teamlead_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
@@ -1881,6 +1897,27 @@ def initialize_db():
         for column in ("work_phone", "home_phone", "private_email"):
             if column not in user_columns:
                 db.execute(f"ALTER TABLE app_users ADD COLUMN {column} TEXT")
+        db.execute(
+            """
+            INSERT OR IGNORE INTO house_plumbing_assignments
+                (house_id, supervisor_user_id, assigned_by, assigned_at)
+            SELECT assignment.house_id, assignment.user_id,
+                   assignment.assigned_by, assignment.assigned_at
+            FROM house_role_assignments assignment
+            JOIN app_users users ON users.id = assignment.user_id
+            WHERE assignment.role = 'supervisor'
+              AND (
+                  users.supervisor_specialty = 'Plumbing' COLLATE NOCASE
+                  OR EXISTS (
+                      SELECT 1 FROM user_departments memberships
+                      JOIN departments ON departments.id = memberships.department_id
+                      WHERE memberships.user_id = users.id
+                        AND departments.name = 'Plumbing' COLLATE NOCASE
+                        AND departments.is_active = 1
+                  )
+              )
+            """
+        )
     _migrate_user_roles()
     _seed_user_departments()
 
@@ -2208,6 +2245,33 @@ def _is_plumbing_supervisor(db, user):
         ).fetchone()
         is not None
     )
+
+
+def _plumbing_supervisor_assigned(db, house_id, user_id):
+    return db.execute(
+        """
+        SELECT 1
+        FROM provided_houses provided
+        WHERE provided.id = ?
+          AND provided.plan_plumber_required = 1
+          AND (
+              EXISTS (
+                  SELECT 1 FROM house_plumbing_assignments assignment
+                  WHERE assignment.house_id = provided.id
+                    AND assignment.supervisor_user_id = ?
+              )
+              OR (
+                  provided.plan_plumber_done_at != ''
+                  AND provided.plan_plumber_done_by_user_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM house_plumbing_assignments assignment
+                      WHERE assignment.house_id = provided.id
+                  )
+              )
+          )
+        """,
+        (house_id, user_id, user_id),
+    ).fetchone() is not None
 
 
 def _is_ewi_supervisor(db, user):
@@ -3514,17 +3578,26 @@ def _dashboard(db):
             }
         )
     active_house_count = db.execute(
-        "SELECT COUNT(*) FROM houses WHERE is_finished = 0"
+        """
+        SELECT COUNT(*)
+        FROM houses h
+        LEFT JOIN provided_houses p ON p.id = h.id
+        WHERE h.is_finished = 0 AND COALESCE(p.ready_for_start, 0) = 0
+        """
     ).fetchone()[0]
     provided_house_count = db.execute(
         "SELECT COUNT(*) FROM provided_houses"
     ).fetchone()[0]
     closed_house_count = db.execute(
-        "SELECT COUNT(*) FROM houses WHERE is_finished = 1"
+        """
+        SELECT COUNT(*)
+        FROM houses h
+        LEFT JOIN provided_houses p ON p.id = h.id
+        WHERE h.is_finished = 1 AND COALESCE(p.ready_for_start, 0) = 0
+        """
     ).fetchone()[0]
     ready_house_count = db.execute(
-        "SELECT COUNT(*) FROM provided_houses p WHERE p.ready_for_start = 1 "
-        "AND NOT EXISTS (SELECT 1 FROM houses h WHERE h.id = p.id)"
+        "SELECT COUNT(*) FROM provided_houses p WHERE p.ready_for_start = 1"
     ).fetchone()[0]
     not_started_house_count = db.execute(
         "SELECT COUNT(*) FROM provided_houses p WHERE p.ready_for_start = 0 "
@@ -3533,16 +3606,21 @@ def _dashboard(db):
     team_house_counts = {}
     for row in db.execute(
         """
-        SELECT DISTINCT m.team, m.department, h.id, h.is_finished, h.status_changed_at
+        SELECT DISTINCT m.team, m.department, h.id, h.is_finished,
+               COALESCE(p.ready_for_start, 0) AS ready_for_start,
+               h.status_changed_at
         FROM movements m
         JOIN houses h
           ON h.id = m.house_id
           OR m.source = 'house:' || h.id
           OR m.destination = 'house:' || h.id
+        LEFT JOIN provided_houses p ON p.id = h.id
         WHERE m.team != ''
         ORDER BY h.status_changed_at DESC, h.id COLLATE NOCASE
         """
     ):
+        if row["ready_for_start"]:
+            continue
         counts = team_house_counts.setdefault(
             team_location(row["team"], row["department"]),
             {"open_house_ids": [], "closed_house_ids": []},
@@ -3555,11 +3633,15 @@ def _dashboard(db):
         house_ids.append(row["id"])
     for row in db.execute(
         """
-        SELECT id, employee_name, is_finished
-        FROM houses
-        WHERE TRIM(employee_name) != ''
+        SELECT h.id, h.employee_name, h.is_finished,
+               COALESCE(p.ready_for_start, 0) AS ready_for_start
+        FROM houses h
+        LEFT JOIN provided_houses p ON p.id = h.id
+        WHERE TRIM(h.employee_name) != ''
         """
     ):
+        if row["ready_for_start"]:
+            continue
         counts = team_house_counts.setdefault(
             employee_location(row["employee_name"]),
             {"open_house_ids": [], "closed_house_ids": []},
@@ -3624,6 +3706,7 @@ def _dashboard(db):
                        COALESCE(ewi_assignment.completed_at, '') AS ewi_completed_at,
                        p.address, p.source, p.area_m2, p.perimeter_m,
                        p.latitude, p.longitude, h.is_finished,
+                       COALESCE(p.ready_for_start, 0) AS ready_for_start,
                        h.stage, h.status_changed_at, COALESCE(p.notes, '') AS notes,
                        COALESCE(hs.updated_by, '') AS survey_updated_by,
                        COALESCE(hs.updated_at, '') AS survey_updated_at,
@@ -3818,7 +3901,7 @@ def _ventilation_house_list(db, teamlead_user_id, include_photos=False):
                    COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
                    COALESCE(teamlead.team_name, '') AS assigned_team_name,
                    COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
-                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                   CASE WHEN p.ready_for_start = 1 THEN 'ready'
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
                         ELSE 'active' END AS status
@@ -4054,17 +4137,25 @@ def _plumbing_coordinator_dashboard(db):
                    COALESCE(p.plan_plumber_done_by, '') AS plumber_done_by,
                    COALESCE(p.plan_plumber_done_at, '') AS plumber_done_at,
                    p.plan_plumber_done_by_user_id,
-                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                   CASE WHEN p.ready_for_start = 1 THEN 'ready'
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
                         ELSE 'active' END AS status,
                    assigned_user.id AS supervisor_user_id,
                    assigned_user.display_name AS supervisor_name,
                    CASE WHEN assigned_user.id IS NOT NULL
-                        THEN COALESCE(assignment.assigned_by, '') ELSE '' END
+                        THEN COALESCE(
+                            assignment.assigned_by,
+                            legacy_supervisor_assignment.assigned_by,
+                            ''
+                        ) ELSE '' END
                        AS assignment_assigned_by,
                    CASE WHEN assigned_user.id IS NOT NULL
-                        THEN COALESCE(assignment.assigned_at, '') ELSE '' END
+                        THEN COALESCE(
+                            assignment.assigned_at,
+                            legacy_supervisor_assignment.assigned_at,
+                            ''
+                        ) ELSE '' END
                        AS assignment_assigned_at
             FROM provided_houses p
             LEFT JOIN houses h ON h.id = p.id
@@ -4074,10 +4165,16 @@ def _plumbing_coordinator_dashboard(db):
              AND survey_assignment.role = 'surveyor'
             LEFT JOIN app_users surveyor
               ON surveyor.id = survey_assignment.user_id
-            LEFT JOIN house_role_assignments assignment
-              ON assignment.house_id = p.id AND assignment.role = 'supervisor'
+            LEFT JOIN house_plumbing_assignments assignment
+              ON assignment.house_id = p.id
+            LEFT JOIN house_role_assignments legacy_supervisor_assignment
+              ON legacy_supervisor_assignment.house_id = p.id
+             AND legacy_supervisor_assignment.role = 'supervisor'
             LEFT JOIN app_users assigned_user
-              ON assigned_user.id = assignment.user_id
+              ON assigned_user.id = COALESCE(
+                  assignment.supervisor_user_id,
+                  legacy_supervisor_assignment.user_id
+              )
              AND (
                  assigned_user.supervisor_specialty = 'Plumbing' COLLATE NOCASE
                  OR EXISTS (
@@ -4165,7 +4262,7 @@ def _ventilation_coordinator_dashboard(db):
                    COALESCE(p.plan_vent_notes, '') AS notes,
                    COALESCE(p.plan_vent_done_by, '') AS done_by,
                    COALESCE(p.plan_vent_done_at, '') AS done_at,
-                   CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                   CASE WHEN p.ready_for_start = 1 THEN 'ready'
                         WHEN h.id IS NULL THEN 'not_started'
                         WHEN h.is_finished = 1 THEN 'closed'
                         ELSE 'active' END AS status,
@@ -5190,12 +5287,14 @@ class LegacyRouteHandlers:
                 status_filter = "ready"
             wanted = {
                 "not_started": "h.id IS NULL AND p.ready_for_start = 0",
-                "ready": "h.id IS NULL AND p.ready_for_start = 1",
+                "ready": "p.ready_for_start = 1",
                 "pending": "h.id IS NULL",
                 "all": "1 = 1",
-                "map": "((h.id IS NOT NULL AND h.is_finished = 0) OR "
+                "map": "((h.id IS NOT NULL AND h.is_finished = 0 "
+                       "AND p.ready_for_start = 0) OR "
                        "(h.id IS NULL AND (p.ready_for_start = 1 OR "
-                       "(p.latitude IS NOT NULL AND p.longitude IS NOT NULL))))",
+                       "(p.latitude IS NOT NULL AND p.longitude IS NOT NULL))) "
+                       "OR (p.ready_for_start = 1))",
             }.get(status_filter)
             if status_filter == "ready":
                 ordering = """
@@ -5288,10 +5387,11 @@ class LegacyRouteHandlers:
                                        AND access.is_allowed = 1
                                  )
                            ) AS has_assigned_supervisor,
-                           CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                           CASE WHEN p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
                                 WHEN h.is_finished = 1 THEN 'closed'
-                                ELSE 'active' END AS status
+                                ELSE 'active' END AS status,
+                           (h.id IS NOT NULL AND p.ready_for_start = 1) AS is_returned_house
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_checklists hc ON hc.house_id = p.id
@@ -5467,11 +5567,13 @@ class LegacyRouteHandlers:
             with connect_db() as db:
                 house = db.execute(
                     """
-                    SELECT p.id, p.address, p.postcode, p.owner_name, hs.data AS survey_data
+                    SELECT p.id, p.address, p.postcode, p.owner_name,
+                           hs.data AS survey_data, h.id IS NOT NULL AS is_returned_house
                     FROM provided_houses p
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
-                    WHERE p.id = ? AND h.id IS NULL
+                    WHERE p.id = ?
+                      AND (h.id IS NULL OR h.is_finished = 0)
                     """,
                     (house_id,),
                 ).fetchone()
@@ -5536,7 +5638,13 @@ class LegacyRouteHandlers:
                 {
                     "house": {
                         key: house[key]
-                        for key in ("id", "address", "postcode", "owner_name")
+                        for key in (
+                            "id",
+                            "address",
+                            "postcode",
+                            "owner_name",
+                            "is_returned_house",
+                        )
                     },
                     "users": users,
                     "assignments": assignments,
@@ -5580,13 +5688,19 @@ class LegacyRouteHandlers:
                     """
                     SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
                     WHERE p.id = ?
-                      AND (? = 1 OR h.id IS NULL)
+                      AND (? = 1 OR h.id IS NULL OR p.ready_for_start = 1)
                       AND (
                           ? = 0 OR EXISTS (
-                              SELECT 1 FROM house_role_assignments assignment
+                              SELECT 1 FROM house_plumbing_assignments assignment
                               WHERE assignment.house_id = p.id
-                                AND assignment.role = 'supervisor'
-                                AND assignment.user_id = ?
+                                AND assignment.supervisor_user_id = ?
+                          ) OR (
+                              ? = 1 AND EXISTS (
+                                  SELECT 1 FROM house_role_assignments assignment
+                                  WHERE assignment.house_id = p.id
+                                    AND assignment.role = 'supervisor'
+                                    AND assignment.user_id = ?
+                              )
                           )
                       )
                     """,
@@ -5597,6 +5711,8 @@ class LegacyRouteHandlers:
                             or is_plumbing_supervisor
                             or is_ewi_supervisor
                         ),
+                        int(is_plumbing_supervisor or is_ewi_supervisor),
+                        user["id"],
                         int(is_plumbing_supervisor or is_ewi_supervisor),
                         user["id"],
                     ),
@@ -5842,13 +5958,9 @@ class LegacyRouteHandlers:
                 self._send_json(400, {"error": "A house ID is required."})
                 return
             with connect_db() as db:
-                if is_plumbing_supervisor and not db.execute(
-                    """
-                    SELECT 1 FROM house_role_assignments
-                    WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
-                    """,
-                    (house_id, user["id"]),
-                ).fetchone():
+                if is_plumbing_supervisor and not _plumbing_supervisor_assigned(
+                    db, house_id, user["id"]
+                ):
                     self._send_json(404, {"error": "House was not found."})
                     return
                 if is_vent_dashboard_user and not _ventilation_house_is_visible(
@@ -6024,10 +6136,18 @@ class LegacyRouteHandlers:
                         or not row["is_selected_pdf"]
                         or not db.execute(
                             """
+                            SELECT 1 FROM house_plumbing_assignments
+                            WHERE house_id = ? AND supervisor_user_id = ?
+                            UNION
                             SELECT 1 FROM house_role_assignments
                             WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
                             """,
-                            (row["application_id"], user["id"]),
+                                (
+                                    row["application_id"],
+                                    user["id"],
+                                    row["application_id"],
+                                    user["id"],
+                                ),
                         ).fetchone()
                     )
                 ):
@@ -6293,13 +6413,9 @@ class LegacyRouteHandlers:
                     row is not None
                     and _is_plumbing_supervisor(db, user)
                     and not _has_plumbing_photo_view_access(db, user)
-                    and not db.execute(
-                        """
-                        SELECT 1 FROM house_role_assignments
-                        WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
-                        """,
-                        (row["house_id"], user["id"]),
-                    ).fetchone()
+                    and not _plumbing_supervisor_assigned(
+                        db, row["house_id"], user["id"]
+                    )
                 ):
                     row = None
             if row is None:
@@ -6392,13 +6508,19 @@ class LegacyRouteHandlers:
                     LEFT JOIN houses h ON h.id = p.id
                     LEFT JOIN house_surveys hs ON hs.house_id = p.id
                     WHERE d.id = ?
-                      AND (? = 1 OR h.id IS NULL)
+                      AND (? = 1 OR h.id IS NULL OR p.ready_for_start = 1)
                       AND (
                           ? = 0 OR EXISTS (
-                              SELECT 1 FROM house_role_assignments assignment
+                              SELECT 1 FROM house_plumbing_assignments assignment
                               WHERE assignment.house_id = d.house_id
-                                AND assignment.role = 'supervisor'
-                                AND assignment.user_id = ?
+                                AND assignment.supervisor_user_id = ?
+                          ) OR (
+                              ? = 1 AND EXISTS (
+                                  SELECT 1 FROM house_role_assignments assignment
+                                  WHERE assignment.house_id = d.house_id
+                                    AND assignment.role = 'supervisor'
+                                    AND assignment.user_id = ?
+                              )
                           )
                       )
                     """,
@@ -6409,6 +6531,8 @@ class LegacyRouteHandlers:
                             or is_plumbing_supervisor
                             or is_ewi_supervisor
                         ),
+                        int(is_plumbing_supervisor or is_ewi_supervisor),
+                        user["id"],
                         int(is_plumbing_supervisor or is_ewi_supervisor),
                         user["id"],
                     ),
@@ -6639,10 +6763,13 @@ class LegacyRouteHandlers:
                             SELECT assignment.house_id, assignment.assigned_by,
                                    assignment.assigned_at
                             FROM house_role_assignments assignment
+                            JOIN provided_houses provided
+                              ON provided.id = assignment.house_id
                             JOIN app_users assigned_user
                               ON assigned_user.id = assignment.user_id
                             WHERE assignment.role = 'supervisor'
                               AND assignment.user_id = ?
+                              AND provided.ready_for_start = 0
                               AND assigned_user.is_active = 1
                               AND EXISTS (
                                   SELECT 1 FROM app_role_permissions access
@@ -6650,8 +6777,31 @@ class LegacyRouteHandlers:
                                     AND access.permission_key = 'access.supervisor'
                                     AND access.is_allowed = 1
                               )
+                            UNION
+                            SELECT assignment.house_id, assignment.assigned_by,
+                                     assignment.assigned_at
+                            FROM house_plumbing_assignments assignment
+                            JOIN provided_houses provided
+                              ON provided.id = assignment.house_id
+                            JOIN app_users assigned_user
+                              ON assigned_user.id = assignment.supervisor_user_id
+                            WHERE assignment.supervisor_user_id = ?
+                              AND provided.ready_for_start = 0
+                              AND assigned_user.is_active = 1
+                            UNION
+                            SELECT provided.id AS house_id, '' AS assigned_by,
+                                   '' AS assigned_at
+                            FROM provided_houses provided
+                            WHERE provided.plan_plumber_required = 1
+                              AND provided.ready_for_start = 0
+                              AND provided.plan_plumber_done_at != ''
+                              AND provided.plan_plumber_done_by_user_id = ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM house_plumbing_assignments assignment
+                                  WHERE assignment.house_id = provided.id
+                              )
                             """,
-                            (user["id"],),
+                            (user["id"], user["id"], user["id"]),
                         )
                     }
                     assigned_house_ids = set(supervisor_assignments)
@@ -6792,12 +6942,31 @@ class LegacyRouteHandlers:
                                    COALESCE(p.plan_plumber_done_at, '') AS plumber_done_at,
                                    p.plan_plumber_done_by_user_id,
                                    COALESCE(surveyor.display_name, '') AS surveyor_name,
-                                   assignment.assigned_by AS supervisor_assigned_by,
-                                   assignment.assigned_at AS supervisor_assigned_at,
+                                   COALESCE(
+                                       assignment.assigned_by,
+                                       legacy_supervisor_assignment.assigned_by,
+                                       ''
+                                   )
+                                       AS supervisor_assigned_by,
+                                   COALESCE(
+                                       assignment.assigned_at,
+                                       legacy_supervisor_assignment.assigned_at,
+                                       ''
+                                   )
+                                       AS supervisor_assigned_at,
                                    CASE WHEN p.ready_for_start = 1 THEN 'ready'
                                         ELSE 'not_started' END AS status
-                            FROM house_role_assignments assignment
-                            JOIN provided_houses p ON p.id = assignment.house_id
+                            FROM provided_houses p
+                            LEFT JOIN house_plumbing_assignments assignment
+                              ON assignment.house_id = p.id
+                            LEFT JOIN house_role_assignments legacy_supervisor_assignment
+                              ON legacy_supervisor_assignment.house_id = p.id
+                             AND legacy_supervisor_assignment.role = 'supervisor'
+                            LEFT JOIN app_users assigned_supervisor
+                              ON assigned_supervisor.id = COALESCE(
+                                  assignment.supervisor_user_id,
+                                  legacy_supervisor_assignment.user_id
+                              )
                             LEFT JOIN houses h ON h.id = p.id
                             LEFT JOIN house_checklists hc ON hc.house_id = p.id
                             LEFT JOIN house_role_assignments survey_assignment
@@ -6805,8 +6974,18 @@ class LegacyRouteHandlers:
                              AND survey_assignment.role = 'surveyor'
                             LEFT JOIN app_users surveyor
                               ON surveyor.id = survey_assignment.user_id
-                            WHERE assignment.role = 'supervisor'
-                              AND assignment.user_id = ?
+                            WHERE (
+                                  COALESCE(
+                                      assignment.supervisor_user_id,
+                                      legacy_supervisor_assignment.user_id
+                                  ) = ?
+                                  OR (
+                                      assignment.supervisor_user_id IS NULL
+                                      AND legacy_supervisor_assignment.user_id IS NULL
+                                      AND p.plan_plumber_done_by_user_id = ?
+                                      AND p.plan_plumber_done_at != ''
+                                  )
+                              )
                               AND h.id IS NULL
                               AND p.plan_plumber_required = 1
                               AND NOT EXISTS (
@@ -6822,14 +7001,17 @@ class LegacyRouteHandlers:
                                         ORDER BY latest.changed_at DESC, latest.id DESC
                                         LIMIT 1
                                     )
-                                    AND assignment.assigned_at < reset.changed_at
+                                    AND COALESCE(
+                                        assignment.assigned_at,
+                                        legacy_supervisor_assignment.assigned_at
+                                    ) < reset.changed_at
                               )
                               AND COALESCE(
                                     hc.plumber_status, p.plan_plumber, 'not_done'
                                   ) != 'not_necessary'
                             ORDER BY p.id COLLATE NOCASE
                             """,
-                            (user["id"],),
+                            (user["id"], user["id"]),
                         ).fetchall()
                     existing_house_ids = {
                         house["id"] for house in dashboard["house_list"]
@@ -7235,6 +7417,7 @@ class LegacyRouteHandlers:
                 user, "ventilation_coordinator"
             )
             is_vent_photo_uploader = _is_vent_photo_uploader(user)
+            is_plumbing_supervisor = False
             is_photo_viewer = (
                 not is_admin
                 and not is_supervisor
@@ -7248,6 +7431,7 @@ class LegacyRouteHandlers:
                     and not is_vent_photo_uploader
                     and _has_plumbing_photo_view_access(db, user)
                 )
+                is_plumbing_supervisor = _is_plumbing_supervisor(db, user)
             if (
                 not is_admin
                 and not is_supervisor
@@ -7273,10 +7457,20 @@ class LegacyRouteHandlers:
                         has_house_access = db.execute(
                             """
                             SELECT 1 FROM house_role_assignments
-                            WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
+                            JOIN provided_houses provided
+                              ON provided.id = house_role_assignments.house_id
+                            WHERE house_role_assignments.house_id = ?
+                              AND house_role_assignments.role = 'supervisor'
+                              AND house_role_assignments.user_id = ?
+                              AND provided.ready_for_start = 0
                             """,
                             (house_id, user["id"]),
-                        ).fetchone()
+                        ).fetchone() or (
+                            is_plumbing_supervisor
+                            and _plumbing_supervisor_assigned(
+                                db, house_id, user["id"]
+                            )
+                        )
                     elif is_vent_photo_uploader:
                         has_house_access = _ventilation_house_is_visible(
                             db, house_id, user["id"]
@@ -7320,7 +7514,7 @@ class LegacyRouteHandlers:
                                 ELSE COALESCE(hc.plumber_status, p.plan_plumber)
                            END AS plumber_status,
                            COALESCE(h.is_finished, 0) AS is_finished,
-                           CASE WHEN h.id IS NULL AND p.ready_for_start = 1 THEN 'ready'
+                           CASE WHEN p.ready_for_start = 1 THEN 'ready'
                                 WHEN h.id IS NULL THEN 'not_started'
                                 WHEN h.is_finished = 1 THEN 'closed'
                                 ELSE 'active' END AS status,
@@ -7572,14 +7766,7 @@ class LegacyRouteHandlers:
                 )
                 house_data["can_upload_plumbing_photos"] = (
                     _is_plumbing_supervisor(db, user)
-                    and db.execute(
-                        """
-                        SELECT 1 FROM house_role_assignments
-                        WHERE house_id = ? AND role = 'supervisor' AND user_id = ?
-                        """,
-                        (house_id, user["id"]),
-                    ).fetchone()
-                    is not None
+                    and _plumbing_supervisor_assigned(db, house_id, user["id"])
                 )
                 house_data["plumbing_photos"] = (
                     _plumbing_house_photo_metadata(db, house_id)
@@ -7949,10 +8136,9 @@ class LegacyRouteHandlers:
                             WHERE photo.id = ?
                               AND provided.plan_plumber_required = 1
                               AND EXISTS (
-                                  SELECT 1 FROM house_role_assignments assignment
+                                  SELECT 1 FROM house_plumbing_assignments assignment
                                   WHERE assignment.house_id = photo.house_id
-                                    AND assignment.role = 'supervisor'
-                                    AND assignment.user_id = ?
+                                    AND assignment.supervisor_user_id = ?
                               )
                             """,
                             (photo_id, user["id"]),
@@ -8028,7 +8214,8 @@ class LegacyRouteHandlers:
                             FROM house_documents d
                             JOIN provided_houses p ON p.id = d.house_id
                             LEFT JOIN houses h ON h.id = p.id
-                            WHERE d.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE d.id = ? AND p.ready_for_start = 1
+                              AND h.id IS NULL
                             """,
                             (document_id,),
                         ).fetchone()
@@ -8768,7 +8955,8 @@ class LegacyRouteHandlers:
                         FROM house_documents d
                         JOIN provided_houses p ON p.id = d.house_id
                         LEFT JOIN houses h ON h.id = p.id
-                        WHERE d.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                        WHERE d.id = ? AND p.ready_for_start = 1
+                          AND (h.id IS NULL OR h.is_finished = 0)
                         """,
                         (document_id,),
                     ).fetchone()
@@ -8789,7 +8977,8 @@ class LegacyRouteHandlers:
                         ready = db.execute(
                             """
                             SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                             """,
                             (source["house_id"],),
                         ).fetchone()
@@ -9033,7 +9222,8 @@ class LegacyRouteHandlers:
                                    p.plan_order_variations,
                                    p.plan_windows_required
                             FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                         """, (house_id,)).fetchone()
                         if not ready:
                             raise ApiError(409, "Survey measurements can only be saved for houses ready for start.")
@@ -9183,6 +9373,17 @@ class LegacyRouteHandlers:
                             """,
                             (house_id, house_id),
                         )
+                        db.execute(
+                            """
+                            DELETE FROM house_plumbing_assignments
+                            WHERE house_id = ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM provided_houses
+                                  WHERE id = ? AND plan_plumber_required = 1
+                              )
+                            """,
+                            (house_id, house_id),
+                        )
                         if survey.get("perimeter_m") is None:
                             raise ApiError(
                                 400,
@@ -9237,7 +9438,8 @@ class LegacyRouteHandlers:
                         ready = db.execute(
                             """
                             SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                             """,
                             (house_id,),
                         ).fetchone()
@@ -9267,7 +9469,8 @@ class LegacyRouteHandlers:
                         ready = db.execute(
                             """
                             SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                             """,
                             (house_id,),
                         ).fetchone()
@@ -9343,7 +9546,8 @@ class LegacyRouteHandlers:
                         ready = db.execute(
                             """
                             SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                             """,
                             (house_id,),
                         ).fetchone()
@@ -9412,7 +9616,8 @@ class LegacyRouteHandlers:
                         ready = db.execute(
                             """
                             SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                             """,
                             (house_id,),
                         ).fetchone()
@@ -9619,14 +9824,23 @@ class LegacyRouteHandlers:
                             """
                             SELECT 1
                             FROM provided_houses provided
-                            JOIN house_role_assignments assignment
-                              ON assignment.house_id = provided.id
-                             AND assignment.role = 'supervisor'
                             WHERE provided.id = ?
-                              AND assignment.user_id = ?
                               AND provided.plan_plumber_required = 1
+                              AND (
+                                  EXISTS (
+                                      SELECT 1 FROM house_plumbing_assignments assignment
+                                      WHERE assignment.house_id = provided.id
+                                        AND assignment.supervisor_user_id = ?
+                                  )
+                                  OR EXISTS (
+                                      SELECT 1 FROM house_role_assignments assignment
+                                      WHERE assignment.house_id = provided.id
+                                        AND assignment.role = 'supervisor'
+                                        AND assignment.user_id = ?
+                                  )
+                              )
                             """,
-                            (house_id, user["id"]),
+                            (house_id, user["id"], user["id"]),
                         ).fetchone()
                         if assigned is None:
                             raise ApiError(
@@ -9897,7 +10111,8 @@ class LegacyRouteHandlers:
                         ready = db.execute(
                             """
                             SELECT 1 FROM provided_houses p LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (h.id IS NULL OR h.is_finished = 0)
                             """,
                             (house_id,),
                         ).fetchone()
@@ -9982,6 +10197,11 @@ class LegacyRouteHandlers:
                         "Supervisor, Teamlead, or administrator access is required to manage team rosters.",
                     )
             elif path == "/api/houses" and _has_access_profile(user, "assign"):
+                pass
+            elif path == "/api/houses/return-ready" and (
+                _has_access_profile(user, "admin")
+                or _has_access_profile(user, "assign")
+            ):
                 pass
             elif path not in {
                 "/api/movements",
@@ -10162,11 +10382,11 @@ class LegacyRouteHandlers:
                             )
                         db.execute(
                             """
-                            INSERT INTO house_role_assignments
-                                (house_id, role, user_id, assigned_by, assigned_at)
-                            VALUES (?, 'supervisor', ?, ?, ?)
-                            ON CONFLICT(house_id, role) DO UPDATE SET
-                                user_id = excluded.user_id,
+                            INSERT INTO house_plumbing_assignments
+                                (house_id, supervisor_user_id, assigned_by, assigned_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(house_id) DO UPDATE SET
+                                supervisor_user_id = excluded.supervisor_user_id,
                                 assigned_by = excluded.assigned_by,
                                 assigned_at = excluded.assigned_at
                             """,
@@ -10176,10 +10396,6 @@ class LegacyRouteHandlers:
                                 user["display_name"],
                                 now,
                             ),
-                        )
-                        db.execute(
-                            "UPDATE houses SET employee_name = ? WHERE id = ?",
-                            (supervisor["display_name"], house_id),
                         )
                 self._send_json(
                     200,
@@ -10859,7 +11075,11 @@ class LegacyRouteHandlers:
                             """
                             SELECT 1 FROM provided_houses p
                             LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND h.id IS NULL
+                            WHERE p.id = ?
+                              AND (
+                                  h.id IS NULL
+                                  OR (p.ready_for_start = 1 AND h.is_finished = 0)
+                              )
                             """,
                             (house_id,),
                         ).fetchone()
@@ -10948,12 +11168,7 @@ class LegacyRouteHandlers:
                     raise ApiError(
                         400, "House ID and plumbing status are required."
                     )
-                if (
-                    not _has_access_profile(user, "supervisor")
-                    or not isinstance(user["supervisor_specialty"], str)
-                    or user["supervisor_specialty"].strip().casefold()
-                    != "plumbing"
-                ):
+                if not _has_access_profile(user, "supervisor"):
                     raise ApiError(
                         403,
                         "Only Plumbing Supervisors can update assigned plumbing work.",
@@ -10975,18 +11190,32 @@ class LegacyRouteHandlers:
                 with connect_db() as db:
                     with db:
                         db.execute("BEGIN IMMEDIATE")
+                        if not _is_plumbing_supervisor(db, user):
+                            raise ApiError(
+                                403,
+                                "Only Plumbing Supervisors can update assigned plumbing work.",
+                            )
                         assigned = db.execute(
                             """
                             SELECT 1
                             FROM provided_houses provided
-                            JOIN house_role_assignments assignment
-                              ON assignment.house_id = provided.id
-                             AND assignment.role = 'supervisor'
                             WHERE provided.id = ?
-                              AND assignment.user_id = ?
                               AND provided.plan_plumber_required = 1
+                              AND (
+                                  EXISTS (
+                                      SELECT 1 FROM house_plumbing_assignments assignment
+                                      WHERE assignment.house_id = provided.id
+                                        AND assignment.supervisor_user_id = ?
+                                  )
+                                  OR EXISTS (
+                                      SELECT 1 FROM house_role_assignments assignment
+                                      WHERE assignment.house_id = provided.id
+                                        AND assignment.role = 'supervisor'
+                                        AND assignment.user_id = ?
+                                  )
+                              )
                             """,
-                            (house_id, user["id"]),
+                            (house_id, user["id"], user["id"]),
                         ).fetchone()
                         if not assigned:
                             raise ApiError(
@@ -11525,6 +11754,7 @@ class LegacyRouteHandlers:
                                           AND NOT EXISTS (
                                               SELECT 1 FROM houses
                                               WHERE houses.id = provided_houses.id
+                                                AND houses.is_finished = 1
                                           )
                                       )
                                   )
@@ -11568,6 +11798,7 @@ class LegacyRouteHandlers:
                                               AND NOT EXISTS (
                                                   SELECT 1 FROM houses
                                                   WHERE houses.id = provided_houses.id
+                                                    AND houses.is_finished = 1
                                               )
                                           )
                                           OR (
@@ -11908,6 +12139,10 @@ class LegacyRouteHandlers:
                                     "DELETE FROM house_vent_assignments WHERE house_id = ?",
                                     (house_id,),
                                 )
+                                db.execute(
+                                    "DELETE FROM house_plumbing_assignments WHERE house_id = ?",
+                                    (house_id,),
+                                )
                             db.execute(
                                 "UPDATE provided_houses SET ready_for_start = ? WHERE id = ?",
                                 (int(payload["ready"]), house_id),
@@ -12052,7 +12287,8 @@ class LegacyRouteHandlers:
                                 """
                                 SELECT 1 FROM provided_houses p
                                 LEFT JOIN houses h ON h.id = p.id
-                                WHERE p.id = ? AND p.ready_for_start = 1 AND h.id IS NULL
+                                WHERE p.id = ? AND p.ready_for_start = 1
+                                  AND (h.id IS NULL OR h.is_finished = 0)
                                 """,
                                 (house_id,),
                             ).fetchone()
@@ -12187,9 +12423,19 @@ class LegacyRouteHandlers:
                                     house_id,
                                 ),
                             )
-                        was_active = db.execute(
-                            "SELECT 1 FROM houses WHERE id = ?", (house_id,)
-                        ).fetchone() is not None
+                        existing_house = db.execute(
+                            """
+                            SELECT COALESCE(p.ready_for_start, 0) AS ready_for_start
+                            FROM houses h
+                            LEFT JOIN provided_houses p ON p.id = h.id
+                            WHERE h.id = ?
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        was_active = (
+                            existing_house is not None
+                            and not existing_house["ready_for_start"]
+                        )
                         provided_house = db.execute(
                             "SELECT postcode, owner_name FROM provided_houses WHERE id = ?",
                             (house_id,),
@@ -12204,11 +12450,97 @@ class LegacyRouteHandlers:
                             owner_name,
                             employee_name,
                         )
+                        if db.execute(
+                            """
+                            SELECT 1 FROM house_plumbing_assignments
+                            WHERE house_id = ?
+                            """,
+                            (house_id,),
+                        ).fetchone():
+                            ewi_supervisor = db.execute(
+                                """
+                                SELECT users.id
+                                FROM app_users users
+                                WHERE users.is_active = 1
+                                  AND users.display_name = ? COLLATE NOCASE
+                                  AND users.supervisor_specialty =
+                                      'External Wall Insulation' COLLATE NOCASE
+                                  AND EXISTS (
+                                      SELECT 1 FROM app_role_permissions access
+                                      WHERE access.role_key = users.role
+                                        AND access.permission_key = 'access.supervisor'
+                                        AND access.is_allowed = 1
+                                  )
+                                """,
+                                (employee_name,),
+                            ).fetchone()
+                            if ewi_supervisor:
+                                db.execute(
+                                    """
+                                    INSERT INTO house_role_assignments
+                                        (house_id, role, user_id, assigned_by, assigned_at)
+                                    VALUES (?, 'supervisor', ?, ?, ?)
+                                    ON CONFLICT(house_id, role) DO UPDATE SET
+                                        user_id = excluded.user_id,
+                                        assigned_by = excluded.assigned_by,
+                                        assigned_at = excluded.assigned_at
+                                    """,
+                                    (
+                                        house_id,
+                                        ewi_supervisor["id"],
+                                        user["display_name"],
+                                        datetime.now().isoformat(timespec="seconds"),
+                                    ),
+                                )
                         if not was_active:
                             _record_house_status(
                                 db, house_id, "active", user["display_name"]
                             )
                 self._send_json(201, {"id": house_id})
+            elif path == "/api/houses/return-ready":
+                payload = self._json_body()
+                if not isinstance(payload, dict) or set(payload) != {"id"}:
+                    raise ApiError(400, "A house ID is required.")
+                house_id = payload["id"]
+                if not isinstance(house_id, str):
+                    raise ApiError(400, "Enter a valid house ID.")
+                house_id = house_id.strip()
+                if not house_id or len(house_id) > 120:
+                    raise ApiError(400, "Enter a valid house ID.")
+                with connect_db() as db:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        house = db.execute(
+                            """
+                            SELECT p.ready_for_start, h.is_finished
+                            FROM provided_houses p
+                            JOIN houses h ON h.id = p.id
+                            WHERE p.id = ?
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if house is None:
+                            raise ApiError(404, "Active house was not found.")
+                        if house["is_finished"]:
+                            raise ApiError(
+                                409, "A closed house cannot be returned to Ready for start."
+                            )
+                        if house["ready_for_start"]:
+                            raise ApiError(
+                                409, "This house is already Ready for start."
+                            )
+                        db.execute(
+                            "UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?",
+                            (house_id,),
+                        )
+                        db.execute(
+                            "UPDATE houses SET status_changed_at = ? WHERE id = ?",
+                            (datetime.now().timestamp(), house_id),
+                        )
+                        _record_house_status(
+                            db, house_id, "ready", user["display_name"]
+                        )
+                self._send_json(200, {"id": house_id, "status": "ready"})
             elif path == "/api/houses/status":
                 payload = self._json_body()
                 if not isinstance(payload, dict) or not isinstance(payload.get("finished"), bool):

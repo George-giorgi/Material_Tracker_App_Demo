@@ -4677,6 +4677,214 @@ class ReadyForStartAndNotesTests(HttpBase):
             403,
         )
 
+    def test_active_house_returns_to_ready_preserving_records_and_reactivates(self):
+        surveyor_status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "return-ready-surveyor",
+                "display_name": "Return Ready Surveyor",
+                "pin": "345678",
+                "role": "surveyor",
+            },
+        )
+        supervisor_status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "return-ready-supervisor",
+                "display_name": "Return Ready Supervisor",
+                "pin": "456789",
+                "role": "supervisor",
+                "supervisor_specialty": "External Wall Insulation",
+            },
+        )
+        assign_status, _, _ = self.call(
+            "POST",
+            "/api/users",
+            {
+                "username": "return-ready-assign",
+                "display_name": "Return Ready Assign",
+                "pin": "567890",
+                "role": "assign",
+            },
+        )
+        self.assertEqual(surveyor_status, 201)
+        self.assertEqual(supervisor_status, 201)
+        self.assertEqual(assign_status, 201)
+        _, _, assign_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "return-ready-assign", "pin": "567890"},
+        )
+        _, _, supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "return-ready-supervisor", "pin": "456789"},
+        )
+        activated, result, _ = self.activate({"id": "WH1"})
+        self.assertEqual(activated, 201, result)
+
+        with server.connect_db() as db:
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES
+                    ('WH1', 'surveyor', ?, 'Admin One', '2026-11-04T07:00:00'),
+                    ('WH1', 'supervisor', ?, 'Admin One', '2026-11-04T07:00:00')
+                """,
+                (
+                    self.user_id("return-ready-surveyor"),
+                    self.user_id("return-ready-supervisor"),
+                ),
+            )
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET notes = 'Keep this planning note',
+                    plan_scaffolding_required = 1,
+                    plan_scaffolding_done_by = 'Scaffold Team',
+                    plan_scaffolding_done_at = '2026-11-04T08:00:00'
+                WHERE id = 'WH1'
+                """
+            )
+            db.execute(
+                """
+                INSERT OR IGNORE INTO house_checklists (house_id)
+                VALUES ('WH1')
+                """
+            )
+            db.execute(
+                """
+                UPDATE house_checklists
+                SET scaffolding_status = 'done',
+                    esb_unclipped = 'no',
+                    plumber_status = 'not_done'
+                WHERE house_id = 'WH1'
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_work_plan_drafts(house_id, data, saved_by, saved_at)
+                VALUES ('WH1', '{"scaffolding_required": true}', 'Admin One', '2026-11-04T08:00:00')
+                """
+            )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/houses/return-ready",
+            {"id": "WH1"},
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "ready")
+        ready = self.listing("ready")["WH1"]
+        self.assertEqual(ready["status"], "ready")
+        self.assertTrue(ready["is_returned_house"])
+        self.assertNotIn("WH1", self.listing("pending"))
+        self.assertEqual(self.listing("map")["WH1"]["status"], "ready")
+        self.assertEqual(self.summary()["active"], 0)
+        self.assertEqual(self.summary()["ready"], 1)
+        supervisor_status, supervisor_dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=supervisor_cookie
+        )
+        self.assertEqual(supervisor_status, 200)
+        self.assertNotIn(
+            "WH1",
+            [house["id"] for house in supervisor_dashboard["house_list"]],
+        )
+        self.assertEqual(
+            self.call(
+                "GET", "/api/houses/WH1", cookie=supervisor_cookie
+            )[0],
+            404,
+        )
+        with server.connect_db() as db:
+            dashboard_house = next(
+                house for house in server._dashboard(db)["house_list"]
+                if house["id"] == "WH1"
+            )
+        self.assertTrue(dashboard_house["ready_for_start"])
+
+        status, assignments, _ = self.call(
+            "GET",
+            "/api/house-assignments?house_id=WH1",
+            cookie=assign_cookie,
+        )
+        self.assertEqual(status, 200, assignments)
+        self.assertTrue(assignments["house"]["is_returned_house"])
+        self.assertEqual(
+            {assignment["role"] for assignment in assignments["assignments"]},
+            {"surveyor", "supervisor"},
+        )
+        with server.connect_db() as db:
+            self.assertEqual(
+                json.loads(
+                    db.execute(
+                    "SELECT data FROM house_surveys WHERE house_id = 'WH1'"
+                    ).fetchone()["data"]
+                ),
+                {
+                    "windows": [],
+                    "doors": [],
+                    "house_corners": [],
+                    "notes": "",
+                    "perimeter_m": 20,
+                },
+            )
+            provided = db.execute(
+                """
+                SELECT notes, plan_scaffolding_done_by
+                FROM provided_houses WHERE id = 'WH1'
+                """
+            ).fetchone()
+            self.assertEqual(
+                (provided["notes"], provided["plan_scaffolding_done_by"]),
+                ("Keep this planning note", "Scaffold Team"),
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT scaffolding_status FROM house_checklists WHERE house_id = 'WH1'"
+                ).fetchone()["scaffolding_status"],
+                "done",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM house_work_plan_drafts WHERE house_id = 'WH1'"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                [
+                    row["status"]
+                    for row in db.execute(
+                        "SELECT status FROM house_status_history WHERE house_id = 'WH1' ORDER BY id"
+                    )
+                ],
+                ["active", "ready"],
+            )
+
+        reactivated, result, _ = self.activate({"id": "WH1"})
+        self.assertEqual(reactivated, 201, result)
+        self.assertEqual(self.summary()["active"], 1)
+        with server.connect_db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT ready_for_start FROM provided_houses WHERE id = 'WH1'"
+                ).fetchone()["ready_for_start"],
+                0,
+            )
+            self.assertEqual(
+                [
+                    row["status"]
+                    for row in db.execute(
+                        "SELECT status FROM house_status_history WHERE house_id = 'WH1' ORDER BY id"
+                    )
+                ],
+                ["active", "ready", "active"],
+            )
+
     def test_resetting_already_not_started_house_preserves_new_notes(self):
         self.provide("RESET-NOT-STARTED")
         with server.connect_db() as db:
@@ -5757,6 +5965,42 @@ class HouseRoleAssignmentTests(HttpBase):
         self.assertEqual(house["delivery_person"], "Karol")
         self.assertEqual(house["delivery_team"], "Crew North")
 
+        status, result, _ = self.call(
+            "POST",
+            "/api/supervisor/house-assignment",
+            {
+                "house_id": "ASSIGN-1",
+                "delivery_person": "Gary Lowther",
+                "delivery_team": "Crew North",
+            },
+            cookie=supervisor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["delivery_person"], "Gary Lowther")
+        _, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=supervisor_cookie
+        )
+        self.assertEqual(dashboard["house_list"][0]["delivery_person"], "Gary Lowther")
+        self.assertEqual(dashboard["house_list"][0]["delivery_team"], "Crew North")
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/supervisor/house-assignment",
+            {
+                "house_id": "ASSIGN-1",
+                "delivery_person": "",
+                "delivery_team": "Crew North",
+            },
+            cookie=supervisor_cookie,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["delivery_person"], "")
+        _, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=supervisor_cookie
+        )
+        self.assertEqual(dashboard["house_list"][0]["delivery_person"], "")
+        self.assertEqual(dashboard["house_list"][0]["delivery_team"], "Crew North")
+
         self.assertEqual(
             self.call(
                 "POST",
@@ -6036,9 +6280,9 @@ class PlumbingHousePhotoTests(HttpBase):
             server._upsert_house(db, "PLUMBING-PHOTO-1", owner_name="Photo Owner")
             db.execute(
                 """
-                INSERT INTO house_role_assignments
-                    (house_id, role, user_id, assigned_by, assigned_at)
-                VALUES ('PLUMBING-PHOTO-1', 'supervisor', ?,
+                INSERT INTO house_plumbing_assignments
+                    (house_id, supervisor_user_id, assigned_by, assigned_at)
+                VALUES ('PLUMBING-PHOTO-1', ?,
                         'Plumbing Coordinator', '2026-11-12T10:00:00')
                 """,
                 (self.supervisor_id,),
@@ -6359,6 +6603,38 @@ class WorkPlanCompletionTests(HttpBase):
                 WHERE id = 'PLAN-1'
                 """
             )
+
+    def test_returned_ready_house_keeps_work_plan_check_marks_actionable(self):
+        cathy = self.login("cathy-return-ready", "Cathy", "assign")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1, plan_ceramic_fuse_board = 1
+                WHERE id = 'PLAN-1'
+                """
+            )
+            db.execute(
+                "INSERT INTO houses(id, is_finished) VALUES ('PLAN-1', 0)"
+            )
+
+        for item in ("scaffolding", "ceramic_fuse_board"):
+            status, result, _ = self.call(
+                "POST",
+                "/api/house-work-plan/complete",
+                {"house_id": "PLAN-1", "item": item, "done": True},
+                cookie=cathy,
+            )
+            self.assertEqual(status, 200, result)
+            self.assertEqual(result["done_by"], "Cathy")
+            status, result, _ = self.call(
+                "POST",
+                "/api/house-work-plan/complete",
+                {"house_id": "PLAN-1", "item": item, "done": False},
+                cookie=cathy,
+            )
+            self.assertEqual(status, 200, result)
+            self.assertEqual(result["done_by"], "")
 
     def test_surveyor_saves_vent_work_and_only_vent_team_can_check_it(self):
         cathy = self.login("cathy-vent", "Cathy", "assign")
@@ -7412,16 +7688,10 @@ class UiWiringTests(unittest.TestCase):
             self.fail(result.stderr or result.stdout)
 
     def test_assign_active_house_highlights_missing_surveyor_assignment(self):
-        self.assertIn("function houseSurveyorAssignmentAlertHtml(house)", APP_JS)
-        self.assertIn(
-            "house.has_assigned_surveyor) return \"\";",
-            APP_JS,
-        )
-        self.assertIn(
-            "house-audit-summary-field surveyor-assignment-field surveyor-assignment-missing",
-            APP_JS,
-        )
-        self.assertIn("${isAssign ? houseSurveyorAssignmentAlertHtml(house) : \"\"}", APP_JS)
+        self.assertIn("function houseSurveyorAssignmentSummaryHtml(house)", APP_JS)
+        self.assertIn("surveyor-assignment-missing", APP_JS)
+        self.assertIn("surveyor-assignment-field", APP_JS)
+        self.assertIn("${isAssign ? houseSurveyorAssignmentSummaryHtml(house) : \"\"}", APP_JS)
 
     def test_assign_ready_card_highlights_missing_surveyor(self):
         self.assertIn(
@@ -7618,7 +7888,45 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn('class="supervisor-ewi-card-workflow"', APP_JS)
         self.assertIn("supervisor-ewi-delivery-assignment", APP_JS)
         self.assertIn('data-ewi-house-pdfs="${houseId}"', APP_JS)
-        self.assertIn(">View house details</button>", APP_JS)
+        self.assertIn('${houseActionIcon("details")}<span>View house details</span></button>', APP_JS)
+        self.assertIn('${houseActionIcon("pdf")}<span>Annotated PDFs</span></button>', APP_JS)
+        self.assertIn(
+            '${houseActionIcon(house.delivery_person ? "change" : "assign")}<span>${house.delivery_person ? "Change delivery person" : "Assign delivery person"}</span></button>',
+            APP_JS,
+        )
+        self.assertIn(
+            '<option value=""${house.delivery_person ? "" : " selected"}>No assignment</option>${deliveryPersonOptions}</select>',
+            APP_JS,
+        )
+        self.assertIn(': "Assigned"', APP_JS)
+        self.assertIn('return "Remove assignment";', APP_JS)
+        self.assertIn("<h3>Delivery person assignment</h3>", APP_JS)
+        self.assertNotIn("Currently assigned to", APP_JS)
+        self.assertNotIn(
+            "Assign this house to one of your reporting EWI Teamleads.",
+            APP_JS,
+        )
+        self.assertIn('type="submit" disabled>${houseActionIcon(house.delivery_person', APP_JS)
+        self.assertIn('${houseActionIcon("assign")}<span>Save EWI assignment</span></button>', APP_JS)
+        self.assertIn('const buttonLabel = button.querySelector("span") || button;', APP_JS)
+        self.assertIn('const buttonLabel = button.querySelector("span");', APP_JS)
+        self.assertIn(".supervisor-ewi-card-action .house-action-icon", css)
+        self.assertIn(
+            ".supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) > button .house-action-icon",
+            css,
+        )
+        self.assertIn(
+            ".supervisor-ewi-card-actions .supervisor-ewi-card-action {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 9px;\n  font-size: 12px;\n  font-weight: 650;",
+            css,
+        )
+        self.assertIn(
+            ".supervisor-ewi-delivery-assignment, .supervisor-ewi-assignment) > button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 8px;\n  padding-inline: 12px;\n  font-size: 12px;\n  font-weight: 650;",
+            css,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions .supervisor-ewi-card-action:first-child',
+            css,
+        )
         self.assertIn("openEwiSupervisorPdfs", APP_JS)
         self.assertIn("/api/house-vent-documents?house_id=", APP_JS)
         self.assertIn(
@@ -7637,12 +7945,53 @@ class UiWiringTests(unittest.TestCase):
             "html[data-theme=\"dark\"] body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-workflow .supervisor-ewi-delivery-assignment",
             css,
         )
+        self.assertIn("appearance: none;", css)
+        self.assertIn("select option:checked", css)
+        self.assertIn("color-scheme: dark;", css)
+        self.assertIn("background-repeat: no-repeat;", css)
+        self.assertIn("background-position: right 14px center;", css)
+        self.assertIn(
+            ".ewi-supervisor-house-card .supervisor-ewi-delivery-assignment .supervisor-assignment-heading p {\n  display: block;",
+            css,
+        )
+        self.assertIn(
+            'data-current-teamlead-user-id="${escapeHtml(house.ewi_teamlead_user_id || "")}"',
+            APP_JS,
+        )
         self.assertIn(
             "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {\n  display: grid;\n  grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);",
             css,
         )
         self.assertIn(
-            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {\n  min-height: 276px;\n  align-items: start;",
+            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card {\n  height: auto;\n  max-height: none;\n  min-height: 0;\n  overflow: visible;",
+            css,
+        )
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-actions {\n  gap: 9px;\n  margin-top: 0;",
+            css,
+        )
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .house-top {\n  height: auto;\n  min-height: 0;\n  max-height: none;\n  overflow: visible;",
+            css,
+        )
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-delivery-assignment,\nbody.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-assignment {\n  gap: 10px;\n  border-color: #dfe9e2;\n  border-radius: 14px;\n  padding: 13px;",
+            css,
+        )
+        self.assertIn(
+            "body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary {\n  border-right: 1px solid #dce8df;",
+            css,
+        )
+        self.assertIn(
+            "html[data-theme=\"dark\"] body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card:focus-within",
+            css,
+        )
+        self.assertIn(
+            "border-bottom: 1px solid #dce8df;\n    padding-right: 0;\n    padding-bottom: 14px;",
+            css,
+        )
+        self.assertIn(
+            "@media (max-width: 900px) {\n  body.supervisor-workspace-mode #supervisor-house-list .supervisor-ewi-card-primary {\n    border-right: 0;",
             css,
         )
         self.assertIn(
@@ -7668,6 +8017,13 @@ class UiWiringTests(unittest.TestCase):
         self.assertIn(
             'html[data-theme="dark"] body.teamlead-mode .teamlead-ewi-complete-button',
             css,
+        )
+
+    def test_supervisor_team_rosters_appear_before_house_search(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertLess(
+            html.index('id="supervisor-team-rosters"'),
+            html.index('id="supervisor-house-search"'),
         )
 
     def test_ewi_supervisor_house_list_receives_seai_measure_summary(self):
@@ -7708,6 +8064,92 @@ class UiWiringTests(unittest.TestCase):
             self.assertIsNone(houses[1]["seai_summary"])
         finally:
             db.close()
+
+    def test_assignment_select_change_preserves_button_action_and_icon(self):
+        start = APP_JS.index("function supervisorAssignmentButtonDisabled(form)")
+        end = APP_JS.index("\nfunction surveyRow", start)
+        script = """
+          let saved = true;
+          let iconPresent = true;
+          const label = { textContent: "Saved" };
+          const button = {
+            classList: {
+              contains: name => name === "is-saved" && saved,
+              remove: name => { if (name === "is-saved") saved = false; }
+            },
+            querySelector: selector => selector === "span" ? label : null,
+            disabled: true,
+            set textContent(value) { iconPresent = false; },
+            get textContent() { return label.textContent; }
+          };
+          const form = {
+            dataset: { currentDeliveryPerson: "Karol" },
+            elements: {
+              delivery_person: { value: "Karol" },
+              delivery_team: { value: "Team Lead One" }
+            },
+            classList: {
+              contains: name => name === "supervisor-ewi-delivery-assignment"
+            },
+            querySelector: () => button
+          };
+          const event = { target: { closest: () => form } };
+        """ + APP_JS[start:end] + """
+          updateSupervisorAssignmentFormState(event);
+          if (label.textContent !== "Change delivery person")
+            throw new Error("Saved assignment did not restore its change action.");
+          if (!iconPresent)
+            throw new Error("Changing the select removed the button icon.");
+          if (!button.disabled)
+            throw new Error("The current assignee should not be resubmitted.");
+          form.elements.delivery_person.value = "Gary Lowther";
+          updateSupervisorAssignmentFormState(event);
+          if (button.disabled)
+            throw new Error("Selecting a new person did not enable reassignment.");
+          form.elements.delivery_person.value = "";
+          updateSupervisorAssignmentFormState(event);
+          if (label.textContent !== "Remove assignment")
+            throw new Error("Clearing an assigned person did not show remove action.");
+          if (button.disabled)
+            throw new Error("Clearing an assigned person should be allowed.");
+          saved = true;
+          label.textContent = "Saved";
+          form.dataset.currentDeliveryPerson = "";
+          form.elements.delivery_person.value = "";
+          updateSupervisorAssignmentFormState(event);
+          if (label.textContent !== "Assign delivery person")
+            throw new Error("An unassigned house did not restore its assign action.");
+          if (!button.disabled)
+            throw new Error("An empty person selection should remain disabled.");
+          form.elements.delivery_person.value = "Karol";
+          updateSupervisorAssignmentFormState(event);
+          if (button.disabled)
+            throw new Error("Selecting a person did not enable a new assignment.");
+          const ewiForm = {
+            dataset: { currentTeamleadUserId: "" },
+            elements: { teamlead_user_id: { value: "" } }
+          };
+          if (!supervisorEwiAssignmentButtonDisabled(ewiForm))
+            throw new Error("No-op EWI assignment should be disabled.");
+          ewiForm.elements.teamlead_user_id.value = "12";
+          if (supervisorEwiAssignmentButtonDisabled(ewiForm))
+            throw new Error("Choosing an EWI Teamlead should enable saving.");
+          ewiForm.dataset.currentTeamleadUserId = "12";
+          if (!supervisorEwiAssignmentButtonDisabled(ewiForm))
+            throw new Error("The current EWI Teamlead should not be resubmitted.");
+          ewiForm.elements.teamlead_user_id.value = "";
+          if (supervisorEwiAssignmentButtonDisabled(ewiForm))
+            throw new Error("Removing an existing EWI assignment should be enabled.");
+          console.log("Assignment button state passed");
+        """;
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
 
     def test_ewi_supervisor_detection_accepts_database_rows(self):
         db = sqlite3.connect(":memory:")
@@ -8133,7 +8575,7 @@ console.log(activeHouseSurveyReferenceHtml({
             '${canManageHouses || hasAccessProfile(state.user, "supervisor")',
             APP_JS,
         )
-        self.assertIn("Ready-stage work checklist", APP_JS)
+        self.assertIn("Pre-start work plan", APP_JS)
 
     def test_plan_lists_refresh_without_flashing_loading_state(self):
         body = APP_JS[APP_JS.index("async function renderNotStartedHouses"):]
@@ -8583,12 +9025,8 @@ console.log(JSON.stringify([
     def test_archive_feature_is_removed_and_not_started_cards_show_workflow(self):
         css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('id="house-detail-checklist"', html)
-        self.assertIn('$("#house-detail-checklist").innerHTML', APP_JS)
         self.assertIn('aria-label="House record sections"', html)
         self.assertIn('id="house-detail-status"', html)
-        self.assertIn('id="house-detail-checklist-summary"', html)
-        self.assertIn("recordedChecklistCount", APP_JS)
         self.assertIn("scrollIntoView({", APP_JS)
         self.assertNotIn("archived", html.lower())
         self.assertNotIn("is_archived", APP_JS)
@@ -8605,7 +9043,28 @@ console.log(JSON.stringify([
         self.assertIn('id="house-detail-snags"', html)
         self.assertIn("house.survey_notes", APP_JS)
         self.assertIn("house.snags || []", APP_JS)
-        self.assertIn('$("#go-overview").classList.toggle("hidden", tab === "overview")', APP_JS)
+
+    def test_house_detail_pre_start_checklist_section_is_removed(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn('id="house-detail-checklist-card"', html)
+        self.assertNotIn('id="house-detail-checklist-summary"', html)
+        self.assertNotIn('id="house-detail-checklist"', html)
+        self.assertNotIn(
+            'data-house-detail-target="house-detail-checklist-card"',
+            html,
+        )
+        self.assertNotIn("house-detail-checklist", APP_JS)
+        self.assertNotIn("house-detail-checklist", css)
+
+    def test_house_detail_dark_mode_has_scoped_contrast_and_mobile_layout(self):
+        css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+        self.assertIn('html[data-theme="dark"] #house-detail .house-detail-heading', css)
+        self.assertIn('html[data-theme="dark"] #house-detail .house-detail-fact', css)
+        self.assertIn('html[data-theme="dark"] #house-detail .house-detail-records-grid section', css)
+        self.assertIn('html[data-theme="dark"] #house-detail .house-history-card td', css)
+        self.assertIn("@media (max-width: 640px) {\n  #house-detail .house-detail-heading", css)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", css)
 
     def test_not_started_and_closed_cards_show_only_allowed_actions(self):
         not_started_html = APP_JS[
@@ -8636,10 +9095,10 @@ console.log(JSON.stringify([
         ready_actions = re.search(r": `([\s\S]*?)`\}", not_started_actions)
         self.assertIsNotNone(ready_actions)
         self.assertNotIn("house-snags-open", ready_actions.group(1))
-        self.assertIn('id="go-overview"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
-        self.assertIn('$("#go-overview").addEventListener("click", goToHomeView)', APP_JS)
+        self.assertNotIn('id="go-overview"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
+        self.assertNotIn("#go-overview", APP_JS)
 
-    def test_logo_returns_to_overview_and_hides_overview_shortcut(self):
+    def test_logo_returns_to_overview_without_overview_shortcut(self):
         self.assertIn('$$(".brand, .mobile-brand, .surveyor-brand").forEach((link) =>', APP_JS)
         self.assertIn('link.addEventListener("click", goToHomeView)', APP_JS)
         self.assertIn(
@@ -8650,8 +9109,7 @@ console.log(JSON.stringify([
         self.assertIn('id="survey-room-pdf-preview-dialog"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
         self.assertIn('data-survey-room-pdf-preview=', APP_JS)
         self.assertIn('$("#survey-room-pdf-preview-frame").src = url.href', APP_JS)
-        self.assertIn('$("#go-overview").classList.toggle("hidden", tab === "overview")', APP_JS)
-        self.assertIn('$("#go-overview").classList.add("hidden")', APP_JS)
+        self.assertNotIn('id="go-overview"', (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
         self.assertIn('button.setAttribute("aria-current", "page")', APP_JS)
 
     def test_seai_map_shows_house_stages_and_supports_map_actions(self):
@@ -8905,9 +9363,9 @@ class PlumbingCoordinatorTests(HttpBase):
             )
             db.executemany(
                 """
-                INSERT INTO house_role_assignments
-                    (house_id, role, user_id, assigned_by, assigned_at)
-                VALUES (?, 'supervisor', ?, 'Plumbing Coordinator', ?)
+                INSERT INTO house_plumbing_assignments
+                    (house_id, supervisor_user_id, assigned_by, assigned_at)
+                VALUES (?, ?, 'Plumbing Coordinator', ?)
                 """,
                 [
                     ("PLUMBING-OLD-CYCLE", self.plumbing_supervisor_id, "2026-11-05T09:00:00"),
@@ -8930,6 +9388,75 @@ class PlumbingCoordinatorTests(HttpBase):
         }
         self.assertNotIn("PLUMBING-OLD-CYCLE", plumbing_houses)
         self.assertIn("PLUMBING-NEW-CYCLE", plumbing_houses)
+
+    def test_plumbing_supervisor_dashboard_recovers_completed_house_with_lost_assignment(self):
+        house_id = "PLUMBING-RECOVER-COMPLETED"
+        self.provide(house_id, "D04 D4", "4 Pipe Lane", "Completed Owner")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1, plan_plumber_required = 1
+                WHERE id = ?
+                """,
+                (house_id,),
+            )
+        status, result, _ = self.activate(
+            {
+                "id": house_id,
+                "postcode": "D04 D4",
+                "owner_name": "Completed Owner",
+                "employee_name": "EWI Supervisor",
+            }
+        )
+        self.assertEqual(status, 201, result)
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_plumber_done_by = 'Plumbing Supervisor',
+                    plan_plumber_done_at = '2026-11-12T10:00:00',
+                    plan_plumber_done_by_user_id = ?,
+                    plan_plumber = 'done'
+                WHERE id = ?
+                """,
+                (self.plumbing_supervisor_id, house_id),
+            )
+            db.execute(
+                """
+                INSERT INTO house_checklists (house_id, plumber_status)
+                VALUES (?, 'done')
+                """,
+                (house_id,),
+            )
+            self.assertIsNone(
+                db.execute(
+                    "SELECT 1 FROM house_plumbing_assignments WHERE house_id = ?",
+                    (house_id,),
+                ).fetchone()
+            )
+        _, _, supervisor_cookie = self.call(
+            "POST",
+            "/api/auth/login",
+            {"username": "plumbing-supervisor", "pin": "567890"},
+        )
+
+        status, dashboard, _ = self.call(
+            "GET",
+            "/api/dashboard",
+            cookie=supervisor_cookie,
+        )
+
+        self.assertEqual(status, 200, dashboard)
+        recovered = [
+            house for house in dashboard["house_list"] if house["id"] == house_id
+        ]
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0]["plumber_status"], "done")
+        self.assertEqual(
+            recovered[0]["plan_plumber_done_by_user_id"],
+            self.plumbing_supervisor_id,
+        )
 
     def test_coordinator_sees_plumbing_queue_and_assigns_only_plumbing_supervisors(self):
         self.provide("PLUMBING-ACTIVE", "D01 A1", "1 Main Street", "Owner")
@@ -9023,11 +9550,12 @@ class PlumbingCoordinatorTests(HttpBase):
         self.assertEqual(status, 200)
         with server.connect_db() as db:
             unactivated_assignment = db.execute(
-                "SELECT user_id FROM house_role_assignments "
-                "WHERE house_id = 'PLUMBING-NOT-READY' AND role = 'supervisor'"
+                "SELECT supervisor_user_id FROM house_plumbing_assignments "
+                "WHERE house_id = 'PLUMBING-NOT-READY'"
             ).fetchone()
         self.assertEqual(
-            unactivated_assignment["user_id"], self.plumbing_supervisor_id
+            unactivated_assignment["supervisor_user_id"],
+            self.plumbing_supervisor_id,
         )
 
         status, result, _ = self.call(
@@ -9043,16 +9571,19 @@ class PlumbingCoordinatorTests(HttpBase):
         self.assertEqual(result["supervisor_name"], "Plumbing Supervisor")
         with server.connect_db() as db:
             assignment = db.execute(
-                "SELECT user_id, assigned_by, assigned_at FROM house_role_assignments "
-                "WHERE house_id = 'PLUMBING-ACTIVE' AND role = 'supervisor'"
+                "SELECT supervisor_user_id, assigned_by, assigned_at "
+                "FROM house_plumbing_assignments "
+                "WHERE house_id = 'PLUMBING-ACTIVE'"
             ).fetchone()
             house = db.execute(
                 "SELECT employee_name FROM houses WHERE id = 'PLUMBING-ACTIVE'"
             ).fetchone()
-        self.assertEqual(assignment["user_id"], self.plumbing_supervisor_id)
+        self.assertEqual(
+            assignment["supervisor_user_id"], self.plumbing_supervisor_id
+        )
         self.assertEqual(assignment["assigned_by"], "Plumbing Coordinator")
         self.assertTrue(assignment["assigned_at"])
-        self.assertEqual(house["employee_name"], "Plumbing Supervisor")
+        self.assertEqual(house["employee_name"], "Existing Supervisor")
         status, dashboard, _ = self.call(
             "GET", "/api/dashboard", cookie=self.coordinator_cookie
         )
@@ -9092,6 +9623,75 @@ class PlumbingCoordinatorTests(HttpBase):
         self.assertEqual(completed_house["assignment_assigned_by"], "Plumbing Coordinator")
         self.assertTrue(completed_house["assignment_assigned_at"])
 
+    def test_plumbing_assignment_survives_cathy_house_activation(self):
+        house_id = "PLUMBING-ASSIGNMENT-SURVIVES-ACTIVATION"
+        self.provide(house_id, "D03 C3", "3 Pipe Lane", "Activation Owner")
+        with server.connect_db() as db:
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET ready_for_start = 1, plan_plumber_required = 1
+                WHERE id = ?
+                """,
+                (house_id,),
+            )
+        status, result, _ = self.call(
+            "POST",
+            "/api/plumbing-coordinator/assignment",
+            {
+                "house_id": house_id,
+                "supervisor_user_id": self.plumbing_supervisor_id,
+            },
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+        status, activated, _ = self.activate(
+            {
+                "id": house_id,
+                "postcode": "D03 C3",
+                "owner_name": "Activation Owner",
+                "employee_name": "EWI Supervisor",
+            }
+        )
+        self.assertEqual(status, 201, activated)
+
+        status, dashboard, _ = self.call(
+            "GET",
+            "/api/dashboard",
+            cookie=self.coordinator_cookie,
+        )
+        self.assertEqual(status, 200, dashboard)
+        house = next(
+            house for house in dashboard["plumbing_houses"]
+            if house["id"] == house_id
+        )
+        self.assertEqual(
+            house["supervisor_user_id"], self.plumbing_supervisor_id
+        )
+        self.assertEqual(house["supervisor_name"], "Plumbing Supervisor")
+
+        with server.connect_db() as db:
+            general_assignment = db.execute(
+                """
+                SELECT user_id FROM house_role_assignments
+                WHERE house_id = ? AND role = 'supervisor'
+                """,
+                (house_id,),
+            ).fetchone()
+            plumbing_assignment = db.execute(
+                """
+                SELECT supervisor_user_id FROM house_plumbing_assignments
+                WHERE house_id = ?
+                """,
+                (house_id,),
+            ).fetchone()
+        self.assertEqual(general_assignment["user_id"], self.other_supervisor_id)
+        self.assertEqual(
+            plumbing_assignment["supervisor_user_id"],
+            self.plumbing_supervisor_id,
+        )
+
     def test_plumbing_supervisor_completion_records_who_and_when(self):
         house_id = "PLUMBING-COMPLETION-AUDIT"
         self.provide(house_id, "D02 B2", "2 Pipe Lane", "Audit Owner")
@@ -9107,9 +9707,9 @@ class PlumbingCoordinatorTests(HttpBase):
             server._upsert_house(db, house_id, owner_name="Audit Owner")
             db.execute(
                 """
-                INSERT INTO house_role_assignments
-                    (house_id, role, user_id, assigned_by, assigned_at)
-                VALUES (?, 'supervisor', ?, 'Plumbing Coordinator', ?)
+                INSERT INTO house_plumbing_assignments
+                    (house_id, supervisor_user_id, assigned_by, assigned_at)
+                VALUES (?, ?, 'Plumbing Coordinator', ?)
                 """,
                 (
                     house_id,

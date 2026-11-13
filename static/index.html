@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261112-vent-coordinator-full-checklist">
+    <link rel="stylesheet" href="/app.css?v=20261112-checker-lock-highlight-ewi-button-typography-ewi-dropdown-polish-dark-chevron-repeat-helper-copy-active-audit-dark-side-by-side-dark-state-colors-ready-locked-check">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -165,7 +165,6 @@
         <header class="topbar">
           <a class="surveyor-brand" href="/" aria-label="BRUSNA Material Tracker home"><img src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat"><span class="surveyor-cat-eye surveyor-cat-eye-left" aria-hidden="true"></span><span class="surveyor-cat-eye surveyor-cat-eye-right" aria-hidden="true"></span><span class="surveyor-logo-mouse" aria-hidden="true">🐭</span></a>
           <a class="mobile-brand" href="/" aria-label="BRUSNA Material Tracker home"><img class="brand-logo" src="/brusna-curious-cat-logo.png" alt="BRUSNA — The Retrofit Specialists, with Curious Cat"></a>
-          <button class="button button-secondary overview-shortcut" id="go-overview" type="button" aria-label="Return to Overview">← Overview</button>
           <div class="topbar-spacer"></div>
           <button class="button button-secondary" id="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><span aria-hidden="true">☾</span> Dark mode</button>
           <button class="button button-secondary" id="account-button">Account</button>
@@ -262,6 +261,17 @@
               </div>
               <span class="plumbing-coordinator-greeting-tag"><span aria-hidden="true"></span> WORKSPACE</span>
             </div>
+            <details id="supervisor-team-rosters" class="supervisor-team-rosters">
+              <summary class="supervisor-team-rosters-heading">
+                <span class="supervisor-team-rosters-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M16 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20m15-9.2a3.2 3.2 0 0 1 3 3.2V16m-7.5-9a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0Zm6 1.2a3.2 3.2 0 0 1-2.4 3.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="supervisor-team-rosters-copy"><strong id="supervisor-team-rosters-title">Teamleads &amp; rosters</strong><small>Your reporting Teamleads and their roster members.</small></span>
+                <span class="supervisor-team-rosters-totals" aria-live="polite" aria-atomic="true">
+                  <span><strong id="supervisor-teamlead-count">0</strong> <span id="supervisor-teamlead-label">Teamleads</span></span>
+                  <span><strong id="supervisor-roster-member-count">0</strong> <span id="supervisor-roster-member-label">roster members</span></span>
+                </span>
+              </summary>
+              <div id="supervisor-team-roster-list" class="supervisor-team-roster-list"></div>
+            </details>
             <div class="ventilation-workload-heading">
               <div><p id="supervisor-workload-intro" class="plumbing-workload-intro">Review houses assigned to you, coordinate deliveries, and keep your Teamleads informed.</p></div>
               <div class="ventilation-workload-actions">
@@ -288,17 +298,6 @@
                 <div id="supervisor-team-summary" class="supervisor-assignment-summary-list"></div>
               </article>
             </section>
-            <details id="supervisor-team-rosters" class="supervisor-team-rosters">
-              <summary class="supervisor-team-rosters-heading">
-                <span class="supervisor-team-rosters-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M16 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.4A3.4 3.4 0 0 0 3 18.4V20m15-9.2a3.2 3.2 0 0 1 3 3.2V16m-7.5-9a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0Zm6 1.2a3.2 3.2 0 0 1-2.4 3.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                <span class="supervisor-team-rosters-copy"><strong id="supervisor-team-rosters-title">Teamleads &amp; rosters</strong><small>Your reporting Teamleads and their roster members.</small></span>
-                <span class="supervisor-team-rosters-totals" aria-live="polite" aria-atomic="true">
-                  <span><strong id="supervisor-teamlead-count">0</strong> <span id="supervisor-teamlead-label">Teamleads</span></span>
-                  <span><strong id="supervisor-roster-member-count">0</strong> <span id="supervisor-roster-member-label">roster members</span></span>
-                </span>
-              </summary>
-              <div id="supervisor-team-roster-list" class="supervisor-team-roster-list"></div>
-            </details>
             <div id="supervisor-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter assigned houses">
               <button type="button" class="ventilation-house-filter active" data-supervisor-filter="all" aria-pressed="true">All houses <span id="supervisor-filter-all-count">0</span></button>
               <button type="button" class="ventilation-house-filter" data-supervisor-filter="needs_assignment" aria-pressed="false">Needs delivery details <span id="supervisor-filter-needs-assignment-count">0</span></button>
@@ -759,14 +758,18 @@
           </section>
           <dialog id="assign-supervisor-dialog" class="dialog house-assignment-dialog">
             <form id="activate-assigned-house-form">
-              <div class="dialog-heading"><div><div class="eyebrow">HOUSE ACTIVATION</div><h2>Assign a Supervisor</h2><p id="assign-supervisor-house-label">Choose the Supervisor responsible for this active house.</p></div><button class="icon-button close-dialog" type="button" aria-label="Close dialog">&times;</button></div>
+              <div class="activation-dialog-titlebar">
+                <span class="activation-dialog-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7"></path><path d="M5 9v11h14V9"></path><path d="M9 20v-6h6v6"></path></svg></span>
+                <div class="dialog-heading"><div class="eyebrow">HOUSE ACTIVATION</div><h2>Assign a Supervisor</h2><p id="assign-supervisor-house-label" aria-live="polite">Choose the Supervisor responsible for this active house.</p></div>
+                <button class="icon-button close-dialog" type="button" aria-label="Close dialog">&times;</button>
+              </div>
               <fieldset class="supervisor-picker">
                 <legend>Choose a Supervisor</legend>
-                <p class="supervisor-picker-hint">This person will be responsible for the active house.</p>
+                <p class="supervisor-picker-hint">Only active EWI Supervisors are available for assignment.</p>
                 <div id="activate-house-supervisor-options" class="supervisor-account-list" role="radiogroup" aria-label="Choose a Supervisor"></div>
               </fieldset>
-              <p class="helper-text">The selected Supervisor will be recorded on the house record.</p>
-              <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" id="confirm-house-activation" type="submit" disabled>Assign &amp; activate house</button></div>
+              <p class="activation-save-note">The selected Supervisor will be recorded on the house.</p>
+              <div class="dialog-actions activation-dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" id="confirm-house-activation" type="submit" disabled>Assign &amp; activate house</button></div>
             </form>
           </dialog>
           <section id="house-map-view" class="hidden" aria-labelledby="house-map-title">
@@ -826,7 +829,6 @@
               </div>
             </div>
             <nav class="house-detail-nav" id="house-detail-nav" aria-label="House record sections">
-              <button type="button" data-house-detail-target="house-detail-checklist-card">Pre-start checklist</button>
               <button class="hidden" type="button" data-house-detail-target="house-detail-vent-photos-card">Vent team photos</button>
               <button class="hidden" type="button" data-house-detail-target="house-detail-plumbing-photos-card">Plumbing team photos</button>
               <button type="button" data-house-detail-target="house-detail-stock-card">Materials on site</button>
@@ -851,10 +853,6 @@
                 </div>
               </div>
               <div id="house-detail-work-plan-rows"></div>
-            </article>
-            <article class="card house-detail-checklist-card" id="house-detail-checklist-card">
-              <div class="card-heading"><div><h2>Pre-start checklist</h2><p>Saved preparation checks for this house.</p></div><span id="house-detail-checklist-summary" class="house-detail-checklist-summary"></span></div>
-              <div id="house-detail-checklist" class="house-detail-checklist"></div>
             </article>
             <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">
               <div class="card-heading"><div><h2>Materials used on this finished house</h2><p>Recorded usage plus the remaining on-site quantities automatically closed out when the house was finished.</p></div></div>
@@ -1347,6 +1345,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261112-vent-coordinator-full-checklist" defer></script>
+    <script src="/app.js?v=20261112-active-prestart-work-plan-survey-question-rows-supervisor-ewi-action-icons-delivery-reassignment-no-assignment-option-active-audit-generic-ewi-status-short-headings-linked-checklist-state-dark-ux-lock-clarity-row-colors" defer></script>
   </body>
 </html>
