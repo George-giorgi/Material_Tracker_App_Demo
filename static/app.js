@@ -418,6 +418,7 @@ let movementSearchRequest = 0;
 let ventilationHouseFilter = "all";
 let plumbingHouseFilter = "all";
 let ventilationCoordinatorHouseFilter = "all";
+let ventilationCoordinatorWorkTypeFilter = "all";
 let plumbingSupervisorHouseFilter = "all";
 let supervisorHouseFilter = "all";
 let teamleadEwiHouseFilter = "all";
@@ -1101,6 +1102,7 @@ function showWorkspace(user) {
     !isSupervisor || isPlumbingSupervisor,
   );
   $("#teamlead-ewi-workload").classList.toggle("hidden", !isEwiTeamlead);
+  $("#teamlead-insulation-workload").classList.toggle("hidden", !isTeamlead);
   $("#plumbing-coordinator-workload").classList.toggle("hidden", !isPlumbingCoordinator);
   $("#ventilation-coordinator-workload").classList.toggle(
     "hidden",
@@ -1238,25 +1240,38 @@ function showWorkspace(user) {
     plumbingHouseFilter = "all";
     $("#plumbing-house-search").value = "";
   } else if (isVentilationCoordinator) {
-    $("#stat-provided-label").textContent = "Vent houses";
-    $("#stat-houses-label").textContent = "Assigned";
+    $("#stat-provided-label").textContent = "Ready houses";
+    $("#stat-houses-label").textContent = "Assigned work";
     $("#stat-ready-label").textContent = "Needs assignment";
     $("#stat-closed-label").textContent = "Completed";
     $("#stat-closed").parentElement.classList.remove("hidden");
     $("#stat-not-started").parentElement.classList.add("hidden");
     $("#stat-ready").parentElement.classList.remove("hidden");
-    $("#overview-eyebrow").textContent = "VENTILATION WORK ALLOCATION";
-    $("#overview-title").textContent = "My Vent dashboard";
+    $("#overview-eyebrow").textContent = "ATTIC, CAVITY & VENT WORK";
+    $("#overview-title").textContent = "My Coordinator dashboard";
     $("#overview-subtitle").textContent =
-      "Assign required Vent work to the Ventilation team.";
+      "Assign surveyed insulation and Vent work to the appropriate Teamleads.";
     $("#overview-summary-title").textContent = `Welcome, ${user.display_name}`;
     $("#overview-summary-description").textContent =
-      "Choose the Ventilation Teamlead for each house requiring Vent work.";
+      "Manage separate Attic, Cavity, and Vent Teamlead assignments for each Ready for Start house.";
     const hour = new Date().getHours();
     const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
     $("#ventilation-coordinator-greeting-title").textContent =
       `${greeting}, ${user.display_name}`;
+    $("#ventilation-coordinator-workload").setAttribute(
+      "aria-label",
+      "Attic, Cavity and Vent work",
+    );
+    $("#ventilation-coordinator-house-search").setAttribute(
+      "placeholder",
+      "Search house, surveyor, or Teamlead",
+    );
+    $("#ventilation-coordinator-house-search").setAttribute(
+      "aria-label",
+      "Search houses, surveyors, or Teamleads",
+    );
     ventilationCoordinatorHouseFilter = "all";
+    ventilationCoordinatorWorkTypeFilter = "all";
     $("#ventilation-coordinator-house-search").value = "";
   } else if (isVentilation) {
     $("#stat-provided-label").textContent = "Assigned houses";
@@ -2447,8 +2462,42 @@ function renderOverview() {
   }
   if (isVentilationCoordinator) {
     const teamleads = data.ventilation_teamleads || [];
-    const isComplete = (house) => Boolean(house.done_at);
-    const isAssigned = (house) => Boolean(house.assigned_teamlead_user_id);
+    const insulationTeamleads = data.insulation_teamleads || [];
+    const atticTeamleads = insulationTeamleads.filter((teamlead) =>
+      String(teamlead.team_name || "").toLocaleLowerCase().includes("attic"),
+    );
+    const cavityTeamleads = insulationTeamleads.filter((teamlead) =>
+      String(teamlead.team_name || "").toLocaleLowerCase().includes("cavity"),
+    );
+    const jobsFor = (house) => [
+      ...(Number(house.plan_vent_required) === 1
+        ? [{
+            workType: "vent",
+            assigned: house.assigned_teamlead_user_id,
+            completed: house.done_at,
+          }]
+        : []),
+      ...(house.attic_required
+        ? [{
+            workType: "attic",
+            assigned: house.attic_assignment_teamlead_user_id,
+            completed: house.attic_assignment_completed_at,
+          }]
+        : []),
+      ...(house.cavity_required
+        ? [{
+            workType: "cavity",
+            assigned: house.cavity_assignment_teamlead_user_id,
+            completed: house.cavity_assignment_completed_at,
+          }]
+        : []),
+    ];
+    const isComplete = (house) => {
+      const jobs = jobsFor(house);
+      return jobs.length > 0 && jobs.every((job) => job.completed);
+    };
+    const isAssigned = (house) =>
+      jobsFor(house).every((job) => job.assigned);
     const completedCount = ventilationCoordinatorHouses.filter(isComplete).length;
     const assignedCount = ventilationCoordinatorHouses.filter(
       (house) => !isComplete(house) && isAssigned(house),
@@ -2458,12 +2507,73 @@ function renderOverview() {
     const search = $("#ventilation-coordinator-house-search")
       .value.trim()
       .toLocaleLowerCase();
-    $("#vent-coordinator-filter-all-count").textContent =
-      ventilationCoordinatorHouses.length;
-    $("#vent-coordinator-filter-needs-assignment-count").textContent =
-      needsAssignmentCount;
-    $("#vent-coordinator-filter-assigned-count").textContent = assignedCount;
-    $("#vent-coordinator-filter-completed-count").textContent = completedCount;
+    const jobsForWorkType = (house, workType) =>
+      workType === "all"
+        ? jobsFor(house)
+        : jobsFor(house).filter((job) => job.workType === workType);
+    const matchesAssignmentStatus = (house, status, workType) => {
+      if (status === "all") return true;
+      const jobs = jobsForWorkType(house, workType);
+      if (!jobs.length) return false;
+      if (workType === "all") {
+        return (
+          (status === "needs_assignment" &&
+            !isComplete(house) &&
+            !isAssigned(house)) ||
+          (status === "assigned" &&
+            !isComplete(house) &&
+            isAssigned(house)) ||
+          (status === "completed" && isComplete(house))
+        );
+      }
+      if (status === "needs_assignment") {
+        return jobs.some((job) => !job.assigned && !job.completed);
+      }
+      if (status === "assigned") {
+        return jobs.some((job) => job.assigned && !job.completed);
+      }
+      if (status === "completed") {
+        return jobs.some((job) => job.completed);
+      }
+      return false;
+    };
+    const countForFilters = (workType, status) =>
+      ventilationCoordinatorHouses.filter(
+        (house) =>
+          jobsForWorkType(house, workType).length > 0 &&
+          matchesAssignmentStatus(house, status, workType),
+      ).length;
+    [
+      ["all", "vent-coordinator-work-type-all-count"],
+      ["attic", "vent-coordinator-work-type-attic-count"],
+      ["cavity", "vent-coordinator-work-type-cavity-count"],
+      ["vent", "vent-coordinator-work-type-vent-count"],
+    ].forEach(([workType, countId]) => {
+      $(`#${countId}`).textContent = countForFilters(
+        workType,
+        ventilationCoordinatorHouseFilter,
+      );
+    });
+    [
+      ["all", "vent-coordinator-filter-all-count"],
+      ["needs_assignment", "vent-coordinator-filter-needs-assignment-count"],
+      ["assigned", "vent-coordinator-filter-assigned-count"],
+      ["completed", "vent-coordinator-filter-completed-count"],
+    ].forEach(([status, countId]) => {
+      $(`#${countId}`).textContent = countForFilters(
+        ventilationCoordinatorWorkTypeFilter,
+        status,
+      );
+    });
+    $$("#ventilation-coordinator-work-type-filters [data-vent-coordinator-work-type]").forEach(
+      (button) => {
+        const active =
+          button.dataset.ventCoordinatorWorkType ===
+          ventilationCoordinatorWorkTypeFilter;
+        button.setAttribute("aria-pressed", String(active));
+        button.classList.toggle("active", active);
+      },
+    );
     $$("#ventilation-coordinator-house-filters [data-vent-coordinator-filter]").forEach(
       (button) => {
         const active =
@@ -2474,15 +2584,11 @@ function renderOverview() {
       },
     );
     const filteredHouses = ventilationCoordinatorHouses.filter((house) =>
-      (
-        ventilationCoordinatorHouseFilter === "all" ||
-        (ventilationCoordinatorHouseFilter === "needs_assignment" &&
-          !isComplete(house) &&
-          !isAssigned(house)) ||
-        (ventilationCoordinatorHouseFilter === "assigned" &&
-          !isComplete(house) &&
-          isAssigned(house)) ||
-        (ventilationCoordinatorHouseFilter === "completed" && isComplete(house))
+      jobsForWorkType(house, ventilationCoordinatorWorkTypeFilter).length > 0 &&
+      matchesAssignmentStatus(
+        house,
+        ventilationCoordinatorHouseFilter,
+        ventilationCoordinatorWorkTypeFilter,
       ) &&
       [
           house.id,
@@ -2497,6 +2603,10 @@ function renderOverview() {
           house.done_by,
           house.assignment_assigned_by,
           house.assignment_assigned_at,
+          house.attic_assignment_teamlead_name,
+          house.cavity_assignment_teamlead_name,
+          house.attic_survey_quantity,
+          house.cavity_survey_quantity,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLocaleLowerCase().includes(search)),
@@ -2511,17 +2621,74 @@ function renderOverview() {
     );
     $("#ventilation-coordinator-house-empty strong").textContent =
       ventilationCoordinatorHouses.length
-        ? "No matching Vent work"
-        : "No Vent work to assign";
+        ? "No matching work"
+        : "No qualifying work to assign";
     $("#ventilation-coordinator-house-empty p").textContent =
       ventilationCoordinatorHouses.length
-        ? "Try another house ID, owner, address, or team."
-        : "Houses marked as requiring Vent work will appear here.";
+        ? "Try another work type, assignment status, or search term."
+        : "Ready houses with a completed survey and required insulation or Vent work will appear here.";
     $("#ventilation-coordinator-house-list").innerHTML = filteredHouses
       .map((house) => {
         const address = [house.address, house.postcode]
           .filter(Boolean)
           .join(" · ");
+        const insulationJobs = ["attic", "cavity"]
+          .filter((workType) => house[`${workType}_required`])
+          .map((workType) => {
+            const label = workType === "attic" ? "Attic insulation" : "Cavity wall insulation";
+            const prefix = `${workType}_assignment`;
+            const assignedId = house[`${prefix}_teamlead_user_id`];
+            const completedAt = house[`${prefix}_completed_at`];
+            const assignmentStatus = completedAt
+              ? "Completed"
+              : assignedId
+                ? "Assigned"
+                : "Needs assignment";
+            const assignmentStatusClass = completedAt
+              ? "is-complete"
+              : assignedId
+                ? "is-assigned"
+                : "is-needed";
+            const workTeamleads =
+              workType === "attic" ? atticTeamleads : cavityTeamleads;
+            const workTeamLabel =
+              workType === "attic" ? "Attic" : "Cavity";
+            const workTeamPrompt =
+              workType === "attic" ? "an Attic" : "a Cavity";
+            const insulationTeamleadOptions = workTeamleads
+              .map((teamlead) => {
+                const selected =
+                  String(teamlead.id) === String(assignedId || "");
+                const initials = teamlead.name
+                  .split(/\s+/)
+                  .map((part) => part[0] || "")
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase();
+                return `<label class="plumbing-supervisor-option${selected ? " selected" : ""}">
+                  <input type="radio" name="teamlead_user_id" value="${escapeHtml(teamlead.id)}" aria-label="${escapeHtml(teamlead.name)} ${workTeamLabel} Teamlead"${selected ? " checked" : ""} required>
+                  <span class="supervisor-account-avatar" aria-hidden="true">${escapeHtml(initials || workTeamLabel[0])}</span>
+                  <span class="supervisor-account-identity"><strong>${escapeHtml(teamlead.name)}</strong><small>${workTeamLabel} Teamlead</small></span>
+                  <span class="plumbing-supervisor-check" aria-hidden="true">${selected ? "Selected" : "Choose"}</span>
+                </label>`;
+              })
+              .join("");
+            const insulationAssignment = workTeamleads.length
+              ? `<form class="coordinator-compact-teamlead-options" data-insulation-assignment data-house-id="${escapeHtml(house.id)}" data-work-type="${workType}" data-assigned-teamlead-user-id="${escapeHtml(assignedId || "")}">
+                  <fieldset class="plumbing-supervisor-picker insulation-teamlead-picker">
+                    <legend>Choose ${workTeamPrompt} Teamlead</legend>
+                    <div class="plumbing-supervisor-options" role="radiogroup" aria-label="Choose ${workTeamPrompt} Teamlead for ${escapeHtml(house.id)}">${insulationTeamleadOptions}</div>
+                  </fieldset>
+                  <button class="button button-primary" type="submit" disabled>${assignedId ? "Change Teamlead" : `Assign ${workTeamLabel} Teamlead`}</button>
+                </form>`
+              : `<p>No active ${workTeamLabel} Teamleads are available.</p>`;
+            return `<div class="insulation-job-card${completedAt ? " is-complete" : ""}">
+              <div><strong>${label}</strong><span class="coordinator-work-status ${assignmentStatusClass}">${assignmentStatus}</span></div>
+              ${assignedId ? `<p>Assigned to ${escapeHtml(house[`${prefix}_teamlead_name`] || "Teamlead not recorded")} · ${escapeHtml(house[`${prefix}_assigned_at`] ? formatAuditDateTime(house[`${prefix}_assigned_at`]) : "assignment time not recorded")}</p>` : ""}
+              ${completedAt ? `<p class="insulation-job-completion">Completed by ${escapeHtml(house[`${prefix}_completed_by`] || "Not recorded")} · ${escapeHtml(formatAuditDateTime(completedAt))}</p>` : insulationAssignment}
+            </div>`;
+          })
+          .join("");
         const options = teamleads.length
           ? teamleads
               .map((teamlead) => {
@@ -2544,8 +2711,27 @@ function renderOverview() {
               })
               .join("")
           : `<p class="plumbing-supervisor-empty">No active Ventilation Teamleads are available. Ask an administrator to check the Ventilation team accounts.</p>`;
-        const assigned = Boolean(house.assigned_teamlead_user_id);
-        const complete = Boolean(house.done_at);
+        const ventRequired = Number(house.plan_vent_required) === 1;
+        const ventAssigned = Boolean(house.assigned_teamlead_user_id);
+        const ventComplete = Boolean(house.done_at);
+        const assigned = isAssigned(house);
+        const complete = isComplete(house);
+        const partiallyAssigned =
+          !complete && jobsFor(house).some((job) => job.assigned) && !assigned;
+        const ventAssignment = !ventRequired
+          ? ""
+          : ventComplete
+            ? `<div class="plumbing-completion-detail"><span class="coordinator-work-status is-complete">Completed</span><strong>Vent work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.done_at ? ` datetime="${escapeHtml(house.done_at)}"` : ""}>${escapeHtml(house.done_at ? formatAuditDateTime(house.done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.done_at))}</b></span></div></div>`
+            : ventAssigned
+              ? `<div class="plumbing-assigned-supervisor"><span class="plumbing-assigned-supervisor-icon" aria-hidden="true">✓</span><div><span class="coordinator-work-status is-assigned">Assigned</span><span>Assigned to</span><strong>${escapeHtml(house.assigned_teamlead_name || "Not recorded")}</strong><span>Position: Ventilation Teamlead</span><span>Assigned on ${escapeHtml(house.assignment_assigned_at ? formatAuditDateTime(house.assignment_assigned_at) : "Not recorded")}</span></div></div>`
+              : `<form class="insulation-job-card ventilation-team-assignment-card coordinator-compact-teamlead-options" data-ventilation-assignment data-house-id="${escapeHtml(house.id)}">
+                <div><strong>Ventilation work</strong><span class="coordinator-work-status is-needed">Needs assignment</span></div>
+                <fieldset class="plumbing-supervisor-picker insulation-teamlead-picker">
+                  <legend>Choose a Ventilation Teamlead</legend>
+                  <div class="plumbing-supervisor-options" role="radiogroup" aria-label="Choose a Ventilation Teamlead">${options}</div>
+                </fieldset>
+                <button class="button button-primary" type="submit" disabled>${teamleads.length ? "Assign Ventilation Team" : "No teams available"}</button>
+              </form>`;
         return `
           <article class="card plumbing-house-card ventilation-house-card${complete ? " is-complete" : ""}">
             <div class="ventilation-house-top">
@@ -2554,28 +2740,16 @@ function renderOverview() {
                 <h3>${houseCardTitle(house, escapeHtml(house.id))}</h3>
                 <p>${escapeHtml(house.owner_name || address || "House details unavailable")}</p>
                 ${house.owner_name && address ? `<p>${escapeHtml(address)}</p>` : ""}
+                <button class="button button-secondary plumbing-house-detail-button" type="button" data-house-id="${escapeHtml(house.id)}">View house details</button>
               </div>
-              <span class="plumbing-job-status ${complete ? "is-complete" : assigned ? "is-assigned" : "is-needed"}">${complete ? "Completed" : assigned ? "Assigned" : "Needs assignment"}</span>
+              <span class="plumbing-job-status ${complete ? "is-complete" : assigned ? "is-assigned" : "is-needed"}">${complete ? "All work complete" : partiallyAssigned ? "Partially assigned" : assigned ? "Fully assigned" : "Needs assignment"}</span>
             </div>
             <div class="plumbing-work-detail">
               <div class="plumbing-surveyor-detail"><span class="plumbing-surveyor-avatar" aria-hidden="true">${escapeHtml((house.surveyor_name || "?").split(/\s+/).map((part) => part[0] || "").slice(0, 2).join("").toUpperCase())}</span><span class="plumbing-surveyor-label">Requested by surveyor</span><strong>${escapeHtml(house.surveyor_name || "Surveyor not recorded")}</strong></div>
-              <strong>Required Vent work</strong>
-              <p>${escapeHtml(house.notes || "Vent work is required. No extra survey notes were added.")}</p>
-              <button class="button button-secondary plumbing-house-detail-button" type="button" data-house-id="${escapeHtml(house.id)}">View house details</button>
+              ${ventRequired ? `<div class="plumbing-survey-notes"><strong>Survey details</strong><p>${escapeHtml(house.notes || "Vent work is required. No extra survey notes were added.")}</p></div>` : ""}
+              ${house.attic_required || house.cavity_required ? `<div class="insulation-required-summary">${house.attic_required ? `<span>Attic insulation · ${escapeHtml(house.attic_survey_quantity)} m²</span>` : ""}${house.cavity_required ? `<span>Cavity wall insulation · ${escapeHtml(house.cavity_survey_quantity)} m²</span>` : ""}</div>` : ""}
             </div>
-            ${complete
-              ? `<div class="plumbing-completion-detail"><strong>Vent work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.done_at ? ` datetime="${escapeHtml(house.done_at)}"` : ""}>${escapeHtml(house.done_at ? formatAuditDateTime(house.done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.done_at))}</b></span></div></div>`
-              : assigned
-                ? `<div class="plumbing-assigned-supervisor"><span class="plumbing-assigned-supervisor-icon" aria-hidden="true">✓</span><div><span>Assigned to</span><strong>${escapeHtml(house.assigned_teamlead_name || "Not recorded")}</strong><span>Position: Ventilation Teamlead</span><span>Assigned on ${escapeHtml(house.assignment_assigned_at ? formatAuditDateTime(house.assignment_assigned_at) : "Not recorded")}</span></div></div>`
-                : `<form class="plumbing-house-assignment" data-ventilation-assignment data-house-id="${escapeHtml(house.id)}">
-              <fieldset class="plumbing-supervisor-picker">
-                <legend>Choose a Ventilation Team</legend>
-                <div class="plumbing-supervisor-options" role="radiogroup" aria-label="Choose a Ventilation Team">
-                  ${options}
-                </div>
-              </fieldset>
-              <button class="button button-primary" type="submit" disabled>${teamleads.length ? "Select a team" : "No teams available"}</button>
-            </form>`}
+            ${insulationJobs || ventAssignment ? `<div class="coordinator-job-assignments">${insulationJobs}${ventAssignment}</div>` : ""}
           </article>`;
       })
       .join("");
@@ -3552,6 +3726,24 @@ function renderTeamleadEwiWork() {
       : "Your assigned EWI houses will appear here."
     : "Houses assigned to you by your Supervisor will appear here.";
 }
+function renderTeamleadInsulationWork() {
+  const isTeamlead = hasAccessProfile(state.user, "teamlead");
+  const houses = state.dashboard?.teamlead_insulation_houses || [];
+  $("#teamlead-insulation-workload").classList.toggle("hidden", !isTeamlead);
+  $("#teamlead-insulation-work-list").innerHTML = houses
+    .map((house) => {
+      const completed = Boolean(house.completed_at);
+      const label = house.work_type === "attic" ? "Attic insulation" : "Cavity wall insulation";
+      const address = [house.address, house.postcode].filter(Boolean).join(" · ");
+      return `<article class="teamlead-ewi-house-card${completed ? " is-complete" : ""}">
+        <div class="teamlead-ewi-house-identity"><span class="teamlead-ewi-house-icon" aria-hidden="true">⌂</span><div><h3>${escapeHtml(houseCardTitle(house, house.id))}</h3><p>${escapeHtml(address || house.owner_name || "Address not provided")}</p></div></div>
+        <div class="teamlead-ewi-house-meta"><span class="teamlead-ewi-status${completed ? " is-complete" : ""}">${label}${completed ? " complete" : " assigned"}</span><small>Survey quantity: ${escapeHtml(house.survey_quantity || "Not recorded")}</small><small>Assigned by ${escapeHtml(house.assigned_by || "Vent Coordinator")}${house.assigned_at ? ` · ${escapeHtml(formatAuditDateTime(house.assigned_at))}` : ""}</small>${completed ? `<small>Completed by ${escapeHtml(house.completed_by || "Not recorded")} · ${escapeHtml(formatAuditDateTime(house.completed_at))}</small>` : ""}</div>
+        ${completed ? '<span class="teamlead-ewi-complete-mark" aria-label="Completed">✓</span>' : `<button class="button button-primary teamlead-ewi-complete-button" type="button" data-teamlead-insulation-complete="${escapeHtml(house.id)}" data-work-type="${escapeHtml(house.work_type)}">Mark ${house.work_type === "attic" ? "Attic" : "Cavity"} work complete</button>`}
+      </article>`;
+    })
+    .join("");
+  $("#teamlead-insulation-work-empty").classList.toggle("hidden", houses.length > 0);
+}
 function renderPlumbingSupervisorCrew() {
   const rosters = state.dashboard?.plumbing_crew || [];
   const memberCount = rosters.reduce(
@@ -4153,6 +4345,63 @@ async function completeTeamleadEwiWork(button) {
     button.disabled = false;
     button.removeAttribute("aria-busy");
     showToast(error.message, true);
+  }
+}
+async function submitInsulationAssignment(event) {
+  const form = event.target.closest("[data-insulation-assignment]");
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await request(
+      "/api/ventilation-coordinator/insulation-assignment",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          house_id: form.dataset.houseId,
+          work_type: form.dataset.workType,
+          teamlead_user_id: form.elements.teamlead_user_id.value,
+        }),
+      },
+    );
+    state.dashboard = await request("/api/dashboard");
+    renderOverview();
+    showToast(
+      `${result.work_type === "attic" ? "Attic" : "Cavity"} work for ${result.house_id} assigned to ${result.teamlead_name}.`,
+    );
+  } catch (error) {
+    button.disabled = false;
+    showToast(`Could not assign insulation work: ${error.message}`, true);
+  }
+}
+async function completeTeamleadInsulationWork(button) {
+  const houseId = button.dataset.teamleadInsulationComplete;
+  const workType = button.dataset.workType;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const result = await request("/api/teamlead/insulation-work/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ house_id: houseId, work_type: workType }),
+    });
+    const house = (state.dashboard?.teamlead_insulation_houses || []).find(
+      (item) => item.id === result.house_id && item.work_type === result.work_type,
+    );
+    if (house) {
+      house.completed_by = result.completed_by;
+      house.completed_at = result.completed_at;
+    }
+    renderTeamleadInsulationWork();
+    showToast(
+      `${workType === "attic" ? "Attic" : "Cavity"} work for ${result.house_id} marked complete.`,
+    );
+  } catch (error) {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    showToast(`Could not complete insulation work: ${error.message}`, true);
   }
 }
 async function updatePlumbingCompletion(button) {
@@ -8197,15 +8446,33 @@ async function submitHouseChecklist(event) {
 function renderHouseDetail(result) {
   const { house, movements } = result;
   const photoViewOnly = house.photo_view_only === true;
+  const coordinatorViewOnly = house.coordinator_view_only === true;
   $("#house-detail-nav").classList.toggle("hidden", photoViewOnly);
+  $$("#house-detail-nav [data-house-detail-target]").forEach((button) => {
+    const target = button.dataset.houseDetailTarget;
+    button.classList.toggle(
+      "hidden",
+      (photoViewOnly && !target.includes("photos")) ||
+        (coordinatorViewOnly &&
+          !["house-detail-survey-info", "house-detail-vent-photos-card"].includes(
+            target,
+          )),
+    );
+  });
   $("#house-detail-facts").classList.toggle("hidden", photoViewOnly);
   [
     "#house-detail-stock-card",
     "#house-detail-records-card",
     "#house-history-card",
+    "#house-detail-work-plan",
+    "#house-detail-usage-card",
   ].forEach((selector) => {
-    $(selector).classList.toggle("hidden", photoViewOnly);
+    $(selector).classList.toggle(
+      "hidden",
+      photoViewOnly || coordinatorViewOnly,
+    );
   });
+  $("#house-detail-survey-info").classList.toggle("hidden", !coordinatorViewOnly);
   const statusLabel = {
     not_started: "Not started",
     ready: "Ready for start",
@@ -8243,7 +8510,9 @@ function renderHouseDetail(result) {
       : `<div class="empty-state"><strong>No Vent team photos uploaded yet</strong><p>Photos attached to this house will appear here.</p></div>`
     : "";
   $("#house-detail-vent-photo-upload").innerHTML =
-    canViewVentPhotos && isVentPhotoUploader(state.user)
+    canViewVentPhotos &&
+    !coordinatorViewOnly &&
+    isVentPhotoUploader(state.user)
       ? `${ventHousePhotoUpload(house.id)}${ventHousePhotoUploadStatus(house.id)}`
       : "";
   $("#house-detail-plumbing-photos-card").classList.toggle(
@@ -8301,6 +8570,36 @@ function renderHouseDetail(result) {
       },
     )
     .join("");
+  const surveyData = house.survey_data || {};
+  const surveyRows = Object.entries(surveyData)
+    .filter(([, value]) =>
+      value !== null &&
+      value !== undefined &&
+      String(typeof value === "object" ? JSON.stringify(value) : value).trim(),
+    )
+    .map(([key, value]) => {
+      const label = key
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      const displayValue = typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+      return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(displayValue)}</dd></div>`;
+    });
+  const requiredInsulation = [
+    house.attic_required
+      ? `<li>Attic insulation · Survey quantity ${escapeHtml(house.attic_survey_quantity)} m²</li>`
+      : "",
+    house.cavity_required
+      ? `<li>Cavity wall insulation · Survey quantity ${escapeHtml(house.cavity_survey_quantity)} m²</li>`
+      : "",
+  ].filter(Boolean);
+  const surveyMeasures = (house.seai_details?.Measures || [])
+    .filter((measure) => /attic.*insulation|cavity wall.*insulation/i.test(String(measure.Name || "")))
+    .map((measure) => `<li>${escapeHtml(measure.Name)} · Survey quantity ${escapeHtml(measure["Survey Quantity"] ?? "Not recorded")}</li>`);
+  $("#house-detail-survey-content").innerHTML = `
+    <section><h3>Saved survey</h3>${surveyRows.length ? `<dl class="house-detail-survey-list">${surveyRows.join("")}</dl>` : "<p>No saved survey measurements are available.</p>"}${house.survey_notes ? `<p><strong>Survey notes</strong><br>${escapeHtml(house.survey_notes)}</p>` : ""}${house.survey_updated_by ? `<p>Survey recorded by ${escapeHtml(house.survey_updated_by)}${house.survey_updated_at ? ` · ${escapeHtml(formatAuditDateTime(house.survey_updated_at))}` : ""}</p>` : ""}</section>
+    <section><h3>Required insulation</h3>${requiredInsulation.length ? `<ul>${requiredInsulation.join("")}</ul>` : "<p>No Attic or Cavity insulation requirement identified.</p>"}${surveyMeasures.length ? `<h3>SEAI measure details</h3><ul>${surveyMeasures.join("")}</ul>` : ""}</section>`;
 
   const savedChecklistItems = houseWorkPlanChecklistItems(house);
   const toDetailItem = ({ item, label, required, notes, doneBy, doneAt, doneByUserId }) => ({
@@ -8391,7 +8690,10 @@ function renderHouseDetail(result) {
   const notRequiredWorkPlanRows = allWorkPlanRows.filter(
     (item) => !item.applicable && item.value !== "Not specified",
   );
-  $("#house-detail-work-plan").classList.toggle("hidden", !allWorkPlanRows.length);
+  $("#house-detail-work-plan").classList.toggle(
+    "hidden",
+    coordinatorViewOnly || !allWorkPlanRows.length,
+  );
   $("#house-detail-work-plan-rows").innerHTML = `
     <div class="work-plan-detail-groups">
       ${renderWorkPlanRequirementGroups(
@@ -8461,7 +8763,7 @@ function renderHouseDetail(result) {
   );
   $("#house-detail-usage-card").classList.toggle(
     "hidden",
-    !house.is_finished,
+    coordinatorViewOnly || !house.is_finished,
   );
   $("#house-detail-usage").innerHTML = usedMaterials.length
     ? usedMaterials
@@ -9513,6 +9815,7 @@ function fillSeaiHouse(h) {
 function renderAll(preserveMovementLines = false) {
   renderOverview();
   renderTeamleadEwiWork();
+  renderTeamleadInsulationWork();
   renderInventory();
   if (hasAccessProfile(state.user, "supervisor")) {
     renderSupervisorHouses();
@@ -12331,6 +12634,12 @@ function bindEvents() {
       void completeTeamleadEwiWork(button);
     }
   });
+  $("#teamlead-insulation-work-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-teamlead-insulation-complete]");
+    if (button && !button.disabled) {
+      void completeTeamleadInsulationWork(button);
+    }
+  });
   $("#teamlead-ewi-house-filters").addEventListener("click", (event) => {
     const button = event.target.closest("[data-teamlead-ewi-filter]");
     if (!button) return;
@@ -12492,6 +12801,18 @@ function bindEvents() {
     plumbingHouseFilter = button.dataset.plumbingFilter;
     renderOverview();
   });
+  $("#ventilation-coordinator-work-type-filters").addEventListener(
+    "click",
+    (event) => {
+      const button = event.target.closest(
+        "[data-vent-coordinator-work-type]",
+      );
+      if (!button) return;
+      ventilationCoordinatorWorkTypeFilter =
+        button.dataset.ventCoordinatorWorkType;
+      renderOverview();
+    },
+  );
   $("#ventilation-coordinator-house-filters").addEventListener(
     "click",
     (event) => {
@@ -12579,9 +12900,49 @@ function bindEvents() {
     submitVentilationAssignment,
   );
   $("#ventilation-coordinator-house-list").addEventListener(
+    "submit",
+    submitInsulationAssignment,
+  );
+  $("#ventilation-coordinator-house-list").addEventListener(
+    "change",
+    (event) => {
+      const select = event.target.closest(
+        "[data-insulation-assignment] select[name='teamlead_user_id']",
+      );
+      if (!select) return;
+      const button = select.form.querySelector('button[type="submit"]');
+      button.disabled = !select.value;
+    },
+  );
+  $("#ventilation-coordinator-house-list").addEventListener(
     "change",
     (event) => {
       if (!event.target.matches('input[name="teamlead_user_id"]')) return;
+      const insulationForm = event.target.closest("[data-insulation-assignment]");
+      if (insulationForm) {
+        insulationForm
+          .querySelectorAll(".plumbing-supervisor-option")
+          .forEach((option) => {
+            const selected = option.querySelector(
+              'input[name="teamlead_user_id"]',
+            ).checked;
+            option.classList.toggle("selected", selected);
+            option.querySelector(".plumbing-supervisor-check").textContent =
+              selected ? "Selected" : "Choose";
+          });
+        const selectedLead = insulationForm.querySelector(
+          'input[name="teamlead_user_id"]:checked',
+        );
+        const button = insulationForm.querySelector('button[type="submit"]');
+        button.disabled =
+          !selectedLead ||
+          selectedLead.value ===
+            insulationForm.dataset.assignedTeamleadUserId;
+        button.textContent = insulationForm.dataset.assignedTeamleadUserId
+          ? "Change Teamlead"
+          : `Assign ${insulationForm.dataset.workType === "attic" ? "Attic" : "Cavity"} Teamlead`;
+        return;
+      }
       const form = event.target.closest("[data-ventilation-assignment]");
       if (!form) return;
       form.querySelectorAll(".plumbing-supervisor-option").forEach((option) => {
@@ -12596,9 +12957,7 @@ function bindEvents() {
       button.disabled = !form.querySelector(
         'input[name="teamlead_user_id"]:checked',
       );
-      button.textContent = button.disabled
-        ? "Select a team"
-        : "Assign selected Vent team";
+      button.textContent = "Assign Ventilation Team";
     },
   );
   $("#plumbing-house-list").addEventListener("change", (event) => {

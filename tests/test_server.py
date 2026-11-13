@@ -347,6 +347,47 @@ class TrackerTests(unittest.TestCase):
                 )
                 db.execute(
                     """
+                    INSERT INTO provided_houses (id, owner_name, ready_for_start)
+                    VALUES ('VENT-COORDINATOR-3', 'Unsurveyed House', 1)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO house_surveys
+                        (house_id, data, notes, updated_by, updated_at)
+                    VALUES ('VENT-COORDINATOR-1', '{"perimeter_m": 120}',
+                            'Survey notes', 'Vent Role Admin',
+                            '2026-11-05T09:30:00')
+                    """
+                )
+                db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS seai_applications (
+                        application_id TEXT PRIMARY KEY,
+                        detail_data_json TEXT NOT NULL
+                    )
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO seai_applications (application_id, detail_data_json)
+                    VALUES (
+                        'VENT-COORDINATOR-1',
+                        '{"Measures":[{"Name":"Attic (Loft) Insulation","Survey Quantity":"120"},{"Name":"Cavity Wall Insulation","Survey Quantity":"85"}]}'
+                    )
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO seai_applications (application_id, detail_data_json)
+                    VALUES (
+                        'VENT-COORDINATOR-3',
+                        '{"Measures":[{"Name":"Attic (Loft) Insulation","Survey Quantity":"45"}]}'
+                    )
+                    """
+                )
+                db.execute(
+                    """
                     INSERT INTO house_role_assignments
                         (house_id, role, user_id, assigned_by, assigned_at)
                     SELECT 'VENT-COORDINATOR-1', 'surveyor', id, 'Admin',
@@ -363,6 +404,36 @@ class TrackerTests(unittest.TestCase):
                     "display_name": "Yvonne O’Reagan",
                     "pin": "123456",
                     "role": "ventilation_coordinator",
+                    "department_ids": [vent_department_id],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, cavity_teamlead, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "cavity-teamlead",
+                    "display_name": "Cavity Teamlead",
+                    "pin": "345678",
+                    "role": "teamlead",
+                    "team_name": "Cavity",
+                    "department_ids": [vent_department_id],
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, attic_teamlead, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "attic-teamlead",
+                    "display_name": "Attic Teamlead",
+                    "pin": "456789",
+                    "role": "teamlead",
+                    "team_name": "Attic",
                     "department_ids": [vent_department_id],
                 },
                 admin_cookie,
@@ -406,10 +477,104 @@ class TrackerTests(unittest.TestCase):
                 dashboard["ventilation_coordinator_houses"][0]["surveyor_name"],
                 "Vent Role Admin",
             )
-            self.assertEqual(
-                dashboard["ventilation_teamleads"][0]["id"],
+            self.assertIn(
                 teamlead["user"]["id"],
+                [lead["id"] for lead in dashboard["ventilation_teamleads"]],
             )
+            ready_house = dashboard["ventilation_coordinator_houses"][0]
+            self.assertTrue(ready_house["attic_required"])
+            self.assertEqual(ready_house["attic_survey_quantity"], "120")
+            self.assertTrue(ready_house["cavity_required"])
+            self.assertEqual(ready_house["cavity_survey_quantity"], "85")
+            self.assertEqual(len(dashboard["insulation_teamleads"]), 3)
+            for work_type, wrong_lead in (
+                ("attic", cavity_teamlead),
+                ("cavity", attic_teamlead),
+            ):
+                status, _, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/ventilation-coordinator/insulation-assignment",
+                    {
+                        "house_id": "VENT-COORDINATOR-1",
+                        "work_type": work_type,
+                        "teamlead_user_id": wrong_lead["user"]["id"],
+                    },
+                    coordinator_cookie,
+                )
+                self.assertEqual(status, 400)
+            for work_type, lead in (
+                ("attic", attic_teamlead),
+                ("cavity", cavity_teamlead),
+            ):
+                status, insulation_assignment, _ = self.http_request(
+                    httpd,
+                    "POST",
+                    "/api/ventilation-coordinator/insulation-assignment",
+                    {
+                        "house_id": "VENT-COORDINATOR-1",
+                        "work_type": work_type,
+                        "teamlead_user_id": lead["user"]["id"],
+                    },
+                    coordinator_cookie,
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    insulation_assignment["teamlead_user_id"], lead["user"]["id"]
+                )
+            status, _, teamlead_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "attic-teamlead", "pin": "456789"},
+            )
+            self.assertEqual(status, 200)
+            status, teamlead_dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=teamlead_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [(job["id"], job["work_type"]) for job in teamlead_dashboard["teamlead_insulation_houses"]],
+                [("VENT-COORDINATOR-1", "attic")],
+            )
+            status, completion, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/teamlead/insulation-work/complete",
+                {"house_id": "VENT-COORDINATOR-1", "work_type": "attic"},
+                teamlead_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(completion["completed_by"], "Attic Teamlead")
+            status, _, cavity_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "cavity-teamlead", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, cavity_dashboard, _ = self.http_request(
+                httpd, "GET", "/api/dashboard", cookie=cavity_cookie
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [(job["id"], job["work_type"]) for job in cavity_dashboard["teamlead_insulation_houses"]],
+                [("VENT-COORDINATOR-1", "cavity")],
+            )
+            status, house_detail, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/houses/VENT-COORDINATOR-1",
+                cookie=coordinator_cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(house_detail["house"]["coordinator_view_only"])
+            self.assertFalse(house_detail["house"]["photo_view_only"])
+            self.assertEqual(
+                house_detail["house"]["survey_data"]["perimeter_m"], 120
+            )
+            self.assertEqual(house_detail["house"]["survey_notes"], "Survey notes")
+            self.assertTrue(house_detail["house"]["attic_required"])
             status, assignment, _ = self.http_request(
                 httpd,
                 "POST",
@@ -439,7 +604,7 @@ class TrackerTests(unittest.TestCase):
                 cookie=coordinator_cookie,
             )
             self.assertEqual(status, 200)
-            self.assertTrue(house_detail["house"]["photo_view_only"])
+            self.assertTrue(house_detail["house"]["coordinator_view_only"])
             self.assertTrue(house_detail["house"]["can_view_vent_photos"])
             self.assertEqual(house_detail["house"]["id"], "VENT-COORDINATOR-1")
             hidden_detail_status, _, _ = self.http_request(

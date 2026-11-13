@@ -919,6 +919,9 @@ def _require_pdf_editable(db, house_id):
 def _clear_house_survey_records(db, house_id):
     db.execute("DELETE FROM house_surveys WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_work_plan_drafts WHERE house_id = ?", (house_id,))
+    db.execute(
+        "DELETE FROM house_insulation_assignments WHERE house_id = ?", (house_id,)
+    )
     db.execute("DELETE FROM house_snags WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_checklists WHERE house_id = ?", (house_id,))
     db.execute("DELETE FROM house_vent_documents WHERE house_id = ?", (house_id,))
@@ -1505,6 +1508,28 @@ def initialize_db():
                 completed_by TEXT NOT NULL DEFAULT '',
                 completed_at TEXT NOT NULL DEFAULT ''
             )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS house_insulation_assignments (
+                house_id TEXT NOT NULL
+                    REFERENCES provided_houses(id) ON DELETE CASCADE,
+                work_type TEXT NOT NULL CHECK (work_type IN ('attic', 'cavity')),
+                teamlead_user_id INTEGER NOT NULL
+                    REFERENCES app_users(id) ON DELETE CASCADE,
+                assigned_by TEXT NOT NULL DEFAULT '',
+                assigned_at TEXT NOT NULL,
+                completed_by TEXT NOT NULL DEFAULT '',
+                completed_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (house_id, work_type)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS house_insulation_assignments_teamlead_idx
+            ON house_insulation_assignments(teamlead_user_id, work_type, house_id)
             """
         )
         db.execute(
@@ -2325,6 +2350,91 @@ def _teamlead_ewi_houses(db, teamlead_user_id):
             """,
             (teamlead_user_id,),
         )
+    ]
+
+
+def _attic_cavity_quantities(db, house_ids):
+    if not house_ids or not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'seai_applications'"
+    ).fetchone():
+        return {}
+    placeholders = ",".join("?" for _ in house_ids)
+    quantities = {}
+    for row in db.execute(
+        "SELECT application_id, detail_data_json FROM seai_applications "
+        f"WHERE application_id IN ({placeholders})",
+        house_ids,
+    ):
+        try:
+            details = json.loads(row["detail_data_json"])
+        except (TypeError, ValueError) as exc:
+            raise ApiError(500, "Stored SEAI insulation details are invalid.") from exc
+        if not isinstance(details, dict) or not isinstance(details.get("Measures"), list):
+            continue
+        work = {}
+        for measure in details["Measures"]:
+            if not isinstance(measure, dict):
+                continue
+            name = str(measure.get("Name") or "").strip().casefold()
+            work_type = (
+                "attic"
+                if "attic" in name and "insulation" in name
+                else "cavity"
+                if "cavity wall" in name and "insulation" in name
+                else None
+            )
+            if work_type is None:
+                continue
+            raw_quantity = measure.get("Survey Quantity")
+            if isinstance(raw_quantity, bool):
+                continue
+            try:
+                quantity = float(raw_quantity)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(quantity) and quantity > 0:
+                work[work_type] = str(raw_quantity).strip()
+        if work:
+            quantities[row["application_id"]] = work
+    return quantities
+
+
+def _teamlead_insulation_houses(db, teamlead_user_id):
+    assignments = [
+        dict(row)
+        for row in db.execute(
+            """
+            SELECT assignment.house_id AS id, assignment.work_type,
+                   p.postcode, p.address, p.owner_name,
+                   assignment.assigned_by, assignment.assigned_at,
+                   assignment.completed_by, assignment.completed_at,
+                   p.ready_for_start,
+                   COALESCE(active.is_finished, 0) AS is_finished
+            FROM house_insulation_assignments assignment
+            JOIN provided_houses p ON p.id = assignment.house_id
+            LEFT JOIN houses active ON active.id = p.id
+            WHERE assignment.teamlead_user_id = ?
+            ORDER BY (assignment.completed_at != ''), assignment.assigned_at DESC,
+                     assignment.house_id COLLATE NOCASE, assignment.work_type
+            """,
+            (teamlead_user_id,),
+        )
+    ]
+    quantities = _attic_cavity_quantities(
+        db, list({assignment["id"] for assignment in assignments})
+    )
+    return [
+        {
+            **assignment,
+            "survey_quantity": quantities.get(assignment["id"], {}).get(
+                assignment["work_type"], ""
+            ),
+        }
+        for assignment in assignments
+        if assignment["ready_for_start"]
+        and not assignment["is_finished"]
+        and quantities.get(assignment["id"], {}).get(assignment["work_type"])
     ]
 
 
@@ -4083,18 +4193,12 @@ def _ventilation_house_is_visible(db, house_id, teamlead_user_id):
 
 
 def _ventilation_coordinator_house_is_visible(db, house_id):
-    return db.execute(
-        """
-        SELECT 1
-        FROM provided_houses houses
-        LEFT JOIN houses active ON active.id = houses.id
-        WHERE houses.id = ?
-          AND houses.plan_vent_required = 1
-          AND (active.id IS NULL OR active.is_finished = 0
-               OR houses.plan_vent_done_at != '')
-        """,
-        (house_id,),
-    ).fetchone() is not None
+    return any(
+        house["id"] == house_id
+        for house in _ventilation_coordinator_dashboard(db)[
+            "ventilation_coordinator_houses"
+        ]
+    )
 
 
 def _plumbing_coordinator_dashboard(db):
@@ -4254,6 +4358,23 @@ def _ventilation_coordinator_dashboard(db):
             """
         )
     ]
+    insulation_teamleads = [
+        {"id": row["id"], "name": row["display_name"], "team_name": row["team_name"]}
+        for row in db.execute(
+            """
+            SELECT users.id, users.display_name, users.team_name
+            FROM app_users users
+            WHERE users.is_active = 1
+              AND EXISTS (
+                  SELECT 1 FROM app_role_permissions access
+                  WHERE access.role_key = users.role
+                    AND access.permission_key = 'access.teamlead'
+                    AND access.is_allowed = 1
+              )
+            ORDER BY users.display_name COLLATE NOCASE
+            """
+        )
+    ]
     houses = [
         dict(row)
         for row in db.execute(
@@ -4262,18 +4383,20 @@ def _ventilation_coordinator_dashboard(db):
                    COALESCE(p.plan_vent_notes, '') AS notes,
                    COALESCE(p.plan_vent_done_by, '') AS done_by,
                    COALESCE(p.plan_vent_done_at, '') AS done_at,
-                   CASE WHEN p.ready_for_start = 1 THEN 'ready'
-                        WHEN h.id IS NULL THEN 'not_started'
-                        WHEN h.is_finished = 1 THEN 'closed'
-                        ELSE 'active' END AS status,
+                   p.plan_vent_required,
+                   'ready' AS status,
                    assignment.teamlead_user_id AS assigned_teamlead_user_id,
                    COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
                    COALESCE(teamlead.team_name, '') AS assigned_team_name,
                    COALESCE(assignment.assigned_by, '') AS assignment_assigned_by,
                    COALESCE(assignment.assigned_at, '') AS assignment_assigned_at,
-                   COALESCE(surveyor.display_name, '') AS surveyor_name
+                   COALESCE(surveyor.display_name, '') AS surveyor_name,
+                   survey.data AS survey_data,
+                   COALESCE(survey.notes, '') AS survey_notes,
+                   COALESCE(survey.updated_by, '') AS survey_updated_by,
+                   COALESCE(survey.updated_at, '') AS survey_updated_at
             FROM provided_houses p
-            LEFT JOIN houses h ON h.id = p.id
+            JOIN house_surveys survey ON survey.house_id = p.id
             LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
             LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
             LEFT JOIN house_role_assignments survey_assignment
@@ -4281,18 +4404,68 @@ def _ventilation_coordinator_dashboard(db):
              AND survey_assignment.role = 'surveyor'
             LEFT JOIN app_users surveyor
               ON surveyor.id = survey_assignment.user_id
-            WHERE p.plan_vent_required = 1
-              AND (h.id IS NULL OR h.is_finished = 0 OR p.plan_vent_done_at != '')
-            ORDER BY
-                (COALESCE(p.plan_vent_done_at, '') != ''),
-                (assignment.teamlead_user_id IS NOT NULL),
-                p.id COLLATE NOCASE
+            WHERE p.ready_for_start = 1
+            ORDER BY p.id COLLATE NOCASE
             """
         )
     ]
+    quantities = _attic_cavity_quantities(db, [house["id"] for house in houses])
+    assignment_rows = [
+        dict(row)
+        for row in db.execute(
+            """
+            SELECT assignment.house_id, assignment.work_type,
+                   assignment.teamlead_user_id, teamlead.display_name AS teamlead_name,
+                   teamlead.team_name, assignment.assigned_by, assignment.assigned_at,
+                   assignment.completed_by, assignment.completed_at
+            FROM house_insulation_assignments assignment
+            JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
+            """
+        )
+    ]
+    assignments = {}
+    for assignment in assignment_rows:
+        assignments.setdefault(assignment["house_id"], {})[
+            assignment["work_type"]
+        ] = assignment
+    eligible_houses = []
+    for house in houses:
+        required = quantities.get(house["id"], {})
+        if house["plan_vent_required"] != 1 and not required:
+            continue
+        try:
+            survey_data = json.loads(house.pop("survey_data") or "{}")
+        except (TypeError, ValueError) as exc:
+            raise ApiError(500, f"Saved survey for {house['id']} is invalid.") from exc
+        if not isinstance(survey_data, dict) or not _survey_has_valid_perimeter(
+            survey_data
+        ):
+            continue
+        house["survey_data"] = survey_data
+        house["attic_required"] = "attic" in required
+        house["attic_survey_quantity"] = required.get("attic", "")
+        house["cavity_required"] = "cavity" in required
+        house["cavity_survey_quantity"] = required.get("cavity", "")
+        for work_type in ("attic", "cavity"):
+            assignment = assignments.get(house["id"], {}).get(work_type, {})
+            prefix = f"{work_type}_assignment"
+            for key in (
+                "teamlead_user_id",
+                "teamlead_name",
+                "team_name",
+                "assigned_by",
+                "assigned_at",
+                "completed_by",
+                "completed_at",
+            ):
+                house[f"{prefix}_{key}"] = assignment.get(key)
+        eligible_houses.append(house)
     return {
-        "ventilation_coordinator_houses": _attach_seai_application_ids(db, houses),
+        "ventilation_coordinator_houses": _attach_seai_application_ids(
+            db, eligible_houses
+        ),
         "ventilation_teamleads": teamleads,
+        "insulation_teamleads": insulation_teamleads,
     }
 
 
@@ -4947,6 +5120,7 @@ class LegacyRouteHandlers:
                     "/api/auth/pin",
                     "/api/auth/logout",
                     "/api/ventilation-coordinator/assignment",
+                    "/api/ventilation-coordinator/insulation-assignment",
                     "/api/house-work-plan/complete",
                 }
             )
@@ -7243,6 +7417,9 @@ class LegacyRouteHandlers:
                     dashboard["teamlead_ewi_houses"] = _teamlead_ewi_houses(
                         db, user["id"]
                     )
+                    dashboard["teamlead_insulation_houses"] = (
+                        _teamlead_insulation_houses(db, user["id"])
+                    )
             can_view_survey_records = any(
                 _has_access_profile(user, role)
                 for role in ("admin", "assign", "surveyor", "supervisor")
@@ -7669,10 +7846,57 @@ class LegacyRouteHandlers:
                         "address": house["address"],
                         "status": house["status"],
                         "can_view_vent_photos": True,
-                        "photo_view_only": True,
+                        "photo_view_only": (
+                            is_photo_viewer and not is_ventilation_coordinator
+                        ),
+                        "coordinator_view_only": is_ventilation_coordinator,
                         "vent_photos": _vent_house_photo_metadata(db, house_id),
                     }
                     if is_ventilation_coordinator:
+                        try:
+                            survey_data = json.loads(house["survey_data"] or "{}")
+                        except (TypeError, ValueError) as exc:
+                            raise ApiError(
+                                500, "Saved survey details are invalid."
+                            ) from exc
+                        requirements = _attic_cavity_quantities(db, [house_id]).get(
+                            house_id, {}
+                        )
+                        application = db.execute(
+                            "SELECT detail_data_json FROM seai_applications "
+                            "WHERE application_id = ?",
+                            (house_id,),
+                        ).fetchone()
+                        try:
+                            seai_details = (
+                                json.loads(application["detail_data_json"])
+                                if application
+                                else {}
+                            )
+                        except (TypeError, ValueError) as exc:
+                            raise ApiError(
+                                500, "Stored SEAI application details are invalid."
+                            ) from exc
+                        house_data.update(
+                            {
+                                "employee_name": house["employee_name"],
+                                "perimeter_m": survey_data.get("perimeter_m"),
+                                "survey_perimeter_m": survey_data.get("perimeter_m"),
+                                "survey_data": survey_data,
+                                "survey_notes": house["survey_notes"],
+                                "survey_updated_by": house["survey_updated_by"],
+                                "survey_updated_at": house["survey_updated_at"],
+                                "seai_details": seai_details,
+                                "attic_required": "attic" in requirements,
+                                "attic_survey_quantity": requirements.get(
+                                    "attic", ""
+                                ),
+                                "cavity_required": "cavity" in requirements,
+                                "cavity_survey_quantity": requirements.get(
+                                    "cavity", ""
+                                ),
+                            }
+                        )
                         work_plan_fields = [
                             f"plan_{trade}_{suffix}"
                             for trade in WORK_PLAN_TRADES
@@ -10184,6 +10408,12 @@ class LegacyRouteHandlers:
                         403,
                         "Teamlead access is required to complete assigned EWI work.",
                     )
+            elif path == "/api/teamlead/insulation-work/complete":
+                if not _has_access_profile(user, "teamlead"):
+                    raise ApiError(
+                        403,
+                        "Teamlead access is required to complete assigned insulation work.",
+                    )
             elif path == "/api/house-assignments":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "assign")):
                     raise ApiError(
@@ -10191,6 +10421,9 @@ class LegacyRouteHandlers:
                         "Administrator or Assign access is required to manage house assignments.",
                     )
             elif path == "/api/ventilation-coordinator/assignment":
+                if not _has_access_profile(user, "ventilation_coordinator"):
+                    raise ApiError(403, "Vent Coordinator access is required.")
+            elif path == "/api/ventilation-coordinator/insulation-assignment":
                 if not _has_access_profile(user, "ventilation_coordinator"):
                     raise ApiError(403, "Vent Coordinator access is required.")
             elif path == "/api/plumbing-coordinator/assignment":
@@ -10225,10 +10458,118 @@ class LegacyRouteHandlers:
                 "/api/house-plumbing-photos",
                 "/api/seai-measure-variation",
                 "/api/teamlead/ewi-work/complete",
+                "/api/teamlead/insulation-work/complete",
             }:
                 if not self._admin_required(user):
                     return
-            if path == "/api/ventilation-coordinator/assignment":
+            if path == "/api/ventilation-coordinator/insulation-assignment":
+                payload = self._json_body()
+                if not isinstance(payload, dict) or set(payload) != {
+                    "house_id",
+                    "work_type",
+                    "teamlead_user_id",
+                }:
+                    raise ApiError(
+                        400, "Choose a house, insulation work type, and Teamlead."
+                    )
+                house_id = payload["house_id"]
+                if (
+                    not isinstance(house_id, str)
+                    or not house_id.strip()
+                    or len(house_id.strip()) > 120
+                ):
+                    raise ApiError(400, "Enter a valid house ID.")
+                house_id = house_id.strip()
+                work_type = payload["work_type"]
+                if work_type not in {"attic", "cavity"}:
+                    raise ApiError(400, "Choose Attic or Cavity insulation work.")
+                try:
+                    teamlead_user_id = int(payload["teamlead_user_id"])
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ApiError(400, "Choose an active Teamlead.") from exc
+                if isinstance(payload["teamlead_user_id"], bool):
+                    raise ApiError(400, "Choose an active Teamlead.")
+                now = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        if not _ventilation_coordinator_house_is_visible(db, house_id):
+                            raise ApiError(
+                                409,
+                                "Choose a surveyed house that is Ready for Start.",
+                            )
+                        if work_type not in _attic_cavity_quantities(
+                            db, [house_id]
+                        ).get(house_id, {}):
+                            raise ApiError(
+                                409,
+                                "That house does not currently require this insulation work.",
+                            )
+                        existing = db.execute(
+                            """
+                            SELECT completed_at FROM house_insulation_assignments
+                            WHERE house_id = ? AND work_type = ?
+                            """,
+                            (house_id, work_type),
+                        ).fetchone()
+                        if existing and existing["completed_at"]:
+                            raise ApiError(
+                                409,
+                                "Completed insulation work cannot be reassigned.",
+                            )
+                        teamlead = db.execute(
+                            """
+                            SELECT users.id, users.display_name, users.team_name
+                            FROM app_users users
+                            WHERE users.id = ? AND users.is_active = 1
+                              AND lower(COALESCE(users.team_name, '')) LIKE ?
+                              AND EXISTS (
+                                  SELECT 1 FROM app_role_permissions access
+                                  WHERE access.role_key = users.role
+                                    AND access.permission_key = 'access.teamlead'
+                                    AND access.is_allowed = 1
+                              )
+                            """,
+                            (teamlead_user_id, f"%{work_type}%"),
+                        ).fetchone()
+                        if teamlead is None:
+                            raise ApiError(
+                                400,
+                                f"Choose an active {work_type.title()} Teamlead.",
+                            )
+                        db.execute(
+                            """
+                            INSERT INTO house_insulation_assignments
+                                (house_id, work_type, teamlead_user_id, assigned_by,
+                                 assigned_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(house_id, work_type) DO UPDATE SET
+                                teamlead_user_id = excluded.teamlead_user_id,
+                                assigned_by = excluded.assigned_by,
+                                assigned_at = excluded.assigned_at,
+                                completed_by = '',
+                                completed_at = ''
+                            """,
+                            (
+                                house_id,
+                                work_type,
+                                teamlead_user_id,
+                                user["display_name"],
+                                now,
+                            ),
+                        )
+                self._send_json(
+                    200,
+                    {
+                        "house_id": house_id,
+                        "work_type": work_type,
+                        "teamlead_user_id": teamlead["id"],
+                        "teamlead_name": teamlead["display_name"],
+                        "team_name": teamlead["team_name"],
+                        "assigned_by": user["display_name"],
+                        "assigned_at": now,
+                    },
+                )
+            elif path == "/api/ventilation-coordinator/assignment":
                 payload = self._json_body()
                 if not isinstance(payload, dict) or set(payload) != {
                     "house_id",
@@ -10257,11 +10598,18 @@ class LegacyRouteHandlers:
                             SELECT p.id, h.is_finished
                             FROM provided_houses p
                             LEFT JOIN houses h ON h.id = p.id
-                            WHERE p.id = ? AND p.plan_vent_required = 1
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND p.plan_vent_required = 1
                             """,
                             (house_id,),
                         ).fetchone()
-                        if house is None or house["is_finished"] == 1:
+                        if (
+                            house is None
+                            or house["is_finished"] == 1
+                            or not _ventilation_coordinator_house_is_visible(
+                                db, house_id
+                            )
+                        ):
                             raise ApiError(
                                 409,
                                 "Choose an open house with required Vent work.",
@@ -10997,6 +11345,82 @@ class LegacyRouteHandlers:
                             "house_id": house_id,
                             "completed_by": user["display_name"],
                             "completed_at": assignment["completed_at"] or completed_at,
+                        },
+                    )
+            elif path == "/api/teamlead/insulation-work/complete":
+                    payload = self._json_body()
+                    if not isinstance(payload, dict) or set(payload) != {
+                        "house_id",
+                        "work_type",
+                    }:
+                        raise ApiError(
+                            400, "A house ID and insulation work type are required."
+                        )
+                    house_id = payload["house_id"]
+                    work_type = payload["work_type"]
+                    if (
+                        not isinstance(house_id, str)
+                        or not house_id.strip()
+                        or len(house_id.strip()) > 120
+                    ):
+                        raise ApiError(400, "Enter a valid house ID.")
+                    if work_type not in {"attic", "cavity"}:
+                        raise ApiError(400, "Choose Attic or Cavity insulation work.")
+                    house_id = house_id.strip()
+                    completed_at = datetime.now().isoformat(timespec="seconds")
+                    with connect_db() as db:
+                        with db:
+                            if not any(
+                                assignment["id"] == house_id
+                                and assignment["work_type"] == work_type
+                                for assignment in _teamlead_insulation_houses(
+                                    db, user["id"]
+                                )
+                            ):
+                                raise ApiError(
+                                    404,
+                                    "That insulation job is not assigned to your work queue.",
+                                )
+                            assignment = db.execute(
+                                """
+                                SELECT completed_at, is_finished
+                                FROM house_insulation_assignments assignment
+                                LEFT JOIN houses ON houses.id = assignment.house_id
+                                WHERE assignment.house_id = ?
+                                  AND assignment.work_type = ?
+                                  AND assignment.teamlead_user_id = ?
+                                """,
+                                (house_id, work_type, user["id"]),
+                            ).fetchone()
+                            if assignment["is_finished"]:
+                                raise ApiError(
+                                    409,
+                                    "This house is closed and cannot be updated.",
+                                )
+                            if not assignment["completed_at"]:
+                                db.execute(
+                                    """
+                                    UPDATE house_insulation_assignments
+                                    SET completed_by = ?, completed_at = ?
+                                    WHERE house_id = ? AND work_type = ?
+                                      AND teamlead_user_id = ?
+                                    """,
+                                    (
+                                        user["display_name"],
+                                        completed_at,
+                                        house_id,
+                                        work_type,
+                                        user["id"],
+                                    ),
+                                )
+                    self._send_json(
+                        200,
+                        {
+                            "house_id": house_id,
+                            "work_type": work_type,
+                            "completed_by": user["display_name"],
+                            "completed_at": assignment["completed_at"]
+                            or completed_at,
                         },
                     )
             elif path == "/api/supervisor/house-assignment":

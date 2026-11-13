@@ -247,6 +247,13 @@
             <div id="teamlead-ewi-work-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No EWI houses assigned yet</strong><p>Houses assigned to you by your Supervisor will appear here.</p></div>
             <div id="teamlead-ewi-work-list" class="teamlead-ewi-work-list"></div>
           </section>
+          <section id="teamlead-insulation-workload" class="teamlead-ewi-workload hidden" aria-labelledby="teamlead-insulation-title">
+            <div class="ventilation-workload-heading teamlead-ewi-heading">
+              <div><span class="teamlead-ewi-eyebrow">YOUR ASSIGNED WORK</span><h2 id="teamlead-insulation-title">Attic &amp; Cavity insulation queue</h2><p>Insulation jobs assigned to you by the Vent Coordinator.</p></div>
+            </div>
+            <div id="teamlead-insulation-work-empty" class="ventilation-house-empty hidden"><strong>No insulation jobs assigned yet</strong><p>Attic and Cavity jobs assigned to you will appear here.</p></div>
+            <div id="teamlead-insulation-work-list" class="teamlead-ewi-work-list"></div>
+          </section>
           <section id="supervisor-workload" class="plumbing-coordinator-workload hidden" aria-label="Supervisor workload">
             <div class="plumbing-coordinator-greeting">
               <span class="plumbing-coordinator-greeting-icon" aria-hidden="true">
@@ -437,18 +444,15 @@
             <div id="plumbing-house-list" class="plumbing-house-list"></div>
             <div id="plumbing-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No plumbing work to show</strong><p>When a surveyor marks plumbing work as required, the house will appear here.</p></div>
           </section>
-          <section id="ventilation-coordinator-workload" class="plumbing-coordinator-workload hidden" aria-label="Ventilation work">
+          <section id="ventilation-coordinator-workload" class="plumbing-coordinator-workload hidden" aria-label="Attic, Cavity and Vent work">
             <div class="plumbing-coordinator-greeting">
               <span class="plumbing-coordinator-greeting-icon" aria-hidden="true">⌂</span>
               <div class="plumbing-coordinator-greeting-copy">
-                <span class="plumbing-coordinator-greeting-eyebrow">VENT COORDINATOR</span>
                 <h2 id="ventilation-coordinator-greeting-title">Welcome</h2>
-                <p>Your Ventilation workload, all in one place.</p>
               </div>
-              <span class="plumbing-coordinator-greeting-tag"><span aria-hidden="true"></span> WORKSPACE</span>
             </div>
             <div class="ventilation-workload-heading">
-              <div><p class="plumbing-workload-intro">Choose a Ventilation Teamlead for every house where the survey identifies Vent work.</p></div>
+              <div><p class="plumbing-workload-intro">Ready for Start houses with Attic, Cavity, or Vent work appear here.</p></div>
               <div class="ventilation-workload-actions">
                 <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="ventilation-coordinator-house-search" type="search" placeholder="Search house, surveyor, or team" aria-label="Search Vent houses, surveyors, or teams"></label>
                 <button class="ventilation-refresh-button" id="refresh-ventilation-coordinator-houses" type="button" aria-label="Refresh Ventilation houses">
@@ -457,14 +461,26 @@
                 </button>
               </div>
             </div>
-            <div id="ventilation-coordinator-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter Vent work">
-              <button type="button" class="ventilation-house-filter active" data-vent-coordinator-filter="all" aria-pressed="true">All work <span id="vent-coordinator-filter-all-count">0</span></button>
-              <button type="button" class="ventilation-house-filter" data-vent-coordinator-filter="needs_assignment" aria-pressed="false">Needs assignment <span id="vent-coordinator-filter-needs-assignment-count">0</span></button>
-              <button type="button" class="ventilation-house-filter" data-vent-coordinator-filter="assigned" aria-pressed="false">Assigned <span id="vent-coordinator-filter-assigned-count">0</span></button>
-              <button type="button" class="ventilation-house-filter" data-vent-coordinator-filter="completed" aria-pressed="false">Completed <span id="vent-coordinator-filter-completed-count">0</span></button>
+            <div class="coordinator-filter-group">
+              <span class="coordinator-filter-label">Work type</span>
+              <div id="ventilation-coordinator-work-type-filters" class="ventilation-house-filters" role="group" aria-label="Filter by work type">
+                <button type="button" class="ventilation-house-filter active" data-vent-coordinator-work-type="all" aria-pressed="true">All work <span id="vent-coordinator-work-type-all-count">0</span></button>
+                <button type="button" class="ventilation-house-filter" data-vent-coordinator-work-type="attic" aria-pressed="false">Attic <span id="vent-coordinator-work-type-attic-count">0</span></button>
+                <button type="button" class="ventilation-house-filter" data-vent-coordinator-work-type="cavity" aria-pressed="false">Cavity <span id="vent-coordinator-work-type-cavity-count">0</span></button>
+                <button type="button" class="ventilation-house-filter" data-vent-coordinator-work-type="vent" aria-pressed="false">Vent <span id="vent-coordinator-work-type-vent-count">0</span></button>
+              </div>
+            </div>
+            <div class="coordinator-filter-group">
+              <span class="coordinator-filter-label">Assignment status</span>
+              <div id="ventilation-coordinator-house-filters" class="ventilation-house-filters" role="group" aria-label="Filter by assignment status">
+                <button type="button" class="ventilation-house-filter active" data-vent-coordinator-filter="all" aria-pressed="true">All statuses <span id="vent-coordinator-filter-all-count">0</span></button>
+                <button type="button" class="ventilation-house-filter" data-vent-coordinator-filter="needs_assignment" aria-pressed="false">Needs assignment <span id="vent-coordinator-filter-needs-assignment-count">0</span></button>
+                <button type="button" class="ventilation-house-filter" data-vent-coordinator-filter="assigned" aria-pressed="false">Assigned <span id="vent-coordinator-filter-assigned-count">0</span></button>
+                <button type="button" class="ventilation-house-filter" data-vent-coordinator-filter="completed" aria-pressed="false">Completed <span id="vent-coordinator-filter-completed-count">0</span></button>
+              </div>
             </div>
             <div id="ventilation-coordinator-house-list" class="plumbing-house-list"></div>
-            <div id="ventilation-coordinator-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No Vent work to assign</strong><p>Houses marked as requiring Vent work will appear here.</p></div>
+            <div id="ventilation-coordinator-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No qualifying work to assign</strong><p>Ready houses with a completed survey and required insulation or Vent work will appear here.</p></div>
           </section>
           <div class="kpi-strip">
             <span><b id="stat-movements">—</b> recent movements</span>
@@ -829,6 +845,7 @@
               </div>
             </div>
             <nav class="house-detail-nav" id="house-detail-nav" aria-label="House record sections">
+              <button class="hidden" type="button" data-house-detail-target="house-detail-survey-info">Survey information</button>
               <button class="hidden" type="button" data-house-detail-target="house-detail-vent-photos-card">Vent team photos</button>
               <button class="hidden" type="button" data-house-detail-target="house-detail-plumbing-photos-card">Plumbing team photos</button>
               <button type="button" data-house-detail-target="house-detail-stock-card">Materials on site</button>
@@ -836,6 +853,10 @@
               <button type="button" data-house-detail-target="house-history-card">Movement history</button>
             </nav>
             <div id="house-detail-facts" class="house-detail-facts"></div>
+            <article class="card hidden" id="house-detail-survey-info">
+              <div class="card-heading"><div><h2>Survey information</h2><p>Survey measurements, notes, and insulation requirements recorded for this house.</p></div></div>
+              <div id="house-detail-survey-content" class="house-detail-records-grid"></div>
+            </article>
             <article class="card house-detail-vent-photos-card hidden" id="house-detail-vent-photos-card">
               <div class="card-heading"><div><h2>Vent team photos</h2><p>Photos attached to this house by the Vent team.</p></div><div id="house-detail-vent-photo-upload"></div></div>
               <div id="house-detail-vent-photos" aria-live="polite"></div>

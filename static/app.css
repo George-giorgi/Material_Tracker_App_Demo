@@ -520,11 +520,36 @@ body.plumbing-coordinator-mode #plumbing-house-list .plumbing-completion-detail,
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-assigned-supervisor,
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-completion-detail { grid-column: 2; grid-row: 1 / span 2; align-self: center; width: 100%; }
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-card { display: grid; min-height: 220px; grid-template-columns: minmax(0, .88fr) minmax(0, 1.12fr); grid-template-rows: auto 1fr; align-items: start; column-gap: 22px; row-gap: 12px; padding: 20px; }
-body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-top { grid-column: 1; grid-row: 1; }
-body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-work-detail { grid-column: 1; grid-row: 2; }
-body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-detail-button { margin-top: 12px; }
-body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-assignment { grid-column: 2; grid-row: 1 / span 2; align-self: stretch; align-content: center; margin: 0; border-top: 0; border-left: 1px solid #e8eee9; padding: 0 0 0 22px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-card { display: grid; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; align-items: start; gap: 12px; padding: 20px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-top,
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-work-detail,
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments { grid-column: 1; grid-row: auto; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-work-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; padding: 12px 14px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-surveyor-detail { grid-template-columns: 30px auto; grid-template-rows: auto auto; flex: 0 0 auto; align-self: center; gap: 2px 9px; margin: 0; border-right: 1px solid #dfe8e2; padding-right: 18px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes { display: grid; min-width: 260px; flex: 0 1 420px; gap: 3px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes > strong { color: #365b42; font-size: 10px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes p { margin: 0; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 0 1 auto; margin: 0; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary span { border: 1px solid #dfeae2; border-radius: 999px; padding: 5px 8px; background: #fff; color: #39644a; font-size: 10px; white-space: nowrap; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button { display: inline-flex; min-height: 32px; margin-top: 8px; padding: 6px 10px; font-size: 10px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; gap: 10px; border-top: 1px solid #e8eee9; border-left: 0; padding: 14px 0 0; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments :is(.plumbing-assigned-supervisor, .plumbing-completion-detail, .plumbing-house-assignment) { grid-column: 1; grid-row: auto; align-self: stretch; margin: 0; border-left: 0; padding: 10px 0 0; }
+.insulation-jobs { display: grid; gap: 9px; }
+.insulation-job-card { display: grid; gap: 5px; border: 1px solid #e0e9e3; border-radius: 10px; padding: 10px 12px; background: #fbfdfb; }
+.insulation-job-card.is-complete { border-color: #cce5d3; background: #f5fbf6; }
+.insulation-job-card > div:first-child { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; color: #29483a; font-size: 11px; }
+.insulation-job-card > div:first-child span, .insulation-job-card p { margin: 0; color: #75817b; font-size: 10px; }
+.insulation-job-card .insulation-job-completion { color: #26734d; font-weight: 650; }
+.insulation-job-card form { display: flex; align-items: end; gap: 8px; margin-top: 3px; }
+.insulation-job-card form label { display: grid; flex: 1; gap: 4px; color: #66776c; font-size: 9px; font-weight: 650; }
+.insulation-job-card select { min-width: 0; min-height: 36px; border: 1px solid #dce5de; border-radius: 8px; padding: 6px 8px; background: #fff; color: #29483a; font: inherit; }
+.insulation-job-card .button { min-height: 36px; padding: 7px 10px; font-size: 10px; }
+.insulation-required-summary { display: grid; gap: 4px; margin-top: 8px; color: #26734d; font-size: 10px; font-weight: 650; }
+.house-detail-survey-list { display: grid; gap: 7px; margin: 0; }
+.house-detail-survey-list > div { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.house-detail-survey-list dt { color: var(--muted); font-size: 10px; }
+.house-detail-survey-list dd { margin: 0; color: var(--ink); font-size: 10px; overflow-wrap: anywhere; }
+.house-detail-survey-info p, #house-detail-survey-content p, #house-detail-survey-content li { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .plumbing-assigned-supervisor { display: flex; align-items: center; gap: 11px; margin-top: auto; border: 1px solid #dcebe0; border-radius: 11px; padding: 11px 13px; background: #f4f9f5; }
 .plumbing-assigned-supervisor-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #e3f2e7; color: #26734d; font-size: 15px; font-weight: 800; }
 .plumbing-assigned-supervisor div { display: grid; gap: 3px; min-width: 0; }
@@ -574,6 +599,7 @@ body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) { background: var(--canvas); }
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) :is(.sidebar, .workspace-nav) { display: none; }
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .main-content { width: min(100%, 1240px); margin: 0 auto; padding: 0 34px 48px; }
+body.ventilation-coordinator-mode .main-content { width: min(100%, 1600px); }
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .topbar { height: 74px; padding-top: 10px; }
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .mobile-brand { display: none; }
 body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode, .supervisor-workspace-mode, .teamlead-workspace-mode) .page { padding-top: 30px; }
@@ -4845,6 +4871,9 @@ body.surveyor-mode .heading-actions { align-items: center; }
 .surveyor-empty-state p { max-width: 370px; margin: 7px 0 0; color: #75817b; font-size: 11px; line-height: 1.6; }
 .surveyor-loading { grid-column: 1 / -1; margin: 0; border: 1px solid #e3eae5; border-radius: 12px; padding: 24px; background: #fff; color: #687970; font-size: 12px; }
 body.surveyor-mode :is(button, input, a):focus-visible { outline: 3px solid #77aa8b; outline-offset: 3px; }
+@media (min-width: 721px) and (max-width: 980px) {
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 720px) {
   body.surveyor-mode .main-content { padding: 0 18px 34px; }
   body.supervisor-mode .main-content { padding: 0 18px 34px; }
@@ -4878,6 +4907,14 @@ body.surveyor-mode :is(button, input, a):focus-visible { outline: 3px solid #77a
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-top,
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-work-detail,
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-assignment { grid-column: 1; grid-row: auto; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-work-detail { align-items: stretch; flex-direction: column; gap: 10px; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-surveyor-detail { align-self: flex-start; border-right: 0; padding-right: 0; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes { min-width: 0; flex-basis: auto; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary span { white-space: normal; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-top { flex-wrap: wrap; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status { margin-left: auto; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity { flex: 1 1 180px; }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments { grid-column: 1; grid-row: auto; grid-template-columns: minmax(0, 1fr); border-top: 1px solid #e8eee9; border-left: 0; padding: 12px 0 0; }
   body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-house-assignment { border-top: 1px solid #e8eee9; border-left: 0; padding: 14px 0 0; }
   body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-card { min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 14px; padding: 16px; }
   body.plumbing-coordinator-mode #plumbing-house-list .ventilation-house-top,
@@ -5022,6 +5059,11 @@ html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .plumbing-supervisor-mode) .plumbing-house-card:hover .plumbing-trade-icon { box-shadow: inset 0 1px 0 #ffffff12, 0 5px 13px #0004; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-needed { border-color: #6b542d; background: #382f20; color: #f0d397; }
+html[data-theme="dark"] body.ventilation-coordinator-mode .coordinator-job-assignments { border-color: #344b3d; }
+html[data-theme="dark"] body.ventilation-coordinator-mode .insulation-job-card { border-color: #35483f; background: #1c2b24; }
+html[data-theme="dark"] body.ventilation-coordinator-mode .insulation-job-card > div:first-child { color: var(--ink); }
+html[data-theme="dark"] body.ventilation-coordinator-mode .insulation-job-card select { border-color: var(--line); background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] body.ventilation-coordinator-mode .insulation-job-card.is-complete { border-color: #3d7754; background: #1d3828; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-job-status.is-complete { border-color: #476253; background: #263d30; color: #c7dfcf; }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-filter { border-color: var(--line); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] body.ventilation-mode .ventilation-house-filter.active { border-color: #3b8c63; background: #276c49; color: #fff; }
@@ -5043,7 +5085,10 @@ html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordin
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-surveyor-avatar { border-color: #3d5947; background: #263b2e; color: #a9dfb9; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-surveyor-label { color: #a4b3ad; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-surveyor-detail strong,
-html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-work-detail > strong { color: #c4e3cc; }
+html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-work-detail > strong,
+html[data-theme="dark"] body.ventilation-coordinator-mode .plumbing-survey-notes > strong { color: #c4e3cc; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-surveyor-detail { border-right-color: #344b3d; }
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary span { border-color: #3b5d47; background: #22362a; color: #b9e5c4; }
 html[data-theme="dark"] body:is(.plumbing-coordinator-mode, .ventilation-coordinator-mode) .plumbing-work-detail p { color: #b5c8bb; }
 html[data-theme="dark"] body.plumbing-coordinator-mode .plumbing-house-assignment { border-top-color: var(--line); }
 html[data-theme="dark"] body.plumbing-coordinator-mode #plumbing-house-list .plumbing-house-assignment { border-left-color: var(--line); }
@@ -10072,4 +10117,462 @@ html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .e
   body.supervisor-workspace-mode #supervisor-house-list .ewi-supervisor-house-card .supervisor-ewi-card-workflow select {
     transition: none;
   }
+}
+
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments {
+  border-color: #e3ebe5;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card {
+  border-color: #e1ebe4;
+  border-radius: 12px;
+  padding: 13px 14px;
+  background: linear-gradient(145deg, #fff, #f8fbf8);
+  box-shadow: 0 3px 12px #203a2b08, inset 0 1px #ffffffd9;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card.is-complete {
+  border-color: #bfdfc9;
+  background: linear-gradient(145deg, #f7fcf8, #eef8f0);
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child {
+  align-items: center;
+  color: #233d30;
+  font-size: 12px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child strong {
+  font-weight: 750;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child span {
+  border: 1px solid #dfeae2;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f3f8f4;
+  color: #567262;
+  font-size: 9px;
+  font-weight: 650;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-work-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border: 1px solid #ead8af;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #fff7e8;
+  color: #795b22;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-work-status.is-assigned {
+  border-color: #cbd9ed;
+  background: #edf4ff;
+  color: #395e8a;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-work-status.is-complete {
+  border-color: #c5dfca;
+  background: #edf8f0;
+  color: #286141;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card form {
+  align-items: end;
+  gap: 10px;
+  margin-top: 6px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card form label {
+  gap: 6px;
+  color: #496052;
+  font-size: 10px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker {
+  gap: 8px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-options {
+  max-height: 150px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .plumbing-supervisor-options {
+  max-height: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: visible;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .plumbing-supervisor-option {
+  min-height: 68px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 6px;
+  padding: 8px;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .supervisor-account-avatar,
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .supervisor-account-identity small {
+  display: none;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .plumbing-supervisor-option > input {
+  grid-column: 1;
+  grid-row: 1;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .supervisor-account-identity {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .supervisor-account-identity strong {
+  font-size: 10px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list form.coordinator-compact-teamlead-options .plumbing-supervisor-check {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 42px;
+  border: 1px solid #d5e2d9;
+  border-radius: 10px;
+  padding: 0 42px 0 12px;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23536f5d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 15px;
+  color: #243c30;
+  color-scheme: light;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select:hover:not(:disabled) {
+  border-color: #8eb69b;
+  background-color: #fbfefb;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select:focus-visible {
+  border-color: #3e9763;
+  outline: 0;
+  box-shadow: 0 0 0 4px #3e976326;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select:disabled {
+  background-color: #edf2ee;
+  color: #87948b;
+  cursor: not-allowed;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card option {
+  background: #fff;
+  color: #243c30;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card option:checked {
+  background: #e6f4e9;
+  color: #205b37;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card optgroup {
+  background: #f3f8f4;
+  color: #466250;
+  font-weight: 750;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-assignment-hint {
+  color: #829187;
+  font-size: 9px;
+  font-weight: 450;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card .button {
+  min-height: 42px;
+  border-radius: 10px;
+  padding: 0 13px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card .button:disabled {
+  border-color: #dce5df;
+  background: #e9eeeb;
+  color: #829087;
+  cursor: not-allowed;
+  opacity: 1;
+  box-shadow: none;
+  transform: none;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status {
+  border-color: #d8e6dc;
+  background: #f1f7f2;
+  color: #4a6654;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-needed {
+  border-color: #eddcb9;
+  background: #fff8eb;
+  color: #805a1b;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-complete {
+  border-color: #b9ddc4;
+  background: #edf8f0;
+  color: #22653e;
+}
+
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments {
+  border-color: #344b3d;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card {
+  border-color: #3b5145;
+  background: linear-gradient(145deg, #202e27, #1a2721);
+  box-shadow: 0 5px 16px #0003, inset 0 1px #ffffff08;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card.is-complete {
+  border-color: #3d7754;
+  background: linear-gradient(145deg, #20382a, #1b2d23);
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child {
+  color: #e3eee6;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child span:not(.coordinator-work-status) {
+  border-color: #3b5547;
+  background: #25372d;
+  color: #b8cdbf;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-work-status.is-needed {
+  border-color: #6b542d;
+  background: #382f20;
+  color: #f0d397;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-work-status.is-assigned {
+  border-color: #3d5d80;
+  background: #24364a;
+  color: #b9d8fa;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-work-status.is-complete {
+  border-color: #3d7754;
+  background: #1d3828;
+  color: #b8e4c3;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card p {
+  color: #adbbb2;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card .insulation-job-completion {
+  color: #a9e3bb;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #overview-eyebrow {
+  color: #8ed8ac;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary {
+  color: #a9e3bb;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card form label {
+  color: #d0ded5;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker legend {
+  border-bottom-color: #3a5143;
+  color: #d3e2d9;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-option {
+  border-color: #3a4b42;
+  background: #1b2823;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-option:hover {
+  border-color: #568369;
+  background: #202f27;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-option:focus-within {
+  outline-color: #74c998;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .supervisor-account-avatar {
+  border-color: #3d5947;
+  background: #263b2e;
+  color: #a9dfb9;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-option > input {
+  accent-color: #78cf95;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-option.selected {
+  border-color: #4c9a69;
+  background: #20352a;
+  box-shadow: inset 0 0 0 1px #4c9a69;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .supervisor-account-identity strong {
+  color: #e5eee8;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .supervisor-account-identity small {
+  color: #a7b8ad;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-check {
+  background: #293630;
+  color: #b7c6bd;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .plumbing-supervisor-option.selected .plumbing-supervisor-check {
+  background: #2b5139;
+  color: #b7e5c4;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select {
+  border-color: #465e50;
+  background-color: #151e19;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23bdd4c4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 15px;
+  color: #eaf3ed;
+  color-scheme: dark;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select:hover:not(:disabled) {
+  border-color: #72907c;
+  background-color: #1d2b26;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select:focus-visible {
+  border-color: #6bc18a;
+  box-shadow: 0 0 0 4px #6bc18a30;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select:disabled {
+  border-color: #3a4942;
+  background-color: #202c26;
+  color: #9bad9f;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card option {
+  background: #18231d;
+  color: #edf5ef;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card option:checked {
+  background: #294332;
+  color: #d7f4dd;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card optgroup {
+  background: #202c29;
+  color: #a8d7b6;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-assignment-hint {
+  color: #9aaca0;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card .button:disabled {
+  border-color: #3a4942;
+  background: #26312c;
+  color: #a0ada6;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status {
+  border-color: #3e5647;
+  background: #23342a;
+  color: #b8cdbf;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-needed {
+  border-color: #6b542d;
+  background: #382f20;
+  color: #f0d397;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-job-status.is-complete {
+  border-color: #3d7754;
+  background: #1d3828;
+  color: #b8e4c3;
+}
+@media (max-width: 720px) {
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments {
+    width: 100%;
+    align-self: stretch;
+  }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card form .button {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card select {
+    transition: none;
+  }
+}
+body.ventilation-coordinator-mode .coordinator-filter-group {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+body.ventilation-coordinator-mode .coordinator-filter-group .ventilation-house-filters {
+  margin: 0;
+}
+body.ventilation-coordinator-mode .coordinator-filter-label {
+  color: #64746a;
+  font-size: 10px;
+  font-weight: 750;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .coordinator-filter-label {
+  color: #b7c8bd;
+}
+@media (max-width: 680px) {
+  body.ventilation-coordinator-mode :is(#ventilation-coordinator-work-type-filters, #ventilation-coordinator-house-filters) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    padding: 0;
+  }
+  body.ventilation-coordinator-mode :is(#ventilation-coordinator-work-type-filters, #ventilation-coordinator-house-filters) .ventilation-house-filter {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+    white-space: normal;
+  }
+}
+@media (max-width: 560px) {
+  body.ventilation-coordinator-mode .topbar #account-button {
+    max-width: clamp(110px, 34vw, 140px);
+    min-width: 0;
+    font-size: 11px;
+  }
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #overview-eyebrow {
+  font-size: 11px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #overview-subtitle {
+  color: #c4d0c8;
+  font-size: 14px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .coordinator-filter-label {
+  color: #c7d4cc;
+  font-size: 11px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity p {
+  color: #c3d0c7;
+  font-size: 12px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-surveyor-label {
+  color: #c2d0c8;
+  font-size: 10px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-surveyor-detail strong {
+  color: #e4eee8;
+  font-size: 12px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes > strong {
+  color: #d8ebde;
+  font-size: 11px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes p {
+  color: #c3d0c7;
+  font-size: 12px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary span {
+  color: #c5ebce;
+  font-size: 11px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-top .plumbing-job-status,
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child .coordinator-work-status {
+  font-size: 10px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-job-card > div:first-child strong {
+  color: #f0f6f2;
+  font-size: 13px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker legend {
+  color: #e3eee8;
+  font-size: 12px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-teamlead-picker .supervisor-account-identity strong {
+  color: #f0f6f2;
+  font-size: 11px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-supervisor-check {
+  color: #d1ded7;
+  font-size: 10px;
 }
