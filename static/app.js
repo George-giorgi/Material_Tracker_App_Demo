@@ -3068,7 +3068,7 @@ function seaiInsulationSummaryHtml(details, houseId = "") {
         };
         const measureLabel = (measure) => measure.Name || "";
         const smallTag = (measure) => `<small${!matching.length || String(measure.Name || "").trim().toLowerCase() === label.toLowerCase() ? ' class="is-redundant"' : ""}>${escapeHtml(measureLabel(measure))}</small>`;
-        return `<div class="house-insulation-row${matching.length ? "" : " is-missing"}" role="row"><strong role="rowheader">${escapeHtml(label)}</strong><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Quantity"))}${smallTag(measure)}</span>`).join("")}</div><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity">${escapeHtml(quantity(measure, "Survey Qty including Variation"))}${smallTag(measure)}</span>`).join("")}</div></div>`;
+        return `<div class="house-insulation-row${matching.length ? "" : " is-missing"}" role="row"><strong role="rowheader">${escapeHtml(label)}</strong><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity"><span class="house-insulation-value">${escapeHtml(quantity(measure, "Survey Quantity"))}</span>${smallTag(measure)}</span>`).join("")}</div><div role="cell">${displayedMeasures.map((measure) => `<span class="house-insulation-quantity"><span class="house-insulation-value">${escapeHtml(quantity(measure, "Survey Qty including Variation"))}</span>${smallTag(measure)}</span>`).join("")}</div></div>`;
       }).join("")}
     </div>
     <small>${hasRecordedInsulation ? "Quantities are shown as recorded in the available SEAI application details. — means not recorded." : "No verified SEAI insulation quantities are available for this house. — means not recorded."}</small>
@@ -6875,6 +6875,13 @@ async function renderNotStartedHouses(query, mode = "not_started") {
       .catch(() => {});
   }
   const isReady = mode === "ready";
+  const expandedWorkPlanHouseIds = new Set(
+    isReady
+      ? [...list.querySelectorAll(".house-plan-ready details.house-work-plan-summary[open]")]
+          .map((details) => details.closest(".house-plan-ready")?.dataset.houseId)
+          .filter(Boolean)
+      : [],
+  );
   const canManageHouses = hasAccessProfile(state.user, "admin");
   const canSurveyHouses = (hasAccessProfile(state.user, "admin") || hasAccessProfile(state.user, "surveyor"));
   const isAssign = hasAccessProfile(state.user, "assign");
@@ -6918,7 +6925,13 @@ async function renderNotStartedHouses(query, mode = "not_started") {
           <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(h, id)}</h2>${applicationIdLabelHtml(h, locationDetails || "No address recorded")}${h.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(h.employee_name)}</p>` : ""}${isReady ? houseAuditHtml(h, true) : ""}</div><div class="house-status-stack"><span class="status-pill ${isReady ? "ready" : "pending"}">${isReady ? "Ready for start" : "Not started"}</span>${isReady ? surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at) : ""}</div></div>
           <div class="house-body" data-house-id="${id}"${!isReady ? ' tabindex="0" role="region" aria-label="House status"' : ""}>
             ${houseWorkflowHtml(workflowStep, !isReady)}
-            ${isReady ? houseWorkPlanSummaryHtml(h) : ""}
+            ${isReady
+              ? houseWorkPlanSummaryHtml(
+                  h,
+                  true,
+                  expandedWorkPlanHouseIds.has(h.id),
+                )
+              : ""}
             ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
           </div>
         <div class="house-card-actions">
@@ -7691,6 +7704,11 @@ function renderHouses() {
     hasAccessProfile(state.user, "plumber");
   const canViewMaterials = !hasAccessProfile(state.user, "assign");
   const isAssign = hasAccessProfile(state.user, "assign");
+  const canViewSeaiSummary =
+    canManageHouses ||
+    isAssign ||
+    hasAccessProfile(state.user, "surveyor") ||
+    hasAccessProfile(state.user, "supervisor");
   $("#assign-houses-dashboard").classList.toggle("hidden", !isAssign);
   $("#assign-surveyor-workload").classList.toggle("hidden", !isAssign);
   if (isAssign) {
@@ -7796,6 +7814,15 @@ function renderHouses() {
       .join(" ")
       .toLocaleLowerCase()
       .includes(query),
+  );
+  const expandedActiveWorkPlanHouseIds = new Set(
+    $$("#houses-list .house-active details.house-work-plan-summary[open]")
+      .map((details) =>
+        details
+          .closest(".house-active")
+          ?.querySelector(".house-body[data-house-id]")?.dataset.houseId,
+      )
+      .filter(Boolean),
   );
   const houseCards = matchingHouses.map((house) => {
     const checklist = [
@@ -7921,6 +7948,17 @@ function renderHouses() {
     }) : [];
     const hasNegative = held.some((item) => item.qty < 0);
     const assignedTeams = houseTeams.get(house.id) || [];
+    const workPlanCount = workPlanSummary
+      ? `<span class="work-plan-count${openWorkCount ? " has-required" : ""}">${workPlanSummary}</span>`
+      : "";
+    const workPlanContent = renderWorkPlanRequirementGroups(
+      requiredRows,
+      notRequiredRows,
+      "work-plan-trade-items",
+    );
+    const workPlanSection = house.is_finished
+      ? `<div class="house-checklist-card house-work-plan-summary"><div class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span>${workPlanCount}</div>${workPlanContent}</div>`
+      : `<details class="house-checklist-card house-work-plan-summary is-collapsible"${expandedActiveWorkPlanHouseIds.has(house.id) ? " open" : ""}><summary class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span><span class="work-plan-summary-actions">${workPlanCount}<span class="work-plan-summary-chevron" aria-hidden="true"></span></span></summary>${workPlanContent}</details>`;
     return `
       <article class="card house-card ${isAssign ? "assign-house-card " : ""}${house.is_finished ? "house-finished" : "house-active"}">
         <div class="house-top"><span class="house-avatar">⌂</span><div class="house-meta"><h2>${houseCardTitle(house, escapeHtml(house.id))}</h2>${applicationIdLabelHtml(house, [house.owner_name, house.postcode].filter(Boolean).join(" · ") || "Site details not recorded")}${house.employee_name ? `<p class="house-assigned-employee"><strong>Assigned employee:</strong> ${escapeHtml(house.employee_name)}</p>` : ""}${assignedTeams.length ? `<p class="house-team-label">Team${assignedTeams.length === 1 ? "" : "s"}: ${assignedTeams.map(escapeHtml).join(", ")}</p>` : ""}${isAssign ? houseSurveyorAssignmentSummaryHtml(house) : ""}${canViewMaterials ? houseAuditHtml(house) : ""}</div><span class="status-pill ${house.is_finished ? "finished" : "active"}">${house.is_finished ? "Closed" : "Active"}</span>${canViewMaterials && hasNegative ? `<span class="status-pill warning">Reconcile</span>` : ""}</div>
@@ -7929,14 +7967,9 @@ function renderHouses() {
         </div>` : ""}
         ${noteHtml(house.notes)}${house.is_finished ? "" : snagsHtml(house)}
         ${canManageHouses || hasAccessProfile(state.user, "supervisor") || hasAccessProfile(state.user, "surveyor") ? activeHouseSurveyReferenceHtml(house) : ""}
-        <div class="house-checklist-card house-work-plan-summary">
-          <div class="work-plan-heading">
-            <span class="house-stock-title">Pre-start work plan</span>
-            ${workPlanSummary ? `<span class="work-plan-count${openWorkCount ? " has-required" : ""}">${workPlanSummary}</span>` : ""}
-          </div>
-          ${renderWorkPlanRequirementGroups(requiredRows, notRequiredRows, "work-plan-trade-items")}
+        ${workPlanSection}
+        ${!house.is_finished && canViewSeaiSummary ? seaiInsulationSummaryHtml(seaiCardDetails(house), house.id) : ""}
         </div>
-                  </div>
                   <div class="house-card-actions">
           ${canViewSeaiDetails ? `<button class="text-button assign-seai-details" type="button" data-house-id="${escapeHtml(house.id)}">View SEAI house details <span aria-hidden="true">→</span></button>` : ""}
           ${house.is_finished ? `

@@ -3247,6 +3247,9 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(active_card.locator(".stage-switch").count(), 0)
         self.assertEqual(active_card.locator(".house-note-open").count(), 0)
         self.assertEqual(active_card.locator(".house-snags-open").count(), 0)
+        work_plan = active_card.locator("details.house-work-plan-summary")
+        self.assertFalse(work_plan.get_attribute("open"))
+        work_plan.locator("summary").click()
         scaffolding_toggle = active_card.locator(
             '.house-checklist-status[data-checklist-field="scaffolding_status"]'
         )
@@ -6690,6 +6693,7 @@ class NavigationBrowserTests(unittest.TestCase):
         card = self.page.locator("#houses-list .house-card").filter(
             has=self.page.locator("h2", has_text="AUDIT-CARD-TEST")
         )
+        card.locator("details.house-work-plan-summary > summary").click()
         self.assertIn("Assigned employee: Assigned Worker", card.inner_text())
         self.assertIn("Ready Actor", card.inner_text())
         self.assertIn("Active Actor", card.inner_text())
@@ -6740,6 +6744,7 @@ class NavigationBrowserTests(unittest.TestCase):
         card = self.page.locator("#houses-list .house-card").filter(
             has=self.page.locator("h2", has_text="VENT-CATHY-CARD")
         )
+        card.locator("details.house-work-plan-summary > summary").click()
         self.assertIn("Vent work", card.inner_text())
         self.assertIn("Complete", card.inner_text())
         self.assertIn("Vent Team Member", card.inner_text())
@@ -7576,6 +7581,35 @@ class NavigationBrowserTests(unittest.TestCase):
             )
             db.execute(
                 """
+                CREATE TABLE IF NOT EXISTS seai_applications (
+                    application_id TEXT PRIMARY KEY,
+                    detail_data_json TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO seai_applications "
+                "(application_id, detail_data_json) VALUES (?, ?)",
+                (
+                    "ACTIVE-DARK-TEST",
+                    json.dumps(
+                        {
+                            "Application Details": {
+                                "Application ID": "ACTIVE-DARK-TEST"
+                            },
+                            "Measures": [
+                                {
+                                    "Name": "External Wall Insulation",
+                                    "Survey Quantity": "42",
+                                    "Survey Qty including Variation": "48",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            db.execute(
+                """
                 INSERT INTO house_checklists(house_id, scaffolding_status, esb_unclipped)
                 VALUES ('ACTIVE-DARK-TEST', 'not_done', 'no')
                 """
@@ -7589,6 +7623,34 @@ class NavigationBrowserTests(unittest.TestCase):
             '#houses-list.house-grid-active > .house-active:has(h2:text("ACTIVE-DARK-TEST"))'
         )
         card.wait_for()
+        insulation = card.locator(".house-insulation-summary")
+        work_plan = card.locator("details.house-work-plan-summary")
+        self.assertFalse(work_plan.get_attribute("open"))
+        self.assertTrue(insulation.is_visible())
+        self.assertFalse(
+            insulation.evaluate(
+                "(element) => Boolean(element.closest('details.house-work-plan-summary'))"
+            )
+        )
+        work_plan.locator("summary").click()
+        self.assertTrue(work_plan.evaluate("(element) => element.open"))
+        self.assertEqual(insulation.locator(".house-insulation-row").count(), 4)
+        self.assertEqual(
+            insulation.locator("h3").inner_text(),
+            "SEAI insulation measures",
+        )
+        self.assertEqual(
+            insulation.locator("h3").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(185, 239, 198)",
+        )
+        self.assertEqual(
+            insulation.locator("small").last.evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(169, 187, 176)",
+        )
         actions = card.locator(".house-card-actions")
         workflow = card.locator(".house-workflow")
         movement_button = actions.get_by_role("button", name="＋ Record movement")
@@ -7601,10 +7663,15 @@ class NavigationBrowserTests(unittest.TestCase):
             card.evaluate("(element) => getComputedStyle(element).borderRadius"),
             "16px",
         )
-        self.assertEqual(
-            card.evaluate("(element) => getComputedStyle(element).borderLeftColor"),
-            "rgb(79, 191, 128)",
+        active_border = card.evaluate(
+            "(element) => getComputedStyle(element).borderLeftColor"
         )
+        active_border_channels = [
+            int(channel)
+            for channel in active_border.removeprefix("rgb(").removesuffix(")").split(",")
+        ]
+        self.assertGreater(active_border_channels[1], active_border_channels[0])
+        self.assertGreater(active_border_channels[1], active_border_channels[2])
         self.assertEqual(
             workflow.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(36, 53, 45)",
@@ -7635,6 +7702,12 @@ class NavigationBrowserTests(unittest.TestCase):
             ".checklist-card-label > small:not(.checklist-completion-audit)"
         )
         self.assertEqual(
+            scaffolding_row.locator(".checklist-card-label > strong").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(255, 217, 138)",
+        )
+        self.assertEqual(
             scaffolding_note.evaluate("(element) => getComputedStyle(element).color"),
             "rgb(170, 191, 178)",
         )
@@ -7643,10 +7716,37 @@ class NavigationBrowserTests(unittest.TestCase):
             required_toggle.evaluate("(element) => getComputedStyle(element).borderTopColor"),
             "rgb(242, 178, 58)",
         )
+        self.assertEqual(
+            required_toggle.evaluate("(element) => getComputedStyle(element).cursor"),
+            "pointer",
+        )
         completed_row = card.locator(".checklist-card-row").filter(has_text="ESB work")
+        self.assertEqual(
+            completed_row.locator(".checklist-card-label > strong").evaluate(
+                "(element) => getComputedStyle(element).color"
+            ),
+            "rgb(185, 239, 198)",
+        )
+        completion_audit = completed_row.locator(".checklist-completion-audit")
+        self.assertTrue(completion_audit.is_visible())
+        self.assertIn("Checked by Dark Active Checker", completion_audit.inner_text())
+        self.assertEqual(
+            completion_audit.evaluate("(element) => getComputedStyle(element).color"),
+            "rgb(210, 222, 214)",
+        )
+        self.assertEqual(
+            completion_audit.evaluate(
+                "(element) => getComputedStyle(element).backgroundColor"
+            ),
+            "rgb(41, 53, 46)",
+        )
         completed_toggle = completed_row.locator(".checklist-toggle")
         self.assertTrue(completed_toggle.locator("input").is_checked())
         self.assertTrue(completed_toggle.locator("input").is_disabled())
+        self.assertEqual(
+            completed_toggle.evaluate("(element) => getComputedStyle(element).cursor"),
+            "not-allowed",
+        )
         self.assertEqual(
             completed_toggle.evaluate("(element) => getComputedStyle(element).backgroundColor"),
             "rgb(79, 191, 128)",
@@ -7654,6 +7754,49 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(
             completed_toggle.evaluate("(element) => getComputedStyle(element).opacity"),
             "1",
+        )
+        self.page.evaluate("renderHouses()")
+        self.assertTrue(
+            card.locator("details.house-work-plan-summary").evaluate(
+                "(element) => element.open"
+            )
+        )
+        self.page.set_viewport_size({"width": 357, "height": 480})
+        table_widths = card.locator(".house-insulation-table").evaluate(
+            "(element) => ({width: element.clientWidth, scrollWidth: element.scrollWidth})"
+        )
+        self.assertLessEqual(table_widths["scrollWidth"], table_widths["width"])
+        self.assertEqual(
+            card.locator(".house-insulation-header").evaluate(
+                "(element) => getComputedStyle(element).display"
+            ),
+            "none",
+        )
+        self.assertIn("42 m²", insulation.inner_text())
+        self.assertIn("48 m²", insulation.inner_text())
+        self.assertEqual(
+            card.locator(".house-insulation-row [role='cell']:nth-child(2)").first.evaluate(
+                "(element) => getComputedStyle(element, '::before').content"
+            ),
+            '"Survey qty"',
+        )
+        self.assertEqual(
+            card.locator(".house-insulation-row [role='cell']:nth-child(3)").first.evaluate(
+                "(element) => getComputedStyle(element, '::before').content"
+            ),
+            '"Including variation"',
+        )
+        self.assertEqual(
+            card.locator(".house-insulation-row .house-insulation-quantity").first.evaluate(
+                "(element) => getComputedStyle(element).fontSize"
+            ),
+            "12px",
+        )
+        self.assertEqual(
+            card.locator(".house-insulation-value").first.evaluate(
+                "(element) => getComputedStyle(element).whiteSpace"
+            ),
+            "nowrap",
         )
         self.assertEqual(self.page.locator("html").get_attribute("data-theme"), "dark")
         self.assertEqual(self.browser_errors, [])
@@ -7678,6 +7821,15 @@ class NavigationBrowserTests(unittest.TestCase):
             '#houses-list.house-grid-ready > .house-plan-ready:has(h2:text("READY-DARK-TEST"))'
         )
         card.wait_for()
+        work_plan = card.locator("details.house-work-plan-summary")
+        self.assertTrue(work_plan.is_visible())
+        self.assertFalse(work_plan.get_attribute("open"))
+        self.assertEqual(
+            work_plan.locator("summary .house-stock-title").inner_text(),
+            "Pre-start work plan",
+        )
+        work_plan.locator("summary").click()
+        self.assertTrue(work_plan.locator(".work-plan-empty").is_visible())
         workflow = card.locator(".house-workflow")
         actions = card.locator(".house-card-actions")
         audit_field = card.locator(".house-audit-summary-field").first
@@ -7947,6 +8099,9 @@ class NavigationBrowserTests(unittest.TestCase):
         other_account_card = self.page.locator(
             '.house-active:has(.house-body[data-house-id="CHECKLIST-OTHER-ACCOUNT-TEST"])'
         )
+        other_account_card.locator(
+            "details.house-work-plan-summary > summary"
+        ).click()
         completed_by_other_account = other_account_card.locator(
             '.house-checklist-status[data-checklist-field="scaffolding_status"]'
         )
@@ -7961,6 +8116,7 @@ class NavigationBrowserTests(unittest.TestCase):
             '.house-active:has(.house-body[data-house-id="CHECKLIST-INLINE-TEST"])'
         )
         card.wait_for()
+        card.locator("details.house-work-plan-summary > summary").click()
         toggle = card.locator(
             '.house-checklist-status[data-checklist-field="scaffolding_status"]'
         )
@@ -8195,6 +8351,7 @@ class NavigationBrowserTests(unittest.TestCase):
                                 {
                                     "Name": "External Wall Insulation",
                                     "Survey Quantity": "42",
+                                    "Survey Qty including Variation": "48",
                                 }
                             ],
                         }
@@ -8227,7 +8384,20 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Ready Stage Surveyor", reference.inner_text())
         self.assertIn("Survey access through the side gate.", reference.inner_text())
         checklist = card.locator(".house-checklist-card")
+        self.assertEqual(checklist.evaluate("(element) => element.tagName"), "DETAILS")
+        self.assertFalse(checklist.get_attribute("open"))
+        insulation = card.locator(".house-insulation-summary")
+        self.assertTrue(insulation.is_visible())
+        self.assertFalse(
+            insulation.evaluate(
+                "(element) => Boolean(element.closest('details.house-work-plan-summary'))"
+            )
+        )
+        checklist.locator("summary").click()
         self.assertIn("Pre-start work plan", checklist.text_content())
+        self.assertIn("42 m²", insulation.inner_text())
+        self.assertIn("48 m²", insulation.inner_text())
+        self.assertEqual(insulation.locator(".house-insulation-row").count(), 4)
         self.assertEqual(
             checklist.locator(".work-plan-count").inner_text(),
             "5 outstanding",
@@ -8272,6 +8442,22 @@ class NavigationBrowserTests(unittest.TestCase):
                 "(row) => getComputedStyle(row).backgroundColor"
             )
             self.assertEqual(question_background, trade_background)
+            if theme == "dark":
+                question_audit = question_rows.filter(
+                    has_text="Are there any variations to the order?"
+                ).locator(".work-plan-done-by")
+                self.assertEqual(
+                    question_audit.evaluate(
+                        "(element) => getComputedStyle(element).color"
+                    ),
+                    "rgb(210, 222, 214)",
+                )
+                self.assertEqual(
+                    question_audit.evaluate(
+                        "(element) => getComputedStyle(element).backgroundColor"
+                    ),
+                    "rgb(41, 53, 46)",
+                )
             trade_background = trade_not_required_row.evaluate(
                 "(row) => getComputedStyle(row).backgroundColor"
             )
@@ -8322,6 +8508,13 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertIn("Rear access only", checklist.inner_text())
         self.assertIn("Isolate old pipework", checklist.inner_text())
         self.assertIn("Check attic duct route", checklist.inner_text())
+        self.page.set_viewport_size({"width": 357, "height": 480})
+        table_widths = insulation.locator(".house-insulation-table").evaluate(
+            "(element) => ({width: element.clientWidth, scrollWidth: element.scrollWidth})"
+        )
+        self.assertLessEqual(table_widths["scrollWidth"], table_widths["width"])
+        self.assertIn("42 m²", insulation.inner_text())
+        self.assertIn("48 m²", insulation.inner_text())
         seai_details_button = card.locator(".assign-seai-details")
         self.assertEqual(
             " ".join(seai_details_button.inner_text().split()),
@@ -8373,6 +8566,7 @@ class NavigationBrowserTests(unittest.TestCase):
         card = self.page.locator("#houses-list .house-active").filter(
             has=self.page.locator("h2", has_text="WORKPLAN-CHECKLIST-TEST")
         )
+        card.locator("details.house-work-plan-summary > summary").click()
         scaffolding = card.locator(
             '.house-checklist-status[data-checklist-field="scaffolding_status"]'
         )

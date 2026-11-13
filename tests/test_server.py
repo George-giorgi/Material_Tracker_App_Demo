@@ -1420,8 +1420,22 @@ class TrackerTests(unittest.TestCase):
             with server.connect_db() as db:
                 db.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS seai_applications (
+                        application_id TEXT PRIMARY KEY,
+                        detail_data_json TEXT NOT NULL
+                    )
+                    """
+                )
+                db.execute(
+                    """
                     INSERT INTO provided_houses(id, postcode, owner_name, ready_for_start)
-                    VALUES ('ASSIGN-HOUSE', 'A00 0000', 'Test Owner', 1)
+                    VALUES ('ASSIGN-HOUSE', 'A00 0000', 'Test Owner', 0)
+                    """
+                )
+                db.execute(
+                    """
+                    INSERT INTO houses(id, postcode, owner_name, is_finished)
+                    VALUES ('ASSIGN-HOUSE', 'A00 0000', 'Test Owner', 0)
                     """
                 )
                 db.execute(
@@ -1435,6 +1449,27 @@ class TrackerTests(unittest.TestCase):
                             {
                                 "perimeter_m": 21,
                                 "windows": [{"w": 1, "h": 1, "qty": 2}],
+                            }
+                        ),
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO seai_applications "
+                    "(application_id, detail_data_json) VALUES (?, ?)",
+                    (
+                        "ASSIGN-HOUSE",
+                        json.dumps(
+                            {
+                                "Application Details": {
+                                    "Applicant Name": "Test Applicant"
+                                },
+                                "Measures": [
+                                    {
+                                        "Name": "External Wall Insulation",
+                                        "Survey Quantity": "94",
+                                        "Survey Qty including Variation": "108",
+                                    }
+                                ],
                             }
                         ),
                     ),
@@ -1481,12 +1516,60 @@ class TrackerTests(unittest.TestCase):
             self.assertEqual(dashboard["movements"], [])
             self.assertNotIn("Restricted Board", json.dumps(dashboard))
             self.assertNotIn("warehouse", dashboard["locations"])
+            assign_house = next(
+                house for house in dashboard["house_list"]
+                if house["id"] == "ASSIGN-HOUSE"
+            )
+            self.assertEqual(
+                assign_house["seai_summary"]["Measures"][0]["Survey Quantity"],
+                "94",
+            )
+            self.assertEqual(
+                assign_house["seai_summary"]["Measures"][0][
+                    "Survey Qty including Variation"
+                ],
+                "108",
+            )
+            self.assertNotIn("seai_details", assign_house)
 
             status, admin_dashboard, _ = self.http_request(
                 httpd, "GET", "/api/dashboard", cookie=admin_cookie
             )
             self.assertEqual(status, 200)
             self.assertEqual(admin_dashboard["materials"][0]["name"], "Restricted Board")
+
+            status, _, _ = self.http_request(
+                httpd,
+                "POST",
+                "/api/users",
+                {
+                    "username": "employee-dashboard-user",
+                    "display_name": "Employee Dashboard User",
+                    "pin": "345678",
+                    "role": "employee",
+                },
+                admin_cookie,
+            )
+            self.assertEqual(status, 201)
+            status, _, employee_cookie = self.http_request(
+                httpd,
+                "POST",
+                "/api/auth/login",
+                {"username": "employee-dashboard-user", "pin": "345678"},
+            )
+            self.assertEqual(status, 200)
+            status, employee_dashboard, _ = self.http_request(
+                httpd,
+                "GET",
+                "/api/dashboard",
+                cookie=employee_cookie,
+            )
+            self.assertEqual(status, 200)
+            employee_house = next(
+                house for house in employee_dashboard["house_list"]
+                if house["id"] == "ASSIGN-HOUSE"
+            )
+            self.assertNotIn("seai_summary", employee_house)
 
             status, houses_result, _ = self.http_request(
                 httpd,

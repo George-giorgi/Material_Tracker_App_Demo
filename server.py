@@ -6709,6 +6709,13 @@ class LegacyRouteHandlers:
                     }
                 else:
                     dashboard = _dashboard(db)
+                if any(
+                    _has_access_profile(user, profile)
+                    for profile in ("admin", "assign", "surveyor")
+                ):
+                    _attach_seai_application_summaries(
+                        db, dashboard["house_list"]
+                    )
                 if _has_access_profile(user, "assign"):
                     dashboard["surveyor_workload"] = _surveyor_workload_summary(db)
                 else:
