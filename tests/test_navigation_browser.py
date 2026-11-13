@@ -4,6 +4,7 @@ import http.client
 import json
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -665,6 +666,15 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertEqual(pending_status["plumber_status"], "done")
         plumbing_photo = BytesIO()
         Image.new("RGB", (4, 3), "blue").save(plumbing_photo, format="PNG")
+
+        def continue_photo_upload(route):
+            time.sleep(0.4)
+            route.continue_()
+
+        self.page.route(
+            "**/api/house-plumbing-photos",
+            continue_photo_upload,
+        )
         card.locator("[data-plumbing-photo-upload]").set_input_files(
             {
                 "name": "completion-photo.png",
@@ -672,6 +682,11 @@ class NavigationBrowserTests(unittest.TestCase):
                 "buffer": plumbing_photo.getvalue(),
             }
         )
+        upload_status = card.locator(
+            "[data-plumbing-photo-upload-status]"
+        )
+        upload_status.filter(has_text="Uploading photo 1 of 1").wait_for()
+        self.assertFalse(card.locator("[data-plumbing-photo-trigger]").is_visible())
         self.page.wait_for_function(
             """() => !document.querySelector(
               '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"] ' +
@@ -681,6 +696,7 @@ class NavigationBrowserTests(unittest.TestCase):
         card = self.page.locator(
             '#plumbing-supervisor-house-list article[data-house-id="PLUMBING-SUPERVISOR-DASHBOARD"]'
         )
+        self.assertTrue(card.locator("[data-plumbing-photo-trigger]").is_visible())
         completion_button = card.locator(".plumbing-completion-toggle")
         self.assertEqual(
             completion_button.get_attribute("aria-label"),
@@ -1061,6 +1077,8 @@ class NavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator("#house-detail-plumbing-photos img").is_visible())
         work_plan = self.page.locator("#house-detail-work-plan")
         self.assertTrue(work_plan.is_visible())
+        self.assertFalse(work_plan.evaluate("element => element.open"))
+        work_plan.locator("summary").click()
         self.assertEqual(work_plan.locator("h3").count(), 0)
         required_group = work_plan.locator(".work-plan-requirement-group-required")
         not_required_group = work_plan.locator(
@@ -1238,6 +1256,8 @@ class NavigationBrowserTests(unittest.TestCase):
             detail_response.value.text(),
         )
         self.page.locator("#house-detail-work-plan").wait_for(state="visible")
+        if not work_plan.evaluate("element => element.open"):
+            work_plan.locator("summary").click()
         ceramic_board = self.page.locator(
             "#house-detail-work-plan .work-plan-detail-item"
         ).filter(has_text="Is there a ceramic fuse board?")
@@ -5592,13 +5612,30 @@ class NavigationBrowserTests(unittest.TestCase):
                 (house_id,),
             ).fetchone()
         self.assertEqual(assignment["teamlead_user_id"], vent_teamlead_id)
-        vent_coordinator_card.locator(".plumbing-house-detail-button").click()
-        self.page.locator("#house-detail-work-plan").wait_for(state="visible")
+        with self.page.expect_response(
+            f"**/api/houses/{house_id}"
+        ) as vent_detail_response:
+            vent_coordinator_card.locator(".plumbing-house-detail-button").click()
+        self.assertEqual(
+            vent_detail_response.value.status,
+            200,
+            vent_detail_response.value.text(),
+        )
+        self.assertTrue(
+            vent_detail_response.value.json()["house"]["coordinator_view_only"],
+            vent_detail_response.value.text(),
+        )
+        coordinator_work_plan = self.page.locator(
+            "#house-detail-coordinator-work-plan"
+        )
+        coordinator_work_plan.wait_for(state="visible")
+        if not coordinator_work_plan.evaluate("element => element.open"):
+            coordinator_work_plan.locator("summary").click()
         vent_work_item = self.page.locator(
-            "#house-detail-work-plan .work-plan-detail-item"
+            "#house-detail-coordinator-work-plan .work-plan-detail-item"
         ).filter(has_text="Vent work")
         plumber_work_item = self.page.locator(
-            "#house-detail-work-plan .work-plan-detail-item"
+            "#house-detail-coordinator-work-plan .work-plan-detail-item"
         ).filter(has_text="Plumber work")
         for label in (
             "Scaffolding",
@@ -5612,58 +5649,35 @@ class NavigationBrowserTests(unittest.TestCase):
             "Are windows required?",
         ):
             self.assertTrue(
-                self.page.locator("#house-detail-work-plan").get_by_text(
+                coordinator_work_plan.get_by_text(
                     label, exact=True
                 ).is_visible(),
                 label,
             )
-        for trade in ("plumber", "vent"):
-            trade_item = self.page.locator(
-                "#house-detail-work-plan .work-plan-detail-item"
-            ).filter(has_text="Plumber work" if trade == "plumber" else "Vent work")
-            self.assertEqual(
-                trade_item.locator(f".work-plan-check[data-trade='{trade}']").count(),
-                0,
-            )
-            self.assertTrue(
-                trade_item.locator(".work-plan-team-required-mark").is_visible()
-            )
-        for trade in ("scaffolding", "esb", "ceramic_fuse_board"):
-            checklist_check = self.page.locator(
-                f"#house-detail-work-plan .work-plan-check[data-trade='{trade}']"
-            )
-            self.assertTrue(checklist_check.is_enabled(), trade)
-            checklist_check.click()
-            self.page.wait_for_function(
-                """trade => document.querySelector(
-                  `#house-detail-work-plan .work-plan-check[data-trade="${trade}"]`
-                )?.getAttribute("aria-pressed") === "true" """,
-                arg=trade,
-            )
-            checklist_check = self.page.locator(
-                f"#house-detail-work-plan .work-plan-check[data-trade='{trade}']"
-            )
-            self.assertIn("Vent Flow Coordinator", self.page.locator(
-                "#house-detail-work-plan"
-            ).inner_text())
-            checklist_check.click()
-            self.page.wait_for_function(
-                """trade => document.querySelector(
-                  `#house-detail-work-plan .work-plan-check[data-trade="${trade}"]`
-                )?.getAttribute("aria-pressed") === "false" """,
-                arg=trade,
-            )
-        self.assertTrue(
-            plumber_work_item.locator(".work-plan-team-hint").is_visible()
+        self.assertEqual(
+            coordinator_work_plan.locator(".work-plan-check").count(), 0
         )
-        self.assertTrue(
-            vent_work_item.locator(".work-plan-team-hint").is_visible()
+        self.assertEqual(
+            plumber_work_item.locator(".work-plan-detail-status").inner_text(),
+            "Not checked",
+        )
+        self.assertEqual(
+            vent_work_item.locator(".work-plan-detail-status").inner_text(),
+            "Not checked",
         )
         self.page.locator("#back-to-houses").click()
         vent_coordinator_card.wait_for()
 
         sign_in("flow-plumber", "456783", "Plumber Flow")
         self.page.locator("#stat-ready").click()
+        plumber_house_card = self.page.locator(
+            f"#houses-list article[data-house-id='{house_id}']"
+        )
+        work_plan_summary = plumber_house_card.locator(
+            ".house-work-plan-summary"
+        )
+        if not work_plan_summary.evaluate("element => element.open"):
+            work_plan_summary.locator("summary").click()
         plumber_check = self.page.locator(
             f"#houses-list .work-plan-check[data-house-id='{house_id}'][data-trade='plumber']"
         )
@@ -5723,36 +5737,20 @@ class NavigationBrowserTests(unittest.TestCase):
             "#ventilation-coordinator-house-list .ventilation-house-card"
         ).filter(has_text=house_id)
         vent_coordinator_card.locator(".plumbing-house-detail-button").click()
-        self.page.locator("#house-detail-work-plan").wait_for(state="visible")
+        coordinator_work_plan = self.page.locator(
+            "#house-detail-coordinator-work-plan"
+        )
+        coordinator_work_plan.wait_for(state="visible")
+        if not coordinator_work_plan.evaluate("element => element.open"):
+            coordinator_work_plan.locator("summary").click()
         vent_work_item = self.page.locator(
-            "#house-detail-work-plan .work-plan-detail-item"
+            "#house-detail-coordinator-work-plan .work-plan-detail-item"
         ).filter(has_text="Vent work")
         self.assertIn("is-done", vent_work_item.get_attribute("class"))
         self.assertEqual(
-            vent_work_item.locator(".work-plan-check[data-trade='vent']").count(),
-            0,
-        )
-        self.assertEqual(
-            vent_work_item.locator(".work-plan-team-required-mark").count(),
-            0,
+            vent_work_item.locator(".work-plan-detail-status").inner_text(), "Done"
         )
         self.assertIn("Vent Teamlead Flow", vent_work_item.inner_text())
-        self.assertIn(
-            "Only the original checker can change this.",
-            vent_work_item.inner_text(),
-        )
-        self.assertEqual(
-            vent_work_item.locator(".work-plan-lock-note").evaluate(
-                "element => getComputedStyle(element).backgroundColor"
-            ),
-            "rgb(255, 246, 223)",
-        )
-        self.assertEqual(
-            vent_work_item.locator(".work-plan-lock-note").evaluate(
-                "element => getComputedStyle(element).color"
-            ),
-            "rgb(128, 82, 12)",
-        )
 
         sign_in(
             "flow-plumbing-coordinator",

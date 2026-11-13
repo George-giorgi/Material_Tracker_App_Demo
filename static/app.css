@@ -531,7 +531,52 @@ body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .plumbing-survey-notes p { margin: 0; }
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 0 1 auto; margin: 0; }
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .insulation-required-summary span { border: 1px solid #dfeae2; border-radius: 999px; padding: 5px 8px; background: #fff; color: #39644a; font-size: 10px; white-space: nowrap; }
-body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button { display: inline-flex; min-height: 32px; margin-top: 8px; padding: 6px 10px; font-size: 10px; }
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  margin-top: 11px;
+  border: 1px solid #398454;
+  border-radius: 10px;
+  padding: 8px 13px;
+  background: linear-gradient(135deg, #347b4a, #28693e);
+  color: #fff;
+  box-shadow: 0 3px 9px #28653b2b;
+  font-size: 11px;
+  font-weight: 750;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button::after {
+  content: "→";
+  font-size: 14px;
+  line-height: 1;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button:hover {
+  transform: translateY(-1px);
+  border-color: #2e7445;
+  background: linear-gradient(135deg, #286d3f, #205d35);
+  box-shadow: 0 6px 14px #28653b38;
+}
+body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button:focus-visible {
+  outline: 3px solid #4e9a62;
+  outline-offset: 3px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button {
+  border-color: #4a9a64;
+  background: linear-gradient(135deg, #31804d, #246c40);
+  color: #f5fff7;
+  box-shadow: 0 4px 12px #00000045, inset 0 1px #ffffff18;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button:hover {
+  border-color: #67b47d;
+  background: linear-gradient(135deg, #3c8d58, #2d7545);
+  box-shadow: 0 5px 16px #2c8a4c44;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode #ventilation-coordinator-house-list .ventilation-house-identity .plumbing-house-detail-button:focus-visible {
+  outline-color: #79cc8d;
+  box-shadow: 0 0 0 3px #79cc8d66, 0 4px 12px #00000045;
+}
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; gap: 10px; border-top: 1px solid #e8eee9; border-left: 0; padding: 14px 0 0; }
 body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinator-job-assignments :is(.plumbing-assigned-supervisor, .plumbing-completion-detail, .plumbing-house-assignment) { grid-column: 1; grid-row: auto; align-self: stretch; margin: 0; border-left: 0; padding: 10px 0 0; }
 .insulation-jobs { display: grid; gap: 9px; }
@@ -549,7 +594,6 @@ body.ventilation-coordinator-mode #ventilation-coordinator-house-list .coordinat
 .house-detail-survey-list > div { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .house-detail-survey-list dt { color: var(--muted); font-size: 10px; }
 .house-detail-survey-list dd { margin: 0; color: var(--ink); font-size: 10px; overflow-wrap: anywhere; }
-.house-detail-survey-info p, #house-detail-survey-content p, #house-detail-survey-content li { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .plumbing-assigned-supervisor { display: flex; align-items: center; gap: 11px; margin-top: auto; border: 1px solid #dcebe0; border-radius: 11px; padding: 11px 13px; background: #f4f9f5; }
 .plumbing-assigned-supervisor-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #e3f2e7; color: #26734d; font-size: 15px; font-weight: 800; }
 .plumbing-assigned-supervisor div { display: grid; gap: 3px; min-width: 0; }
@@ -1493,7 +1537,7 @@ h1 { margin-bottom: 3px; font-size: 24px; }
   #teams-list .team-house-count { min-height: 46px; }
 }
 
-.house-detail-heading { align-items: flex-start; margin: 0 0 16px; }
+.house-detail-heading { margin: 0 0 16px; }
 .house-detail-title-group { min-width: 0; }
 .house-detail-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .house-detail-title-line h1 { margin: 0; color: #203b2c; font-size: clamp(25px, 3vw, 34px); letter-spacing: -.035em; }
@@ -4486,6 +4530,7 @@ body.ventilation-mode #ventilation-house-list .ventilation-house-card { border-c
 .vent-photo-upload-button:disabled:not(.is-uploading) { cursor: not-allowed; opacity: .58; }
 button[data-plumbing-photo-trigger]:disabled { cursor: wait; opacity: .65; }
 button[data-plumbing-photo-trigger]:disabled:not(.is-uploading) { cursor: not-allowed; opacity: 1; }
+.plumbing-photo-upload-control [data-plumbing-photo-trigger][hidden] { display: none !important; }
 .vent-photo-upload-button.is-uploading { position: relative; isolation: isolate; overflow: hidden; border-color: #a9cdb2; background: linear-gradient(135deg, #edf7ef, #e4f1e7); box-shadow: 0 0 0 3px #dceee0; color: #426d4e; }
 .vent-photo-upload-button.is-uploading::after { position: absolute; z-index: 0; inset: 0; border-radius: inherit; background: linear-gradient(105deg, transparent 12%, #ffffff73 48%, transparent 84%); content: ""; pointer-events: none; transform: translateX(-110%); animation: vent-photo-shimmer 1.35s ease-in-out infinite; }
 .vent-photo-upload-button--vent.is-complete { border-color: #b9d1f1; background: linear-gradient(135deg, #eff6ff, #e1edff); color: #285b95; animation: vent-photo-success-in .24s ease-out both; }
@@ -4502,6 +4547,11 @@ button[data-plumbing-photo-trigger]:disabled:not(.is-uploading) { cursor: not-al
 .vent-photo-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 .vent-photo-upload-status { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; color: #68796e; font-size: 10px; font-weight: 650; }
 .vent-photo-upload-status.is-uploading { color: #49745a; }
+.plumbing-photo-upload-status.is-uploading { position: relative; isolation: isolate; display: flex; width: 100%; min-height: 44px; flex: 1 1 100%; justify-content: center; overflow: hidden; border: 1px solid #cfe2d3; border-radius: 11px; padding: 8px 12px; background: linear-gradient(135deg, #f3fbf5, #e8f5eb); box-shadow: 0 2px 7px #204a2d0b; color: #28643c; }
+.plumbing-photo-upload-status.is-uploading::after { position: absolute; z-index: 0; bottom: 0; left: 0; width: 34%; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, #55a875, transparent); content: ""; pointer-events: none; animation: plumbing-photo-progress 1.5s ease-in-out infinite; }
+.plumbing-photo-upload-status.is-uploading > * { position: relative; z-index: 1; }
+.plumbing-photo-upload-status.is-uploading .vent-photo-spinner { width: 18px; height: 18px; border-width: 2.5px; border-right-color: transparent; }
+@keyframes plumbing-photo-progress { from { transform: translateX(-110%); } to { transform: translateX(330%); } }
 .vent-photo-upload-status.is-complete { border: 1px solid #cce8d3; border-radius: 999px; padding: 0 10px; background: #eaf8ee; color: #247248; animation: vent-photo-success-in .24s ease-out both; }
 .plumbing-photo-upload-status.is-complete { border-color: #b9d1f1; background: linear-gradient(135deg, #eff6ff, #e1edff); color: #285b95; }
 .vent-photo-upload-status svg { width: 16px; height: 16px; }
@@ -4513,7 +4563,8 @@ button[data-plumbing-photo-trigger]:disabled:not(.is-uploading) { cursor: not-al
   .vent-photo-spinner,
   .vent-photo-upload-status.is-complete,
   .vent-photo-upload-button.is-complete,
-  .vent-photo-upload-button.is-uploading::after { animation: none; }
+  .vent-photo-upload-button.is-uploading::after,
+  .plumbing-photo-upload-status.is-uploading::after { animation: none; }
 }
 .vent-house-photo-required { margin: 0 0 8px; color: #9b5531; font-size: 11px; line-height: 1.45; }
 .house-detail-vent-photos-card { margin-bottom: 14px; }
@@ -5032,6 +5083,8 @@ html[data-theme="dark"] .vent-photo-upload-button.is-uploading::after { backgrou
 html[data-theme="dark"] .vent-photo-upload-button--vent.is-complete { border-color: #42638e; background: linear-gradient(135deg, #263c58, #20334b); color: #bdd9ff; }
 html[data-theme="dark"] .vent-photo-upload-button--vent.is-complete:hover:not(:disabled) { border-color: #668fbd; background: #2a4260; }
 html[data-theme="dark"] .vent-photo-upload-status.is-uploading { color: #b7ddc1; }
+html[data-theme="dark"] .plumbing-photo-upload-status.is-uploading { border-color: #3d5949; background: linear-gradient(135deg, #263d30, #1d3828); box-shadow: 0 2px 7px #0002; color: #c4e7cd; }
+html[data-theme="dark"] .plumbing-photo-upload-status.is-uploading::after { background: linear-gradient(90deg, transparent, #68c58b, transparent); }
 html[data-theme="dark"] .vent-photo-upload-status.is-complete { border-color: #3d7754; background: #1d3828; color: #b8e4c3; }
 html[data-theme="dark"] .plumbing-photo-upload-status.is-complete { border-color: #42638e; background: linear-gradient(135deg, #263c58, #20334b); color: #bdd9ff; }
 html[data-theme="dark"] .vent-photo-delete { border-color: #293d33; background: #18251fdd; }
@@ -7069,6 +7122,13 @@ html[data-theme="dark"] .surveyor-house-notes-form .note-delete:hover { backgrou
 #surveyor-room .survey-room-summary-card { display: none !important; }
 .house-detail-work-plan { overflow: hidden; border-color: #dce8df; background: #fff; }
 .house-detail-work-plan .card-heading { border-bottom-color: #e8efea; }
+.house-detail-work-plan > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; list-style: none; user-select: none; }
+.house-detail-work-plan > summary::-webkit-details-marker { display: none; }
+.house-detail-work-plan > summary::marker { content: ""; }
+.house-detail-work-plan > summary:focus-visible { outline: 3px solid #4c9a6d66; outline-offset: -3px; }
+.house-detail-work-plan[open] > summary { border-bottom: 1px solid #e8efea; }
+.house-detail-work-plan > summary .work-plan-summary-chevron { margin: 0 4px 0 0; }
+.house-detail-work-plan[open] > summary .work-plan-summary-chevron { transform: translateY(2px) rotate(225deg); }
 .house-detail-work-plan .card-heading h2 { margin: 3px 0 4px; color: #284634; font-size: 17px; }
 .house-detail-work-plan .card-heading p { color: #66776c; }
 .work-plan-source-tag { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #d5e8dc; border-radius: 999px; padding: 3px 8px; background: #eef7f1; color: #39704e; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
@@ -7111,6 +7171,7 @@ html[data-theme="dark"] .surveyor-house-notes-form .note-delete:hover { backgrou
 .work-plan-lock-note { display: inline-block; width: fit-content; max-width: 100%; margin: 0; border: 1px solid #f1dfb5; border-radius: 6px; padding: 2px 6px; background: #fff6df; color: #80520c !important; font-size: 10px; font-weight: 650 !important; line-height: 1.4; }
 html[data-theme="dark"] .house-detail-work-plan { border-color: #35483f; background: #1c2925; color: #e4ece8; box-shadow: 0 5px 18px #080f0d40; }
 html[data-theme="dark"] .house-detail-work-plan .card-heading { border-bottom-color: #2f4038; }
+html[data-theme="dark"] .house-detail-work-plan[open] > summary { border-bottom-color: #2f4038; }
 html[data-theme="dark"] .house-detail-work-plan .card-heading h2 { color: #e4ece8; }
 html[data-theme="dark"] .house-detail-work-plan .card-heading p { color: #a7b8ae; }
 html[data-theme="dark"] .work-plan-source-tag { border-color: #385746; background: #20382b; color: #b9efc6; }
@@ -7161,6 +7222,19 @@ html[data-theme="dark"] .work-plan-lock-note { border-color: #705b37; background
 .house-work-plan-summary.is-collapsible > .work-plan-requirement-groups { padding: 10px; }
 .house-work-plan-summary.is-collapsible > .work-plan-empty { margin: 10px; }
 .house-work-plan-summary.is-collapsible > summary:focus-visible { outline: 3px solid #4c9a6d66; outline-offset: -3px; }
+#house-detail #house-detail-coordinator-work-plan { margin-bottom: 12px; }
+#house-detail #house-detail-coordinator-work-plan > summary { min-height: 38px; padding: 7px 10px; }
+#house-detail #house-detail-coordinator-work-plan .house-stock-title { font-size: 12px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-summary-actions { gap: 6px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-count { padding: 2px 7px; font-size: 9px; }
+#house-detail #house-detail-coordinator-work-plan-rows { padding: 8px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 6px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-item { border-radius: 8px; padding: 8px 9px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-item-heading { gap: 6px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-item-heading strong { font-size: 11px; line-height: 1.3; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-status { padding: 2px 6px; font-size: 9px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-item p { margin-top: 5px; font-size: 10px; }
+#house-detail #house-detail-coordinator-work-plan .work-plan-detail-audit { margin-top: 5px; font-size: 9px; }
 html[data-theme="dark"] .house-work-plan-summary.is-collapsible { border-color: #35483f; background: #192622; }
 html[data-theme="dark"] .house-work-plan-summary.is-collapsible > summary { color: #e6efe9; }
 html[data-theme="dark"] .work-plan-summary-chevron { border-color: #aabfb2; }
@@ -9659,30 +9733,16 @@ html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .e
   font-weight: 650;
 }
 #house-detail .house-detail-heading {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   margin: 0 0 16px;
-  border: 1px solid #dce8df;
-  border-radius: 20px;
-  padding: clamp(18px, 3vw, 28px);
-  background:
-    radial-gradient(ellipse at 92% 0, #dcefe366, transparent 38%),
-    linear-gradient(135deg, #f8fbf8, #fff 58%, #f5f8f5);
-  box-shadow: 0 10px 28px #193b240d, inset 0 1px #fff;
-}
-#house-detail .house-detail-heading::after {
-  position: absolute;
-  z-index: -1;
-  top: -54px;
-  right: -25px;
-  width: 190px;
-  height: 190px;
-  border: 1px solid #78a8891c;
-  border-radius: 50%;
-  box-shadow: 0 0 0 20px #78a8890a, 0 0 0 42px #78a88908;
-  content: "";
-  pointer-events: none;
+  border: 0;
+  border-bottom: 1px solid #dfe8e2;
+  border-left: 3px solid #4e9a62;
+  border-radius: 0;
+  padding: 4px 0 18px 16px;
+  background: transparent;
+  box-shadow: none;
 }
 #house-detail .house-detail-title-group > .eyebrow {
   margin-bottom: 9px;
@@ -9706,6 +9766,44 @@ html[data-theme="dark"] body.supervisor-workspace-mode #supervisor-house-list .e
   font-size: 12px;
   line-height: 1.65;
   overflow-wrap: anywhere;
+}
+#house-detail .house-detail-heading .house-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  max-width: 100%;
+  margin-top: 15px;
+}
+#house-detail .house-detail-summary > span {
+  display: grid;
+  min-width: 160px;
+  max-width: 100%;
+  gap: 3px;
+  border: 1px solid #dfe9e2;
+  border-radius: 10px;
+  padding: 8px 11px;
+  background: #ffffffb8;
+}
+#house-detail .house-detail-summary .house-detail-summary-label {
+  color: #758579;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+#house-detail .house-detail-summary strong {
+  color: #30483a;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+#house-detail .house-detail-summary .house-detail-summary-empty {
+  display: block;
+  color: #64756a;
+  font-size: 12px;
 }
 #house-detail .house-detail-status {
   min-height: 28px;
@@ -9841,19 +9939,21 @@ html[data-theme="dark"] #house-detail .house-back:hover {
   color: #f0f6f2;
 }
 html[data-theme="dark"] #house-detail .house-detail-heading {
-  border-color: #354b3f;
-  background:
-    radial-gradient(ellipse at 92% 0, #31523a55, transparent 40%),
-    linear-gradient(135deg, #1d2b24, #18231e 62%, #1b2822);
-  box-shadow: 0 14px 34px #00000024, inset 0 1px #ffffff08;
-}
-html[data-theme="dark"] #house-detail .house-detail-heading::after {
-  border-color: #8bc69a20;
-  box-shadow: 0 0 0 20px #8bc69a0a, 0 0 0 42px #8bc69a07;
+  border-bottom-color: #35483e;
+  border-left-color: #65b77b;
+  background: transparent;
+  box-shadow: none;
 }
 html[data-theme="dark"] #house-detail .house-detail-title-group > .eyebrow { color: #9acba7; }
 html[data-theme="dark"] #house-detail .house-detail-title-line h1 { color: #f0f6f2; }
 html[data-theme="dark"] #house-detail .house-detail-heading .page-subtitle { color: #b1c1b7; }
+html[data-theme="dark"] #house-detail .house-detail-summary > span {
+  border-color: #3a5143;
+  background: #1b2922d9;
+}
+html[data-theme="dark"] #house-detail .house-detail-summary .house-detail-summary-label { color: #a9c0af; }
+html[data-theme="dark"] #house-detail .house-detail-summary strong { color: #e2eee6; }
+html[data-theme="dark"] #house-detail .house-detail-summary .house-detail-summary-empty { color: #b1c1b7; }
 html[data-theme="dark"] #house-detail .house-detail-nav {
   border-color: #35483e;
   background: #18221eeb;
@@ -9927,7 +10027,7 @@ html[data-theme="dark"] #house-detail .house-history-card thead th {
 }
 html[data-theme="dark"] #house-detail .house-history-card td { border-color: #35463f; }
 @media (max-width: 640px) {
-  #house-detail .house-detail-heading { border-radius: 16px; padding: 17px; }
+  #house-detail .house-detail-heading { padding: 2px 0 14px 12px; }
   #house-detail .house-detail-title-line { align-items: flex-start; }
   #house-detail .house-detail-title-line h1 { font-size: clamp(25px, 8vw, 32px); }
   #house-detail .house-detail-nav { top: 4px; }
@@ -10491,6 +10591,362 @@ body.ventilation-coordinator-mode .coordinator-filter-group {
 }
 body.ventilation-coordinator-mode .coordinator-filter-group .ventilation-house-filters {
   margin: 0;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-summary {
+  margin: 0 0 18px;
+  border: 1px solid #dfe9e2;
+  border-radius: 16px;
+  padding: 16px;
+  background: #f7faf8;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-heading::-webkit-details-marker {
+  display: none;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-heading::after {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-right: 2px solid #718276;
+  border-bottom: 2px solid #718276;
+  content: "";
+  transform: rotate(45deg);
+  transition: transform .16s ease;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-summary[open] > .ventilation-coordinator-team-heading {
+  margin-bottom: 12px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-summary[open] > .ventilation-coordinator-team-heading::after {
+  transform: rotate(225deg);
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-heading h2 {
+  margin: 0;
+  color: #29483a;
+  font-size: 15px;
+  font-weight: 800;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-copy {
+  min-width: 0;
+  flex: 1;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-heading p {
+  margin: 4px 0 0;
+  color: #687a6f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-count {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #edf5ef;
+  color: #32734e;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-card {
+  min-width: 0;
+  border: 1px solid #e1ebe4;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-identity {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-identity > span {
+  color: #718276;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-identity strong {
+  overflow: hidden;
+  color: #29483a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-identity small {
+  color: #687a6f;
+  font-size: 10px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 11px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-stats > div {
+  display: grid;
+  gap: 3px;
+  border-radius: 9px;
+  padding: 8px;
+  background: #f2f7f3;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-stats span {
+  color: #687a6f;
+  font-size: 9px;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-stats strong {
+  color: #28643c;
+  font-size: 14px;
+  font-weight: 800;
+}
+body.ventilation-coordinator-mode .ventilation-coordinator-team-empty {
+  margin: 0;
+  border: 1px dashed #cbd9ce;
+  border-radius: 10px;
+  padding: 14px;
+  color: #687a6f;
+  font-size: 11px;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-summary {
+  border-color: #35483f;
+  background: #1b2823;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-heading::after {
+  border-color: #a4b9ab;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-heading h2,
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-identity strong {
+  color: #eaf4ef;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-heading p,
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-identity > span,
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-identity small,
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-stats span,
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-empty {
+  color: #aab9b1;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-count {
+  background: #263d30;
+  color: #b8e4c3;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-card {
+  border-color: #3a5145;
+  background: #202c29;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-stats > div {
+  background: #1b2823;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-stats strong {
+  color: #b9efc6;
+}
+html[data-theme="dark"] body.ventilation-coordinator-mode .ventilation-coordinator-team-empty {
+  border-color: #3a5145;
+}
+body.teamlead-workspace-mode .teamlead-insulation-house-card {
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 16px 20px;
+}
+body.teamlead-workspace-mode .teamlead-insulation-work-summary {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+body.teamlead-workspace-mode .teamlead-insulation-photos {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  border: 1px solid #e1e9e3;
+  border-radius: 12px;
+  padding: 12px;
+  background: #f7faf8;
+}
+.teamlead-insulation-photos-heading,
+.teamlead-insulation-photo-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.teamlead-insulation-photos-heading {
+  margin-bottom: 10px;
+}
+.teamlead-insulation-photos-heading h4 {
+  margin: 0;
+  color: #29483a;
+  font-size: 12px;
+  font-weight: 750;
+}
+.teamlead-insulation-photos-heading > span {
+  color: #75817b;
+  font-size: 10px;
+  font-weight: 650;
+}
+.teamlead-insulation-photo-required {
+  border: 1px dashed #d9c18e;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fffaf0;
+}
+.teamlead-insulation-photo-required strong {
+  color: #79551f;
+  font-size: 11px;
+}
+.teamlead-insulation-photo-required p {
+  margin: 4px 0 0;
+  color: #806f50;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.teamlead-insulation-photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.teamlead-insulation-photo-gallery a {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #4c6255;
+  font-size: 9px;
+  text-decoration: none;
+}
+.teamlead-insulation-photo-gallery img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid #dfe8e2;
+  border-radius: 8px;
+  background: #eaf0ec;
+  object-fit: cover;
+}
+.teamlead-insulation-photo-gallery a span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teamlead-insulation-photo-gallery a:hover span {
+  text-decoration: underline;
+}
+.teamlead-insulation-photo-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.teamlead-insulation-photo-add {
+  position: relative;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd9ce;
+  border-radius: 9px;
+  padding: 0 11px;
+  background: #fff;
+  color: #326b4a;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+.teamlead-insulation-photo-add:focus-within {
+  outline: 3px solid #55a47a55;
+  outline-offset: 2px;
+}
+.teamlead-insulation-photo-add.is-uploading {
+  cursor: progress;
+  opacity: .7;
+}
+.teamlead-insulation-photo-add input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.teamlead-insulation-photo-status {
+  color: #63766a;
+  font-size: 10px;
+}
+body.teamlead-workspace-mode .teamlead-insulation-work-action {
+  grid-column: 1;
+}
+body.teamlead-workspace-mode .teamlead-insulation-work-action .teamlead-ewi-complete-button {
+  width: 100%;
+  min-height: 42px;
+}
+body.teamlead-workspace-mode .teamlead-insulation-work-action .teamlead-ewi-complete-button:disabled {
+  border-color: #d7dfd9;
+  background: #edf1ee;
+  color: #77827a;
+  cursor: not-allowed;
+  opacity: 1;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photos {
+  border-color: #3a4b43;
+  background: #1b2923;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photos-heading h4 {
+  color: #eaf4ef;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photos-heading > span,
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-gallery a,
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-status {
+  color: #a7b8ad;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-required {
+  border-color: #6b542d;
+  background: #382f20;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-required strong {
+  color: #f0d397;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-required p {
+  color: #d1bd91;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-gallery img {
+  border-color: #3a4b43;
+  background: #26332d;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-photo-add {
+  border-color: #496555;
+  background: #24352b;
+  color: #b8e4c3;
+}
+html[data-theme="dark"] body.teamlead-workspace-mode .teamlead-insulation-work-action .teamlead-ewi-complete-button:disabled {
+  border-color: #3a4942;
+  background: #26312c;
+  color: #a0ada6;
+}
+@media (max-width: 760px) {
+  body.teamlead-workspace-mode .teamlead-insulation-house-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.teamlead-workspace-mode .teamlead-insulation-photos,
+  body.teamlead-workspace-mode .teamlead-insulation-work-action {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+@media (max-width: 520px) {
+  .teamlead-insulation-photo-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 body.ventilation-coordinator-mode .coordinator-filter-label {
   color: #64746a;

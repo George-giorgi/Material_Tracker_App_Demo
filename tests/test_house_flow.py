@@ -6240,6 +6240,153 @@ class VentHousePhotoTests(HttpBase):
             )
 
 
+class TeamleadInsulationPhotoTests(HttpBase):
+    def login(self, username, display_name, pin="345678"):
+        with server.connect_db() as db:
+            server._insert_user(db, username, display_name, pin, "teamlead")
+        return self.call(
+            "POST", "/api/auth/login", {"username": username, "pin": pin}
+        )[2]
+
+    def setUp(self):
+        super().setUp()
+        self.house_id = "INSULATION-PHOTO-1"
+        self.provide(self.house_id, "T2", "2 Elm", "Insulation Owner")
+        self.teamlead_cookie = self.login(
+            "insulation-teamlead", "Insulation Teamlead"
+        )
+        self.other_teamlead_cookie = self.login(
+            "other-insulation-teamlead", "Other Insulation Teamlead"
+        )
+        details = {
+            "Measures": [
+                {"Name": "Attic insulation", "Survey Quantity": "45"},
+                {"Name": "Cavity wall insulation", "Survey Quantity": "60"},
+            ]
+        }
+        with server.connect_db() as db:
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seai_applications (
+                    application_id TEXT PRIMARY KEY,
+                    detail_data_json TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                "INSERT INTO seai_applications VALUES (?, ?)",
+                (self.house_id, json.dumps(details)),
+            )
+            db.execute(
+                "UPDATE provided_houses SET ready_for_start = 1 WHERE id = ?",
+                (self.house_id,),
+            )
+            teamlead_id = db.execute(
+                "SELECT id FROM app_users WHERE username = 'insulation-teamlead'"
+            ).fetchone()["id"]
+            for work_type in ("attic", "cavity"):
+                db.execute(
+                    """
+                    INSERT INTO house_insulation_assignments
+                        (house_id, work_type, teamlead_user_id, assigned_by, assigned_at)
+                    VALUES (?, ?, ?, 'Vent Coordinator', '2026-11-12T10:00:00')
+                    """,
+                    (self.house_id, work_type, teamlead_id),
+                )
+
+    def upload(self, cookie, work_type, filename="insulation-photo.png", content=None):
+        if content is None:
+            image_bytes = BytesIO()
+            Image.new("RGB", (4, 3), "green").save(image_bytes, format="PNG")
+            content = image_bytes.getvalue()
+        return self.call_multipart(
+            "/api/teamlead/insulation-work/photos",
+            self.house_id,
+            filename,
+            content,
+            cookie=cookie,
+            fields={"work_type": work_type},
+        )
+
+    def test_attic_and_cavity_photos_are_required_and_scoped_to_the_assigned_job(self):
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.teamlead_cookie
+        )
+        self.assertEqual(status, 200)
+        jobs = {
+            job["work_type"]: job
+            for job in dashboard["teamlead_insulation_houses"]
+        }
+        self.assertEqual(set(jobs), {"attic", "cavity"})
+        self.assertEqual(jobs["attic"]["photos"], [])
+        self.assertEqual(jobs["cavity"]["photos"], [])
+
+        for work_type in ("attic", "cavity"):
+            status, result, _ = self.call(
+                "POST",
+                "/api/teamlead/insulation-work/complete",
+                {"house_id": self.house_id, "work_type": work_type},
+                cookie=self.teamlead_cookie,
+            )
+            self.assertEqual(status, 409, result)
+            self.assertIn("Photos are necessary", result["error"])
+
+        self.assertEqual(
+            self.upload(
+                self.teamlead_cookie, "cavity", content=b"not an image"
+            )[0],
+            400,
+        )
+        self.assertEqual(
+            self.upload(self.other_teamlead_cookie, "attic")[0],
+            404,
+        )
+        status, uploaded = self.upload(self.teamlead_cookie, "attic")
+        self.assertEqual(status, 201, uploaded)
+        photo_id = uploaded["id"]
+
+        status, dashboard, _ = self.call(
+            "GET", "/api/dashboard", cookie=self.teamlead_cookie
+        )
+        self.assertEqual(status, 200)
+        jobs = {
+            job["work_type"]: job
+            for job in dashboard["teamlead_insulation_houses"]
+        }
+        self.assertEqual([photo["id"] for photo in jobs["attic"]["photos"]], [photo_id])
+        self.assertEqual(jobs["cavity"]["photos"], [])
+
+        status, content_type, _disposition, content = self.call_raw(
+            "GET",
+            f"/api/teamlead/insulation-work/photos/{photo_id}/file",
+            cookie=self.teamlead_cookie,
+        )
+        self.assertEqual((status, content_type, content[:8]), (200, "image/png", b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(
+            self.call_raw(
+                "GET",
+                f"/api/teamlead/insulation-work/photos/{photo_id}/file",
+                cookie=self.other_teamlead_cookie,
+            )[0],
+            404,
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/teamlead/insulation-work/complete",
+            {"house_id": self.house_id, "work_type": "cavity"},
+            cookie=self.teamlead_cookie,
+        )
+        self.assertEqual(status, 409, result)
+        status, result, _ = self.call(
+            "POST",
+            "/api/teamlead/insulation-work/complete",
+            {"house_id": self.house_id, "work_type": "attic"},
+            cookie=self.teamlead_cookie,
+        )
+        self.assertEqual(status, 200, result)
+
+
 class PlumbingHousePhotoTests(HttpBase):
     def setUp(self):
         super().setUp()
@@ -6858,6 +7005,14 @@ class WorkPlanCompletionTests(HttpBase):
                     plan_plumber_required = 1,
                     plan_ceramic_fuse_board = 1
                 WHERE id = 'PLAN-1'
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO house_surveys
+                    (house_id, data, notes, updated_by, updated_at)
+                VALUES ('PLAN-1', '{"perimeter_m": 42}', '',
+                        'Surveyor', '2026-11-12T09:30:00')
                 """
             )
         self.provide("OUTSIDE-VENT-QUEUE")

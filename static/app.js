@@ -1102,7 +1102,10 @@ function showWorkspace(user) {
     !isSupervisor || isPlumbingSupervisor,
   );
   $("#teamlead-ewi-workload").classList.toggle("hidden", !isEwiTeamlead);
-  $("#teamlead-insulation-workload").classList.toggle("hidden", !isTeamlead);
+  $("#teamlead-insulation-workload").classList.toggle(
+    "hidden",
+    !isTeamlead || !(state.dashboard?.teamlead_insulation_houses || []).length,
+  );
   $("#plumbing-coordinator-workload").classList.toggle("hidden", !isPlumbingCoordinator);
   $("#ventilation-coordinator-workload").classList.toggle(
     "hidden",
@@ -1240,7 +1243,7 @@ function showWorkspace(user) {
     plumbingHouseFilter = "all";
     $("#plumbing-house-search").value = "";
   } else if (isVentilationCoordinator) {
-    $("#stat-provided-label").textContent = "Ready houses";
+    $("#stat-provided-label").textContent = "Houses with work";
     $("#stat-houses-label").textContent = "Assigned work";
     $("#stat-ready-label").textContent = "Needs assignment";
     $("#stat-closed-label").textContent = "Completed";
@@ -1253,7 +1256,7 @@ function showWorkspace(user) {
       "Assign surveyed insulation and Vent work to the appropriate Teamleads.";
     $("#overview-summary-title").textContent = `Welcome, ${user.display_name}`;
     $("#overview-summary-description").textContent =
-      "Manage separate Attic, Cavity, and Vent Teamlead assignments for each Ready for Start house.";
+      "Review Attic, Cavity, and Vent assignments and completion progress.";
     const hour = new Date().getHours();
     const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
     $("#ventilation-coordinator-greeting-title").textContent =
@@ -1798,6 +1801,8 @@ const ventHousePhotoUploadStates = new Map();
 const ventHousePhotoDeleteInProgress = new Set();
 const VENT_HOUSE_PHOTO_MAX_COUNT = 25;
 let ventHousePhotoUploadInProgress = false;
+const teamleadInsulationPhotoUploadStates = new Map();
+const TEAMLEAD_INSULATION_PHOTO_MAX_COUNT = 25;
 
 function ventHousePhotoUploadState(houseId) {
   const upload = ventHousePhotoUploadStates.get(houseId);
@@ -1838,6 +1843,15 @@ function ventHousePhotoLink(photo, compact = false) {
     <a class="vent-house-photo${compact ? " is-compact" : ""}" href="${url}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(photo.filename)}">
       <img src="${url}" alt="${escapeHtml(photo.filename)}" loading="lazy">
       ${compact ? "" : `<span>${escapeHtml(photo.filename)}</span><small>${escapeHtml(photo.uploaded_by || "Vent team")} · ${escapeHtml(formatAuditDateTime(photo.uploaded_at))}</small>`}
+    </a>`;
+}
+
+function insulationHousePhotoLink(photo) {
+  const url = `/api/house-insulation-photos/${encodeURIComponent(photo.id)}/file`;
+  return `
+    <a class="vent-house-photo" href="${url}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(photo.filename)}">
+      <img src="${url}" alt="${escapeHtml(photo.filename)}" loading="lazy">
+      <span>${escapeHtml(photo.filename)}</span><small>${escapeHtml(photo.uploaded_by || "Insulation team")} · ${escapeHtml(formatAuditDateTime(photo.uploaded_at))}</small>
     </a>`;
 }
 
@@ -2066,7 +2080,7 @@ function plumbingHousePhotoUpload(houseId) {
   return `
     <div class="plumbing-photo-upload-control">
       <span class="vent-photo-uploader">
-        <button class="vent-photo-upload-button${isBusy ? " is-uploading" : ""}" type="button" data-plumbing-photo-trigger data-house-id="${escapeHtml(houseId)}" title="${escapeHtml(buttonLabel)}" aria-busy="${isBusy}"${isBusy ? " disabled" : ""}>
+        <button class="vent-photo-upload-button${isUploading ? " is-uploading" : ""}" type="button" data-plumbing-photo-trigger data-house-id="${escapeHtml(houseId)}" title="${escapeHtml(buttonLabel)}" aria-busy="${isBusy}"${isUploading ? " hidden" : ""}${isBusy ? " disabled" : ""}>
             <span class="vent-photo-attach-icon" aria-hidden="true">
               <svg class="vent-photo-attach-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3"/></svg>
               <span class="vent-photo-spinner"></span>
@@ -2082,11 +2096,11 @@ function plumbingHousePhotoUpload(houseId) {
 function plumbingHousePhotoUploadStatus(houseId) {
   const { status, progress, total } = plumbingHousePhotoUploadState(houseId);
   const indicator = status === "uploading"
-    ? `<span class="vent-photo-spinner" aria-hidden="true"></span><span>Uploading ${progress} of ${total} photos</span>`
+    ? `<span class="vent-photo-spinner" aria-hidden="true"></span><span>Uploading photo ${progress} of ${total}</span>`
     : status === "complete"
       ? '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 10 3.2 3.2L15.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Photos attached</span>'
       : "";
-  return `<span class="vent-photo-upload-status plumbing-photo-upload-status${status ? ` is-${status}` : ""}" data-plumbing-photo-upload-status data-house-id="${escapeHtml(houseId)}" aria-live="polite">${indicator}</span>`;
+  return `<span class="vent-photo-upload-status plumbing-photo-upload-status${status ? ` is-${status}` : ""}" data-plumbing-photo-upload-status data-house-id="${escapeHtml(houseId)}" role="status" aria-live="polite">${indicator}</span>`;
 }
 
 function setPlumbingHousePhotoUploadStatus(houseId, status, progress = 0, total = 0) {
@@ -2131,8 +2145,9 @@ function updatePlumbingHousePhotoUploadControl(input) {
   input.disabled = isBusy;
   if (!button || !label) return;
   button.disabled = isBusy;
+  button.hidden = isUploading;
   button.setAttribute("aria-busy", String(isBusy));
-  button.classList.toggle("is-uploading", isBusy);
+  button.classList.toggle("is-uploading", isUploading);
   label.textContent = isUploading
     ? "Uploading photos…"
     : isDeleting
@@ -2469,6 +2484,11 @@ function renderOverview() {
     const cavityTeamleads = insulationTeamleads.filter((teamlead) =>
       String(teamlead.team_name || "").toLocaleLowerCase().includes("cavity"),
     );
+    renderVentilationCoordinatorTeamSummary(ventilationCoordinatorHouses, {
+      attic: atticTeamleads,
+      cavity: cavityTeamleads,
+      vent: teamleads,
+    });
     const jobsFor = (house) => [
       ...(Number(house.plan_vent_required) === 1
         ? [{
@@ -2626,9 +2646,10 @@ function renderOverview() {
     $("#ventilation-coordinator-house-empty p").textContent =
       ventilationCoordinatorHouses.length
         ? "Try another work type, assignment status, or search term."
-        : "Ready houses with a completed survey and required insulation or Vent work will appear here.";
+        : "Houses with completed surveys and required insulation or Vent work will appear here.";
     $("#ventilation-coordinator-house-list").innerHTML = filteredHouses
       .map((house) => {
+        const isActiveHouse = house.status === "active";
         const address = [house.address, house.postcode]
           .filter(Boolean)
           .join(" · ");
@@ -2673,7 +2694,9 @@ function renderOverview() {
                 </label>`;
               })
               .join("");
-            const insulationAssignment = workTeamleads.length
+            const insulationAssignment = isActiveHouse
+              ? '<p class="plumbing-supervisor-empty">Assignment changes are read-only for this house.</p>'
+              : workTeamleads.length
               ? `<form class="coordinator-compact-teamlead-options" data-insulation-assignment data-house-id="${escapeHtml(house.id)}" data-work-type="${workType}" data-assigned-teamlead-user-id="${escapeHtml(assignedId || "")}">
                   <fieldset class="plumbing-supervisor-picker insulation-teamlead-picker">
                     <legend>Choose ${workTeamPrompt} Teamlead</legend>
@@ -2724,6 +2747,8 @@ function renderOverview() {
             ? `<div class="plumbing-completion-detail"><span class="coordinator-work-status is-complete">Completed</span><strong>Vent work completed</strong><div class="plumbing-completion-meta"><span><small>Completed by</small><b>${escapeHtml(house.done_by || "Not recorded")}</b></span><span><small>Completed on</small><time${house.done_at ? ` datetime="${escapeHtml(house.done_at)}"` : ""}>${escapeHtml(house.done_at ? formatAuditDateTime(house.done_at) : "Not recorded")}</time></span><span><small>Time to complete</small><b>${escapeHtml(formatElapsedTime(house.assignment_assigned_at, house.done_at))}</b></span></div></div>`
             : ventAssigned
               ? `<div class="plumbing-assigned-supervisor"><span class="plumbing-assigned-supervisor-icon" aria-hidden="true">✓</span><div><span class="coordinator-work-status is-assigned">Assigned</span><span>Assigned to</span><strong>${escapeHtml(house.assigned_teamlead_name || "Not recorded")}</strong><span>Position: Ventilation Teamlead</span><span>Assigned on ${escapeHtml(house.assignment_assigned_at ? formatAuditDateTime(house.assignment_assigned_at) : "Not recorded")}</span></div></div>`
+              : isActiveHouse
+                ? '<p class="plumbing-supervisor-empty">Assignment changes are read-only for this house.</p>'
               : `<form class="insulation-job-card ventilation-team-assignment-card coordinator-compact-teamlead-options" data-ventilation-assignment data-house-id="${escapeHtml(house.id)}">
                 <div><strong>Ventilation work</strong><span class="coordinator-work-status is-needed">Needs assignment</span></div>
                 <fieldset class="plumbing-supervisor-picker insulation-teamlead-picker">
@@ -3729,20 +3754,131 @@ function renderTeamleadEwiWork() {
 function renderTeamleadInsulationWork() {
   const isTeamlead = hasAccessProfile(state.user, "teamlead");
   const houses = state.dashboard?.teamlead_insulation_houses || [];
-  $("#teamlead-insulation-workload").classList.toggle("hidden", !isTeamlead);
+  $("#teamlead-insulation-workload").classList.toggle(
+    "hidden",
+    !isTeamlead || houses.length === 0,
+  );
   $("#teamlead-insulation-work-list").innerHTML = houses
     .map((house) => {
       const completed = Boolean(house.completed_at);
+      const workLabel = house.work_type === "attic" ? "Attic" : "Cavity";
       const label = house.work_type === "attic" ? "Attic insulation" : "Cavity wall insulation";
       const address = [house.address, house.postcode].filter(Boolean).join(" · ");
-      return `<article class="teamlead-ewi-house-card${completed ? " is-complete" : ""}">
-        <div class="teamlead-ewi-house-identity"><span class="teamlead-ewi-house-icon" aria-hidden="true">⌂</span><div><h3>${escapeHtml(houseCardTitle(house, house.id))}</h3><p>${escapeHtml(address || house.owner_name || "Address not provided")}</p></div></div>
-        <div class="teamlead-ewi-house-meta"><span class="teamlead-ewi-status${completed ? " is-complete" : ""}">${label}${completed ? " complete" : " assigned"}</span><small>Survey quantity: ${escapeHtml(house.survey_quantity || "Not recorded")}</small><small>Assigned by ${escapeHtml(house.assigned_by || "Vent Coordinator")}${house.assigned_at ? ` · ${escapeHtml(formatAuditDateTime(house.assigned_at))}` : ""}</small>${completed ? `<small>Completed by ${escapeHtml(house.completed_by || "Not recorded")} · ${escapeHtml(formatAuditDateTime(house.completed_at))}</small>` : ""}</div>
-        ${completed ? '<span class="teamlead-ewi-complete-mark" aria-label="Completed">✓</span>' : `<button class="button button-primary teamlead-ewi-complete-button" type="button" data-teamlead-insulation-complete="${escapeHtml(house.id)}" data-work-type="${escapeHtml(house.work_type)}">Mark ${house.work_type === "attic" ? "Attic" : "Cavity"} work complete</button>`}
+      const photos = house.photos || [];
+      const uploadKey = JSON.stringify([house.id, house.work_type]);
+      const upload = teamleadInsulationPhotoUploadStates.get(uploadKey);
+      const isUploading = Boolean(upload);
+      const photoStatus = isUploading
+        ? `Uploading ${upload.progress} of ${upload.total} photos…`
+        : "";
+      const photoGallery = photos.length
+        ? `<div class="teamlead-insulation-photo-gallery">${photos
+            .map(
+              (photo) => `
+                <a href="/api/teamlead/insulation-work/photos/${encodeURIComponent(photo.id)}/file" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(photo.filename)}">
+                  <img src="/api/teamlead/insulation-work/photos/${encodeURIComponent(photo.id)}/file" alt="${escapeHtml(photo.filename)}" loading="lazy">
+                  <span>${escapeHtml(photo.filename)}</span>
+                </a>`,
+            )
+            .join("")}</div>`
+        : `<div class="teamlead-insulation-photo-required" role="status"><strong>Photos are necessary</strong><p>Upload at least one ${workLabel} photo before marking this job done.</p></div>`;
+      return `<article class="teamlead-ewi-house-card teamlead-insulation-house-card${completed ? " is-complete" : ""}">
+        <div class="teamlead-insulation-work-summary">
+          <div class="teamlead-ewi-house-identity"><span class="teamlead-ewi-house-icon" aria-hidden="true">⌂</span><div><h3>${escapeHtml(houseCardTitle(house, house.id))}</h3><p>${escapeHtml(address || house.owner_name || "Address not provided")}</p></div></div>
+          <div class="teamlead-ewi-house-meta"><span class="teamlead-ewi-status${completed ? " is-complete" : ""}">${label}${completed ? " complete" : " assigned"}</span><small>Survey quantity: ${escapeHtml(house.survey_quantity || "Not recorded")}</small><small>Assigned by ${escapeHtml(house.assigned_by || "Vent Coordinator")}${house.assigned_at ? ` · ${escapeHtml(formatAuditDateTime(house.assigned_at))}` : ""}</small>${completed ? `<small>Completed by ${escapeHtml(house.completed_by || "Not recorded")} · ${escapeHtml(formatAuditDateTime(house.completed_at))}</small>` : ""}</div>
+        </div>
+        <section class="teamlead-insulation-photos" aria-label="${workLabel} team photos">
+          <div class="teamlead-insulation-photos-heading"><h4>${workLabel} team photos</h4><span>${photos.length} ${photos.length === 1 ? "photo" : "photos"}</span></div>
+          ${photoGallery}
+          ${completed ? "" : `<div class="teamlead-insulation-photo-actions"><label class="teamlead-insulation-photo-add${isUploading ? " is-uploading" : ""}"><span>${isUploading ? photoStatus : "＋ Add photos"}</span><input type="file" data-teamlead-insulation-photo-upload data-house-id="${escapeHtml(house.id)}" data-work-type="${escapeHtml(house.work_type)}" accept="image/*" multiple aria-label="Upload ${workLabel} team photos for ${escapeHtml(house.id)}"${isUploading ? " disabled" : ""}></label><span class="teamlead-insulation-photo-status" aria-live="polite">${photoStatus}</span></div>`}
+        </section>
+        <div class="teamlead-insulation-work-action">
+          ${completed ? '<span class="teamlead-ewi-complete-mark" aria-label="Completed">✓</span>' : `<button class="button button-primary teamlead-ewi-complete-button" type="button" data-teamlead-insulation-complete="${escapeHtml(house.id)}" data-work-type="${escapeHtml(house.work_type)}"${photos.length && !isUploading ? "" : ' disabled title="Photos are necessary before marking this job done."'}>Mark ${workLabel} work complete</button>`}
+        </div>
       </article>`;
     })
     .join("");
   $("#teamlead-insulation-work-empty").classList.toggle("hidden", houses.length > 0);
+}
+
+async function uploadTeamleadInsulationPhotos(input) {
+  const files = Array.from(input.files || []);
+  const houseId = input.dataset.houseId;
+  const workType = input.dataset.workType;
+  if (!files.length || !houseId || !["attic", "cavity"].includes(workType)) return;
+  const uploadKey = JSON.stringify([houseId, workType]);
+  const house = (state.dashboard?.teamlead_insulation_houses || []).find(
+    (item) => item.id === houseId && item.work_type === workType,
+  );
+  if (!house) {
+    showToast("Could not find this assigned insulation job.", true);
+    input.value = "";
+    return;
+  }
+  const existingCount = (house.photos || []).length;
+  if (existingCount + files.length > TEAMLEAD_INSULATION_PHOTO_MAX_COUNT) {
+    showToast(
+      `This job can have up to ${TEAMLEAD_INSULATION_PHOTO_MAX_COUNT} photos. Only ${Math.max(0, TEAMLEAD_INSULATION_PHOTO_MAX_COUNT - existingCount)} more can be selected.`,
+      true,
+    );
+    input.value = "";
+    return;
+  }
+
+  let uploadedCount = 0;
+  let uploadError = null;
+  let failedFilename = "";
+  try {
+    for (const [index, file] of files.entries()) {
+      teamleadInsulationPhotoUploadStates.set(uploadKey, {
+        progress: index + 1,
+        total: files.length,
+      });
+      renderTeamleadInsulationWork();
+      const formData = new FormData();
+      formData.append("house_id", houseId);
+      formData.append("work_type", workType);
+      formData.append("file", file);
+      try {
+        await request("/api/teamlead/insulation-work/photos", {
+          method: "POST",
+          body: formData,
+        });
+        uploadedCount += 1;
+      } catch (error) {
+        uploadError = error;
+        failedFilename = file.name;
+        break;
+      }
+    }
+    if (uploadedCount) {
+      try {
+        await refresh();
+      } catch (error) {
+        showToast(
+          `${uploadedCount} photo${uploadedCount === 1 ? "" : "s"} uploaded, but the Teamlead work list could not refresh: ${error.message}`,
+          true,
+        );
+        return;
+      }
+    }
+    if (uploadError) {
+      showToast(
+        uploadedCount
+          ? `${uploadedCount} of ${files.length} photos uploaded. ${failedFilename} failed: ${uploadError.message}`
+          : `${failedFilename} failed: ${uploadError.message}`,
+        true,
+      );
+    } else {
+      showToast(
+        `${uploadedCount} ${uploadedCount === 1 ? "photo" : "photos"} attached to ${houseId}.`,
+      );
+    }
+  } finally {
+    teamleadInsulationPhotoUploadStates.delete(uploadKey);
+    renderTeamleadInsulationWork();
+    if (input.isConnected) input.value = "";
+  }
 }
 function renderPlumbingSupervisorCrew() {
   const rosters = state.dashboard?.plumbing_crew || [];
@@ -3819,6 +3955,94 @@ function renderVentilationTeamRoster() {
       </div>
       ${members}
     </article>`;
+}
+function renderVentilationCoordinatorTeamSummary(houses, teamGroups) {
+  const teams = new Map();
+  const workTypes = [
+    {
+      key: "attic",
+      label: "Attic",
+      required: "attic_required",
+      userId: "attic_assignment_teamlead_user_id",
+      leadName: "attic_assignment_teamlead_name",
+      teamName: "attic_assignment_team_name",
+      completedAt: "attic_assignment_completed_at",
+    },
+    {
+      key: "cavity",
+      label: "Cavity",
+      required: "cavity_required",
+      userId: "cavity_assignment_teamlead_user_id",
+      leadName: "cavity_assignment_teamlead_name",
+      teamName: "cavity_assignment_team_name",
+      completedAt: "cavity_assignment_completed_at",
+    },
+    {
+      key: "vent",
+      label: "Vent",
+      required: "plan_vent_required",
+      userId: "assigned_teamlead_user_id",
+      leadName: "assigned_teamlead_name",
+      teamName: "assigned_team_name",
+      completedAt: "done_at",
+    },
+  ];
+
+  for (const workType of workTypes) {
+    const teamleads = teamGroups[workType.key] || [];
+    for (const teamlead of teamleads) {
+      teams.set(`${workType.key}:${teamlead.id}`, {
+        workType: workType.label,
+        teamName: teamlead.team_name || `${workType.label} team`,
+        teamleadName: teamlead.name,
+        assigned: 0,
+        completed: 0,
+      });
+    }
+
+    for (const house of houses) {
+      const required = workType.key === "vent"
+        ? Number(house[workType.required]) === 1
+        : Boolean(house[workType.required]);
+      const teamleadId = house[workType.userId];
+      if (!required || !teamleadId) continue;
+
+      const key = `${workType.key}:${teamleadId}`;
+      const team = teams.get(key) || {
+        workType: workType.label,
+        teamName: house[workType.teamName] || `${workType.label} team`,
+        teamleadName: house[workType.leadName] || "Teamlead",
+        assigned: 0,
+        completed: 0,
+      };
+      team.assigned += 1;
+      if (house[workType.completedAt]) team.completed += 1;
+      teams.set(key, team);
+    }
+  }
+
+  const entries = [...teams.values()].sort((left, right) =>
+    left.workType.localeCompare(right.workType) ||
+    left.teamleadName.localeCompare(right.teamleadName),
+  );
+  $("#ventilation-coordinator-team-count").textContent =
+    `${entries.length} team${entries.length === 1 ? "" : "s"}`;
+  $("#ventilation-coordinator-team-list").innerHTML = entries.length
+    ? entries.map((team) => `
+        <article class="ventilation-coordinator-team-card">
+          <div class="ventilation-coordinator-team-identity">
+            <span>${escapeHtml(team.workType)} team</span>
+            <strong>${escapeHtml(team.teamleadName)}</strong>
+            <small>${escapeHtml(team.teamName)}</small>
+          </div>
+          <div class="ventilation-coordinator-team-stats" aria-label="${escapeHtml(team.workType)} jobs">
+            <div><span>Assigned</span><strong>${team.assigned}</strong></div>
+            <div><span>Completed</span><strong>${team.completed}</strong></div>
+            <div><span>To do</span><strong>${team.assigned - team.completed}</strong></div>
+          </div>
+        </article>`)
+      .join("")
+    : '<p class="ventilation-coordinator-team-empty">No active Attic, Cavity, or Vent Teamleads are linked to this coordinator account.</p>';
 }
 function plumbingSurveyPdfsHtml(documents = []) {
   const entries = documents.length
@@ -6358,6 +6582,69 @@ function houseWorkPlanChecklistItems(house) {
   return [...trades, ...questions];
 }
 
+function renderCoordinatorPreStartChecklist(house, isCoordinatorView) {
+  const checklist = $("#house-detail-coordinator-work-plan");
+  checklist.classList.toggle("hidden", !isCoordinatorView);
+  if (!isCoordinatorView) return;
+
+  const items = houseWorkPlanChecklistItems(house);
+  const openCount = items.filter(({ kind, required, doneBy }) =>
+    required === null ||
+    required === undefined ||
+    (Number(required) === 1 && !doneBy),
+  ).length;
+  const count = $("#house-detail-coordinator-work-plan-count");
+  count.textContent = openCount
+    ? `${openCount} ${openCount === 1 ? "item" : "items"} to check`
+    : "All checked";
+  count.classList.toggle("has-required", openCount > 0);
+
+  $("#house-detail-coordinator-work-plan-rows").innerHTML = `
+    <div class="work-plan-detail-grid">${items
+      .map(({ item, label, kind, required, notes, doneBy, doneAt }) => {
+        const answered = required !== null && required !== undefined;
+        const applicable = Number(required) === 1;
+        const isDone = Boolean(doneBy || doneAt);
+        const status =
+          kind === "question"
+            ? !answered
+              ? "Not answered"
+              : !applicable
+                ? "No"
+                : isDone
+                  ? "Yes · Checked"
+                  : "Yes · Not checked"
+            : !answered
+              ? "Not set"
+              : !applicable
+                ? "Not required"
+                : isDone
+                  ? "Done"
+                  : "Not checked";
+        const tone = !answered
+          ? "unset"
+          : !applicable
+            ? "clear"
+            : isDone
+              ? "positive"
+              : "required";
+        const audit =
+          isDone && doneBy
+            ? `<small class="work-plan-detail-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, item))}</small>`
+            : "";
+        return `
+          <article class="work-plan-detail-item work-plan-detail-item-${tone}${isDone ? " is-done" : ""}">
+            <div class="work-plan-detail-item-heading">
+              <div class="work-plan-detail-item-title"><strong>${escapeHtml(label)}</strong></div>
+              <div class="work-plan-detail-actions"><span class="work-plan-detail-status">${status}</span></div>
+            </div>
+            ${notes ? `<p>${escapeHtml(notes)}</p>` : ""}
+            ${audit}
+          </article>`;
+      })
+      .join("")}</div>`;
+}
+
 function renderWorkPlanRequirementGroups(
   requiredRows,
   notRequiredRows,
@@ -8447,19 +8734,29 @@ function renderHouseDetail(result) {
   const { house, movements } = result;
   const photoViewOnly = house.photo_view_only === true;
   const coordinatorViewOnly = house.coordinator_view_only === true;
-  $("#house-detail-nav").classList.toggle("hidden", photoViewOnly);
+  $("#house-detail-eyebrow").textContent = coordinatorViewOnly
+    ? "HOUSE DETAILS"
+    : "HOUSE RECORD & MOVEMENT HISTORY";
+  $("#house-detail-nav").setAttribute(
+    "aria-label",
+    coordinatorViewOnly ? "House detail sections" : "House record sections",
+  );
+  $("#house-detail-nav").classList.toggle(
+    "hidden",
+    photoViewOnly || coordinatorViewOnly,
+  );
   $$("#house-detail-nav [data-house-detail-target]").forEach((button) => {
     const target = button.dataset.houseDetailTarget;
     button.classList.toggle(
       "hidden",
       (photoViewOnly && !target.includes("photos")) ||
-        (coordinatorViewOnly &&
-          !["house-detail-survey-info", "house-detail-vent-photos-card"].includes(
-            target,
-          )),
+        (coordinatorViewOnly && target !== "house-detail-vent-photos-card"),
     );
   });
-  $("#house-detail-facts").classList.toggle("hidden", photoViewOnly);
+  $("#house-detail-facts").classList.toggle(
+    "hidden",
+    photoViewOnly || coordinatorViewOnly,
+  );
   [
     "#house-detail-stock-card",
     "#house-detail-records-card",
@@ -8472,7 +8769,6 @@ function renderHouseDetail(result) {
       photoViewOnly || coordinatorViewOnly,
     );
   });
-  $("#house-detail-survey-info").classList.toggle("hidden", !coordinatorViewOnly);
   const statusLabel = {
     not_started: "Not started",
     ready: "Ready for start",
@@ -8488,12 +8784,41 @@ function renderHouseDetail(result) {
         : house.status === "closed" || house.is_finished ? "finished"
           : "pending"
   }`;
-  $("#house-detail-subtitle").textContent =
-    [house.owner_name, house.employee_name, house.postcode, house.address]
-      .filter(Boolean)
-      .join(" · ") || "House details have not been recorded.";
+  const detailSubtitle = $("#house-detail-subtitle");
+  detailSubtitle.classList.toggle("house-detail-summary", coordinatorViewOnly);
+  if (coordinatorViewOnly) {
+    const detailMeta = [
+      ["Owner", house.owner_name],
+      ["Assigned employee", house.employee_name],
+      ["Location", [house.address, house.postcode].filter(Boolean).join(" · ")],
+    ].filter(([, value]) => value !== null && value !== undefined && String(value).trim());
+    detailSubtitle.innerHTML = detailMeta.length
+      ? detailMeta
+          .map(
+            ([label, value]) => `
+              <span>
+                <span class="house-detail-summary-label">${escapeHtml(label)}</span>
+                <strong>${escapeHtml(value)}</strong>
+              </span>`,
+          )
+          .join("")
+      : `<span class="house-detail-summary-empty">House details have not been recorded.</span>`;
+  } else {
+    detailSubtitle.textContent =
+      [house.owner_name, house.employee_name, house.postcode, house.address]
+        .filter(Boolean)
+        .join(" · ") || "House details have not been recorded.";
+  }
   const canViewVentPhotos = house.can_view_vent_photos === true;
   const ventPhotos = house.vent_photos || [];
+  const canViewInsulationPhotos =
+    coordinatorViewOnly && house.can_view_insulation_photos === true;
+  const atticPhotos = house.attic_photos || [];
+  const cavityPhotos = house.cavity_photos || [];
+  const showAtticPhotos =
+    canViewInsulationPhotos && house.attic_required === true;
+  const showCavityPhotos =
+    canViewInsulationPhotos && house.cavity_required === true;
   const canViewPlumbingPhotos = house.can_view_plumbing_photos === true;
   const plumbingPhotos = house.plumbing_photos || [];
   $("#house-detail-vent-photos-card").classList.toggle(
@@ -8515,6 +8840,24 @@ function renderHouseDetail(result) {
     isVentPhotoUploader(state.user)
       ? `${ventHousePhotoUpload(house.id)}${ventHousePhotoUploadStatus(house.id)}`
       : "";
+  $("#house-detail-attic-photos-card").classList.toggle(
+    "hidden",
+    !showAtticPhotos,
+  );
+  $("#house-detail-attic-photos").innerHTML = showAtticPhotos
+    ? atticPhotos.length
+      ? `<div class="vent-house-photo-gallery">${atticPhotos.map((photo) => insulationHousePhotoLink(photo)).join("")}</div>`
+      : `<div class="empty-state"><strong>Photos are necessary</strong><p>No Attic team photos uploaded yet. Photos from the assigned Teamlead will appear here.</p></div>`
+    : "";
+  $("#house-detail-cavity-photos-card").classList.toggle(
+    "hidden",
+    !showCavityPhotos,
+  );
+  $("#house-detail-cavity-photos").innerHTML = showCavityPhotos
+    ? cavityPhotos.length
+      ? `<div class="vent-house-photo-gallery">${cavityPhotos.map((photo) => insulationHousePhotoLink(photo)).join("")}</div>`
+      : `<div class="empty-state"><strong>Photos are necessary</strong><p>No Cavity team photos uploaded yet. Photos from the assigned Teamlead will appear here.</p></div>`
+    : "";
   $("#house-detail-plumbing-photos-card").classList.toggle(
     "hidden",
     !canViewPlumbingPhotos,
@@ -8570,37 +8913,6 @@ function renderHouseDetail(result) {
       },
     )
     .join("");
-  const surveyData = house.survey_data || {};
-  const surveyRows = Object.entries(surveyData)
-    .filter(([, value]) =>
-      value !== null &&
-      value !== undefined &&
-      String(typeof value === "object" ? JSON.stringify(value) : value).trim(),
-    )
-    .map(([key, value]) => {
-      const label = key
-        .replace(/_/g, " ")
-        .replace(/\b\w/g, (letter) => letter.toUpperCase());
-      const displayValue = typeof value === "object"
-        ? JSON.stringify(value)
-        : String(value);
-      return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(displayValue)}</dd></div>`;
-    });
-  const requiredInsulation = [
-    house.attic_required
-      ? `<li>Attic insulation · Survey quantity ${escapeHtml(house.attic_survey_quantity)} m²</li>`
-      : "",
-    house.cavity_required
-      ? `<li>Cavity wall insulation · Survey quantity ${escapeHtml(house.cavity_survey_quantity)} m²</li>`
-      : "",
-  ].filter(Boolean);
-  const surveyMeasures = (house.seai_details?.Measures || [])
-    .filter((measure) => /attic.*insulation|cavity wall.*insulation/i.test(String(measure.Name || "")))
-    .map((measure) => `<li>${escapeHtml(measure.Name)} · Survey quantity ${escapeHtml(measure["Survey Quantity"] ?? "Not recorded")}</li>`);
-  $("#house-detail-survey-content").innerHTML = `
-    <section><h3>Saved survey</h3>${surveyRows.length ? `<dl class="house-detail-survey-list">${surveyRows.join("")}</dl>` : "<p>No saved survey measurements are available.</p>"}${house.survey_notes ? `<p><strong>Survey notes</strong><br>${escapeHtml(house.survey_notes)}</p>` : ""}${house.survey_updated_by ? `<p>Survey recorded by ${escapeHtml(house.survey_updated_by)}${house.survey_updated_at ? ` · ${escapeHtml(formatAuditDateTime(house.survey_updated_at))}` : ""}</p>` : ""}</section>
-    <section><h3>Required insulation</h3>${requiredInsulation.length ? `<ul>${requiredInsulation.join("")}</ul>` : "<p>No Attic or Cavity insulation requirement identified.</p>"}${surveyMeasures.length ? `<h3>SEAI measure details</h3><ul>${surveyMeasures.join("")}</ul>` : ""}</section>`;
-
   const savedChecklistItems = houseWorkPlanChecklistItems(house);
   const toDetailItem = ({ item, label, required, notes, doneBy, doneAt, doneByUserId }) => ({
     item,
@@ -8702,6 +9014,7 @@ function renderHouseDetail(result) {
         "work-plan-detail-grid",
       )}
     </div>`;
+  renderCoordinatorPreStartChecklist(house, coordinatorViewOnly);
   const preStart = house.status === "ready" || house.status === "not_started";
   $("#house-detail-snag-section").classList.toggle("hidden", preStart);
   $("#house-detail-records-title").textContent = preStart
@@ -12638,6 +12951,12 @@ function bindEvents() {
     const button = event.target.closest("[data-teamlead-insulation-complete]");
     if (button && !button.disabled) {
       void completeTeamleadInsulationWork(button);
+    }
+  });
+  $("#teamlead-insulation-work-list").addEventListener("change", (event) => {
+    const input = event.target.closest("[data-teamlead-insulation-photo-upload]");
+    if (input) {
+      void uploadTeamleadInsulationPhotos(input);
     }
   });
   $("#teamlead-ewi-house-filters").addEventListener("click", (event) => {

@@ -75,6 +75,8 @@ HOUSE_VENT_PHOTO_MAX_BYTES = 8_000_000
 HOUSE_VENT_PHOTO_MAX_COUNT = 25
 HOUSE_PLUMBING_PHOTO_MAX_BYTES = HOUSE_VENT_PHOTO_MAX_BYTES
 HOUSE_PLUMBING_PHOTO_MAX_COUNT = HOUSE_VENT_PHOTO_MAX_COUNT
+HOUSE_INSULATION_PHOTO_MAX_BYTES = HOUSE_VENT_PHOTO_MAX_BYTES
+HOUSE_INSULATION_PHOTO_MAX_COUNT = HOUSE_VENT_PHOTO_MAX_COUNT
 HOUSE_DOCUMENT_MAX_PAGES = 300
 HOUSE_DOCUMENT_MAX_ANNOTATIONS = 500
 HOUSE_DOCUMENT_MAX_ANNOTATION_POINTS = 1000
@@ -1649,6 +1651,27 @@ def initialize_db():
         )
         db.execute(
             """
+            CREATE TABLE IF NOT EXISTS house_insulation_photos (
+                id INTEGER PRIMARY KEY,
+                house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
+                work_type TEXT NOT NULL CHECK (work_type IN ('attic', 'cavity')),
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                uploaded_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS house_insulation_photos_job_idx
+            ON house_insulation_photos(house_id, work_type, id DESC)
+            """
+        )
+        db.execute(
+            """
             CREATE TABLE IF NOT EXISTS house_plumbing_photos (
                 id INTEGER PRIMARY KEY,
                 house_id TEXT NOT NULL REFERENCES provided_houses(id) ON DELETE CASCADE,
@@ -2424,17 +2447,48 @@ def _teamlead_insulation_houses(db, teamlead_user_id):
     quantities = _attic_cavity_quantities(
         db, list({assignment["id"] for assignment in assignments})
     )
+    visible_assignments = [
+        assignment
+        for assignment in assignments
+        if assignment["ready_for_start"]
+        and not assignment["is_finished"]
+        and quantities.get(assignment["id"], {}).get(assignment["work_type"])
+    ]
+    photos_by_job = {}
+    if visible_assignments:
+        house_ids = list({assignment["id"] for assignment in visible_assignments})
+        placeholders = ",".join("?" for _ in house_ids)
+        for row in db.execute(
+            f"""
+            SELECT id, house_id, work_type, filename, size_bytes,
+                   uploaded_by, uploaded_at
+            FROM house_insulation_photos
+            WHERE house_id IN ({placeholders})
+            ORDER BY id DESC
+            """,
+            house_ids,
+        ):
+            key = (row["house_id"], row["work_type"])
+            photos_by_job.setdefault(key, []).append(
+                {
+                    "id": row["id"],
+                    "filename": row["filename"],
+                    "size_bytes": row["size_bytes"],
+                    "uploaded_by": row["uploaded_by"],
+                    "uploaded_at": row["uploaded_at"],
+                }
+            )
     return [
         {
             **assignment,
             "survey_quantity": quantities.get(assignment["id"], {}).get(
                 assignment["work_type"], ""
             ),
+            "photos": photos_by_job.get(
+                (assignment["id"], assignment["work_type"]), []
+            ),
         }
-        for assignment in assignments
-        if assignment["ready_for_start"]
-        and not assignment["is_finished"]
-        and quantities.get(assignment["id"], {}).get(assignment["work_type"])
+        for assignment in visible_assignments
     ]
 
 
@@ -3944,6 +3998,99 @@ def _vent_house_photo_metadata(db, house_id):
     ]
 
 
+def _prepare_house_photo(filename, file_data):
+    if len(file_data) > HOUSE_VENT_PHOTO_MAX_BYTES:
+        raise ApiError(400, "House photos must be 8 MB or smaller.")
+    suffix = Path(filename).suffix.lower()
+    extension_format = Image.registered_extensions().get(suffix)
+    try:
+        with Image.open(BytesIO(file_data)) as image:
+            image_format = image.format
+            width, height = image.size
+            mime_type = Image.MIME.get(image_format, "")
+            if (
+                not extension_format
+                or image_format != extension_format
+                or not mime_type.startswith("image/")
+                or width < 1
+                or height < 1
+                or width > 10000
+                or height > 10000
+                or width * height > 40_000_000
+            ):
+                raise ValueError("Unsupported image format or dimensions.")
+            image.verify()
+    except (
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombError,
+    ) as exc:
+        raise ApiError(
+            400,
+            "House photos must be valid image files with a matching extension and no larger than 40 megapixels.",
+        ) from exc
+    if image_format not in {"JPEG", "PNG", "GIF", "WEBP", "BMP"}:
+        try:
+            with Image.open(BytesIO(file_data)) as image:
+                image.seek(0)
+                image = ImageOps.exif_transpose(image)
+                has_alpha = "A" in image.getbands() or "transparency" in image.info
+                output_format = "PNG" if has_alpha else "JPEG"
+                output = BytesIO()
+                save_options = (
+                    {"quality": 90, "optimize": True}
+                    if output_format == "JPEG"
+                    else {}
+                )
+                image.convert("RGBA" if has_alpha else "RGB").save(
+                    output,
+                    format=output_format,
+                    **save_options,
+                )
+        except (
+            OSError,
+            SyntaxError,
+            ValueError,
+            Image.DecompressionBombError,
+        ) as exc:
+            raise ApiError(
+                400,
+                "The selected photo could not be converted for viewing.",
+            ) from exc
+        file_data = output.getvalue()
+        if len(file_data) > HOUSE_VENT_PHOTO_MAX_BYTES:
+            raise ApiError(400, "The converted house photo exceeds the 8 MB limit.")
+        filename = str(
+            Path(filename).with_suffix(
+                ".png" if output_format == "PNG" else ".jpg"
+            )
+        )
+        mime_type = Image.MIME[output_format]
+    return filename, mime_type, file_data
+
+
+def _teamlead_insulation_photo_metadata(db, house_id, work_type):
+    return [
+        {
+            "id": row["id"],
+            "filename": row["filename"],
+            "size_bytes": row["size_bytes"],
+            "uploaded_by": row["uploaded_by"],
+            "uploaded_at": row["uploaded_at"],
+        }
+        for row in db.execute(
+            """
+            SELECT id, filename, size_bytes, uploaded_by, uploaded_at
+            FROM house_insulation_photos
+            WHERE house_id = ? AND work_type = ?
+            ORDER BY id DESC
+            """,
+            (house_id, work_type),
+        )
+    ]
+
+
 def _plumbing_house_photo_metadata(db, house_id):
     return [
         {
@@ -4384,7 +4531,8 @@ def _ventilation_coordinator_dashboard(db):
                    COALESCE(p.plan_vent_done_by, '') AS done_by,
                    COALESCE(p.plan_vent_done_at, '') AS done_at,
                    p.plan_vent_required,
-                   'ready' AS status,
+                   CASE WHEN p.ready_for_start = 1 THEN 'ready'
+                        ELSE 'active' END AS status,
                    assignment.teamlead_user_id AS assigned_teamlead_user_id,
                    COALESCE(teamlead.display_name, '') AS assigned_teamlead_name,
                    COALESCE(teamlead.team_name, '') AS assigned_team_name,
@@ -4397,6 +4545,7 @@ def _ventilation_coordinator_dashboard(db):
                    COALESCE(survey.updated_at, '') AS survey_updated_at
             FROM provided_houses p
             JOIN house_surveys survey ON survey.house_id = p.id
+            LEFT JOIN houses active ON active.id = p.id
             LEFT JOIN house_vent_assignments assignment ON assignment.house_id = p.id
             LEFT JOIN app_users teamlead ON teamlead.id = assignment.teamlead_user_id
             LEFT JOIN house_role_assignments survey_assignment
@@ -4405,6 +4554,7 @@ def _ventilation_coordinator_dashboard(db):
             LEFT JOIN app_users surveyor
               ON surveyor.id = survey_assignment.user_id
             WHERE p.ready_for_start = 1
+               OR (active.id IS NOT NULL AND active.is_finished = 0)
             ORDER BY p.id COLLATE NOCASE
             """
         )
@@ -5044,6 +5194,16 @@ class LegacyRouteHandlers:
                                 db, photo["house_id"]
                             )
                         )
+                elif path.startswith("/api/house-insulation-photos/"):
+                    photo_path = path[
+                        len("/api/house-insulation-photos/"):
+                    ].split("/")
+                    if (
+                        len(photo_path) == 2
+                        and photo_path[0].isdigit()
+                        and photo_path[1] == "file"
+                    ):
+                        ventilation_coordinator_read_allowed = True
         if self.command == "GET" and (
             path.startswith("/api/houses/")
             or path.startswith("/api/house-plumbing-photos/")
@@ -6642,6 +6802,81 @@ class LegacyRouteHandlers:
                 self._send_json(404, {"error": "Vent photo was not found."})
                 return
             self._send_house_photo(row["filename"], row["content"], row["mime_type"])
+        elif path.startswith("/api/house-insulation-photos/"):
+            user = self._login_required()
+            if user is None:
+                return
+            is_coordinator = _has_access_profile(user, "ventilation_coordinator")
+            if not is_coordinator:
+                self._send_json(
+                    403,
+                    {"error": "Insulation photo access is required to view these images."},
+                )
+                return
+            photo_path = path[len("/api/house-insulation-photos/"):].split("/")
+            if (
+                len(photo_path) != 2
+                or not photo_path[0].isdigit()
+                or photo_path[1] != "file"
+            ):
+                self._send_json(404, {"error": "Insulation photo was not found."})
+                return
+            with connect_db() as db:
+                row = db.execute(
+                    """
+                    SELECT house_id, work_type, filename, mime_type, content
+                    FROM house_insulation_photos
+                    WHERE id = ?
+                    """,
+                    (int(photo_path[0]),),
+                ).fetchone()
+                can_view = row is not None and _ventilation_coordinator_house_is_visible(
+                    db, row["house_id"]
+                )
+                if not can_view:
+                    row = None
+            if row is None:
+                self._send_json(404, {"error": "Insulation photo was not found."})
+                return
+            self._send_house_photo(row["filename"], row["content"], row["mime_type"])
+        elif path.startswith("/api/teamlead/insulation-work/photos/"):
+            user = self._login_required()
+            if user is None:
+                return
+            if not _has_access_profile(user, "teamlead"):
+                self._send_json(403, {"error": "Teamlead access is required to view insulation photos."})
+                return
+            photo_path = path[len("/api/teamlead/insulation-work/photos/"):].split("/")
+            if (
+                len(photo_path) != 2
+                or not photo_path[0].isdigit()
+                or photo_path[1] != "file"
+            ):
+                self._send_json(404, {"error": "Insulation photo was not found."})
+                return
+            with connect_db() as db:
+                row = db.execute(
+                    """
+                    SELECT house_id, work_type, filename, mime_type, content
+                    FROM house_insulation_photos
+                    WHERE id = ?
+                    """,
+                    (int(photo_path[0]),),
+                ).fetchone()
+                assigned = row is not None and db.execute(
+                    """
+                    SELECT 1
+                    FROM house_insulation_assignments
+                    WHERE house_id = ? AND work_type = ? AND teamlead_user_id = ?
+                    """,
+                    (row["house_id"], row["work_type"], user["id"]),
+                ).fetchone()
+                if not assigned:
+                    row = None
+            if row is None:
+                self._send_json(404, {"error": "Insulation photo was not found."})
+                return
+            self._send_house_photo(row["filename"], row["content"], row["mime_type"])
         elif path.startswith("/api/house-documents/"):
             user = self._login_required()
             if user is None:
@@ -7862,11 +8097,19 @@ class LegacyRouteHandlers:
                         requirements = _attic_cavity_quantities(db, [house_id]).get(
                             house_id, {}
                         )
-                        application = db.execute(
-                            "SELECT detail_data_json FROM seai_applications "
-                            "WHERE application_id = ?",
-                            (house_id,),
+                        application_table = db.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                            "AND name = 'seai_applications'"
                         ).fetchone()
+                        application = (
+                            db.execute(
+                                "SELECT detail_data_json FROM seai_applications "
+                                "WHERE application_id = ?",
+                                (house_id,),
+                            ).fetchone()
+                            if application_table
+                            else None
+                        )
                         try:
                             seai_details = (
                                 json.loads(application["detail_data_json"])
@@ -7894,6 +8137,13 @@ class LegacyRouteHandlers:
                                 "cavity_required": "cavity" in requirements,
                                 "cavity_survey_quantity": requirements.get(
                                     "cavity", ""
+                                ),
+                                "can_view_insulation_photos": True,
+                                "attic_photos": _teamlead_insulation_photo_metadata(
+                                    db, house_id, "attic"
+                                ),
+                                "cavity_photos": _teamlead_insulation_photo_metadata(
+                                    db, house_id, "cavity"
                                 ),
                             }
                         )
@@ -10175,82 +10425,9 @@ class LegacyRouteHandlers:
                     raise ApiError(400, "Choose a valid image filename.")
                 if not file_data:
                     raise ApiError(400, "Choose an image to upload.")
-                if len(file_data) > HOUSE_VENT_PHOTO_MAX_BYTES:
-                    raise ApiError(400, "House photos must be 8 MB or smaller.")
-                suffix = Path(filename).suffix.lower()
-                extension_format = Image.registered_extensions().get(suffix)
-                try:
-                    with Image.open(BytesIO(file_data)) as image:
-                        image_format = image.format
-                        width, height = image.size
-                        mime_type = Image.MIME.get(image_format, "")
-                        if (
-                            not extension_format
-                            or image_format != extension_format
-                            or not mime_type.startswith("image/")
-                            or width < 1
-                            or height < 1
-                            or width > 10000
-                            or height > 10000
-                            or width * height > 40_000_000
-                        ):
-                            raise ValueError("Unsupported image format or dimensions.")
-                        image.verify()
-                except (
-                    OSError,
-                    SyntaxError,
-                    ValueError,
-                    Image.DecompressionBombError,
-                ) as exc:
-                    raise ApiError(
-                        400,
-                        "House photos must be valid image files with a matching extension and no larger than 40 megapixels.",
-                    ) from exc
-                if image_format not in {"JPEG", "PNG", "GIF", "WEBP", "BMP"}:
-                    try:
-                        with Image.open(BytesIO(file_data)) as image:
-                            image.seek(0)
-                            image = ImageOps.exif_transpose(image)
-                            has_alpha = (
-                                "A" in image.getbands()
-                                or "transparency" in image.info
-                            )
-                            output_format = "PNG" if has_alpha else "JPEG"
-                            output = BytesIO()
-                            save_options = (
-                                {"quality": 90, "optimize": True}
-                                if output_format == "JPEG"
-                                else {}
-                            )
-                            image.convert(
-                                "RGBA" if has_alpha else "RGB"
-                            ).save(
-                                output,
-                                format=output_format,
-                                **save_options,
-                            )
-                    except (
-                        OSError,
-                        SyntaxError,
-                        ValueError,
-                        Image.DecompressionBombError,
-                    ) as exc:
-                        raise ApiError(
-                            400,
-                            "The selected photo could not be converted for viewing.",
-                        ) from exc
-                    file_data = output.getvalue()
-                    if len(file_data) > HOUSE_VENT_PHOTO_MAX_BYTES:
-                        raise ApiError(
-                            400,
-                            "The converted house photo exceeds the 8 MB limit.",
-                        )
-                    filename = str(
-                        Path(filename).with_suffix(
-                            ".png" if output_format == "PNG" else ".jpg"
-                        )
-                    )
-                    mime_type = Image.MIME[output_format]
+                filename, mime_type, file_data = _prepare_house_photo(
+                    filename, file_data
+                )
                 with connect_db() as db:
                     with db:
                         if not _ventilation_house_is_visible(
@@ -10287,6 +10464,147 @@ class LegacyRouteHandlers:
                         "house_id": house_id,
                         "filename": filename,
                         "size_bytes": len(file_data),
+                    },
+                )
+                return
+            if path == "/api/teamlead/insulation-work/photos":
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.startswith("multipart/form-data;"):
+                    raise ApiError(400, "Upload an image using the file picker.")
+                body = self._body()
+                match = re.search(r'boundary="?([^";]+)"?', content_type)
+                if not match:
+                    raise ApiError(400, "Invalid image upload.")
+                try:
+                    boundary = match.group(1).encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ApiError(400, "Invalid image upload boundary.") from exc
+                house_id = ""
+                work_type = ""
+                filename = ""
+                file_data = None
+                for part in body.split(b"--" + boundary):
+                    if b"\r\n\r\n" not in part:
+                        continue
+                    headers, content = part.split(b"\r\n\r\n", 1)
+                    disposition = re.search(
+                        rb'Content-Disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="([^"]*)")?',
+                        headers,
+                        re.IGNORECASE,
+                    )
+                    if not disposition:
+                        continue
+                    raw_content = content.rsplit(b"\r\n", 1)[0]
+                    field_name = disposition.group(1)
+                    if field_name in {b"house_id", b"work_type"}:
+                        try:
+                            field_value = raw_content.decode("utf-8").strip()
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid photo upload details.") from exc
+                        if field_name == b"house_id":
+                            house_id = field_value
+                        else:
+                            work_type = field_value
+                    elif field_name == b"file":
+                        if file_data is not None:
+                            raise ApiError(400, "Upload one image at a time.")
+                        raw_filename = disposition.group(2) or b""
+                        try:
+                            filename = (
+                                raw_filename.decode("utf-8")
+                                .replace("\\", "/")
+                                .rsplit("/", 1)[-1]
+                                .strip()
+                            )
+                        except UnicodeDecodeError as exc:
+                            raise ApiError(400, "Invalid image filename.") from exc
+                        file_data = raw_content
+                if not house_id or len(house_id) > 120:
+                    raise ApiError(400, "Enter a valid house ID.")
+                if work_type not in {"attic", "cavity"}:
+                    raise ApiError(400, "Choose Attic or Cavity insulation work.")
+                if not filename or len(filename) > 200:
+                    raise ApiError(400, "Choose a valid image filename.")
+                if not file_data:
+                    raise ApiError(400, "Choose an image to upload.")
+                filename, mime_type, file_data = _prepare_house_photo(
+                    filename, file_data
+                )
+                uploaded_at = datetime.now().isoformat(timespec="seconds")
+                with connect_db() as db:
+                    with db:
+                        assignment = db.execute(
+                            """
+                            SELECT assignment.completed_at,
+                                   provided.ready_for_start,
+                                   COALESCE(active.is_finished, 0) AS is_finished
+                            FROM house_insulation_assignments assignment
+                            JOIN provided_houses provided
+                              ON provided.id = assignment.house_id
+                            LEFT JOIN houses active
+                              ON active.id = assignment.house_id
+                            WHERE assignment.house_id = ?
+                              AND assignment.work_type = ?
+                              AND assignment.teamlead_user_id = ?
+                            """,
+                            (house_id, work_type, user["id"]),
+                        ).fetchone()
+                        if assignment is None:
+                            raise ApiError(
+                                404,
+                                "That insulation job is not assigned to your work queue.",
+                            )
+                        if assignment["is_finished"] or not assignment["ready_for_start"]:
+                            raise ApiError(
+                                409,
+                                "This house is not ready for insulation work.",
+                            )
+                        if assignment["completed_at"]:
+                            raise ApiError(
+                                409,
+                                "This insulation job is already complete and cannot accept more photos.",
+                            )
+                        count = db.execute(
+                            """
+                            SELECT COUNT(*)
+                            FROM house_insulation_photos
+                            WHERE house_id = ? AND work_type = ?
+                            """,
+                            (house_id, work_type),
+                        ).fetchone()[0]
+                        if count >= HOUSE_INSULATION_PHOTO_MAX_COUNT:
+                            raise ApiError(
+                                409,
+                                "This insulation job already has the maximum of 25 photos.",
+                            )
+                        cursor = db.execute(
+                            """
+                            INSERT INTO house_insulation_photos
+                                (house_id, work_type, filename, mime_type, content,
+                                 size_bytes, uploaded_by, uploaded_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                house_id,
+                                work_type,
+                                filename,
+                                mime_type,
+                                file_data,
+                                len(file_data),
+                                user["display_name"],
+                                uploaded_at,
+                            ),
+                        )
+                self._send_json(
+                    201,
+                    {
+                        "id": cursor.lastrowid,
+                        "house_id": house_id,
+                        "work_type": work_type,
+                        "filename": filename,
+                        "size_bytes": len(file_data),
+                        "uploaded_by": user["display_name"],
+                        "uploaded_at": uploaded_at,
                     },
                 )
                 return
@@ -10414,6 +10732,12 @@ class LegacyRouteHandlers:
                         403,
                         "Teamlead access is required to complete assigned insulation work.",
                     )
+            elif path == "/api/teamlead/insulation-work/photos":
+                if not _has_access_profile(user, "teamlead"):
+                    raise ApiError(
+                        403,
+                        "Teamlead access is required to upload insulation photos.",
+                    )
             elif path == "/api/house-assignments":
                 if not (_has_access_profile(user, "admin") or _has_access_profile(user, "assign")):
                     raise ApiError(
@@ -10495,7 +10819,21 @@ class LegacyRouteHandlers:
                         if not _ventilation_coordinator_house_is_visible(db, house_id):
                             raise ApiError(
                                 409,
-                                "Choose a surveyed house that is Ready for Start.",
+                                "Choose a surveyed Ready for Start or active house.",
+                            )
+                        ready_house = db.execute(
+                            """
+                            SELECT 1 FROM provided_houses p
+                            LEFT JOIN houses active ON active.id = p.id
+                            WHERE p.id = ? AND p.ready_for_start = 1
+                              AND (active.id IS NULL OR active.is_finished = 0)
+                            """,
+                            (house_id,),
+                        ).fetchone()
+                        if not ready_house:
+                            raise ApiError(
+                                409,
+                                "Insulation assignments can only be changed before activation.",
                             )
                         if work_type not in _attic_cavity_quantities(
                             db, [house_id]
@@ -11396,6 +11734,22 @@ class LegacyRouteHandlers:
                                 raise ApiError(
                                     409,
                                     "This house is closed and cannot be updated.",
+                                )
+                            if (
+                                not assignment["completed_at"]
+                                and not db.execute(
+                                    """
+                                    SELECT 1
+                                    FROM house_insulation_photos
+                                    WHERE house_id = ? AND work_type = ?
+                                    LIMIT 1
+                                    """,
+                                    (house_id, work_type),
+                                ).fetchone()
+                            ):
+                                raise ApiError(
+                                    409,
+                                    f"Photos are necessary. Upload at least one {work_type.title()} team photo before marking this job done.",
                                 )
                             if not assignment["completed_at"]:
                                 db.execute(

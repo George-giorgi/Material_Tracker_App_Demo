@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brusna-cat-v3.png">
     <link rel="icon" type="image/x-icon" href="/brusna-cat-v3.ico">
     <link rel="shortcut icon" href="/brusna-cat-v3.ico">
-    <link rel="stylesheet" href="/app.css?v=20261112-checker-lock-highlight-ewi-button-typography-ewi-dropdown-polish-dark-chevron-repeat-helper-copy-active-audit-dark-side-by-side-dark-state-colors-ready-locked-check-required-not-required-groups-surveyor-work-plan-dropdown-card-layout-highlighted-groups-consistent-required-and-not-required-rows-ready-active-work-plan-dropdown-active-card-seai-measures-dark-checkbox-ready-layout-active-seai-columns-visible-values-readable-mobile-labeled-audit-dark-contrast-active-mobile-seai-cell-labels-audit-chip-unit-no-wrap-status-colored-work-plan-titles-neutral-checker-audit">
+    <link rel="stylesheet" href="/app.css?v=20261112-checker-lock-highlight-ewi-button-typography-ewi-dropdown-polish-dark-chevron-repeat-helper-copy-active-audit-dark-side-by-side-dark-state-colors-ready-locked-check-required-not-required-groups-surveyor-work-plan-dropdown-card-layout-highlighted-groups-consistent-required-and-not-required-rows-ready-active-work-plan-dropdown-active-card-seai-measures-dark-checkbox-ready-layout-active-seai-columns-visible-values-readable-mobile-labeled-audit-dark-contrast-active-mobile-seai-cell-labels-audit-chip-unit-no-wrap-status-colored-work-plan-titles-neutral-checker-audit&plumbing-upload-state=20261113-2&house-detail-work-plan-dropdown=20261113-1&coord-prestart-compact=20261113-1">
   </head>
   <body>
     <main id="auth-screen" class="auth-screen hidden">
@@ -451,8 +451,20 @@
                 <h2 id="ventilation-coordinator-greeting-title">Welcome</h2>
               </div>
             </div>
+            <details id="ventilation-coordinator-team-summary" class="ventilation-coordinator-team-summary" aria-labelledby="ventilation-coordinator-team-title">
+              <summary class="ventilation-coordinator-team-heading">
+                <div class="ventilation-coordinator-team-copy">
+                  <div class="ventilation-coordinator-team-title-row">
+                    <h2 id="ventilation-coordinator-team-title">Team job progress</h2>
+                    <span id="ventilation-coordinator-team-count" class="ventilation-coordinator-team-count"></span>
+                  </div>
+                  <p>Assigned and completed jobs for the Attic, Cavity, and Vent teams linked to this account.</p>
+                </div>
+              </summary>
+              <div id="ventilation-coordinator-team-list" class="ventilation-coordinator-team-list"></div>
+            </details>
             <div class="ventilation-workload-heading">
-              <div><p class="plumbing-workload-intro">Ready for Start houses with Attic, Cavity, or Vent work appear here.</p></div>
+              <div><p class="plumbing-workload-intro">Houses with Attic, Cavity, or Vent work appear here.</p></div>
               <div class="ventilation-workload-actions">
                 <label class="search-box house-search-box ventilation-house-search"><span aria-hidden="true">⌕</span><input id="ventilation-coordinator-house-search" type="search" placeholder="Search house, surveyor, or team" aria-label="Search Vent houses, surveyors, or teams"></label>
                 <button class="ventilation-refresh-button" id="refresh-ventilation-coordinator-houses" type="button" aria-label="Refresh Ventilation houses">
@@ -480,7 +492,7 @@
               </div>
             </div>
             <div id="ventilation-coordinator-house-list" class="plumbing-house-list"></div>
-            <div id="ventilation-coordinator-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No qualifying work to assign</strong><p>Ready houses with a completed survey and required insulation or Vent work will appear here.</p></div>
+            <div id="ventilation-coordinator-house-empty" class="ventilation-house-empty hidden"><span class="ventilation-house-empty-icon" aria-hidden="true">⌂</span><strong>No qualifying work to assign</strong><p>Houses with completed surveys and required insulation or Vent work will appear here.</p></div>
           </section>
           <div class="kpi-strip">
             <span><b id="stat-movements">—</b> recent movements</span>
@@ -837,15 +849,14 @@
           </section>
           <section id="house-detail" class="hidden" aria-labelledby="house-detail-title">
             <button class="text-button back-button house-back" id="back-to-houses" type="button">← Back to houses &amp; teams</button>
-            <div class="page-heading house-detail-heading">
+            <header class="house-detail-heading">
               <div class="house-detail-title-group">
-                <div class="eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div>
+                <div class="eyebrow" id="house-detail-eyebrow">HOUSE RECORD &amp; MOVEMENT HISTORY</div>
                 <div class="house-detail-title-line"><h1 id="house-detail-title"></h1><span id="house-detail-status" class="status-pill house-detail-status"></span></div>
                 <p class="page-subtitle" id="house-detail-subtitle"></p>
               </div>
-            </div>
+            </header>
             <nav class="house-detail-nav" id="house-detail-nav" aria-label="House record sections">
-              <button class="hidden" type="button" data-house-detail-target="house-detail-survey-info">Survey information</button>
               <button class="hidden" type="button" data-house-detail-target="house-detail-vent-photos-card">Vent team photos</button>
               <button class="hidden" type="button" data-house-detail-target="house-detail-plumbing-photos-card">Plumbing team photos</button>
               <button type="button" data-house-detail-target="house-detail-stock-card">Materials on site</button>
@@ -853,28 +864,40 @@
               <button type="button" data-house-detail-target="house-history-card">Movement history</button>
             </nav>
             <div id="house-detail-facts" class="house-detail-facts"></div>
-            <article class="card hidden" id="house-detail-survey-info">
-              <div class="card-heading"><div><h2>Survey information</h2><p>Survey measurements, notes, and insulation requirements recorded for this house.</p></div></div>
-              <div id="house-detail-survey-content" class="house-detail-records-grid"></div>
-            </article>
+            <details class="card house-work-plan-summary is-collapsible hidden" id="house-detail-coordinator-work-plan">
+              <summary class="work-plan-heading">
+                <span class="house-stock-title">Pre-start work plan</span>
+                <span class="work-plan-summary-actions"><span class="work-plan-count" id="house-detail-coordinator-work-plan-count">Read only</span><span class="work-plan-summary-chevron" aria-hidden="true"></span></span>
+              </summary>
+              <div id="house-detail-coordinator-work-plan-rows" class="work-plan-detail-groups" aria-live="polite"></div>
+            </details>
             <article class="card house-detail-vent-photos-card hidden" id="house-detail-vent-photos-card">
               <div class="card-heading"><div><h2>Vent team photos</h2><p>Photos attached to this house by the Vent team.</p></div><div id="house-detail-vent-photo-upload"></div></div>
               <div id="house-detail-vent-photos" aria-live="polite"></div>
+            </article>
+            <article class="card house-detail-vent-photos-card house-detail-insulation-photos-card hidden" id="house-detail-attic-photos-card">
+              <div class="card-heading"><div><h2>Attic team photos</h2><p>Photos attached by the assigned Attic Teamlead.</p></div></div>
+              <div id="house-detail-attic-photos" aria-live="polite"></div>
+            </article>
+            <article class="card house-detail-vent-photos-card house-detail-insulation-photos-card hidden" id="house-detail-cavity-photos-card">
+              <div class="card-heading"><div><h2>Cavity team photos</h2><p>Photos attached by the assigned Cavity Teamlead.</p></div></div>
+              <div id="house-detail-cavity-photos" aria-live="polite"></div>
             </article>
             <article class="card house-detail-vent-photos-card hidden" id="house-detail-plumbing-photos-card">
               <div class="card-heading"><div><h2>Plumbing team photos</h2><p>Photos attached to this house by the Plumbing team.</p></div><div id="house-detail-plumbing-photo-upload"></div></div>
               <div id="house-detail-plumbing-photos" aria-live="polite"></div>
             </article>
-            <article class="card house-detail-work-plan hidden" id="house-detail-work-plan">
-              <div class="card-heading">
+            <details class="card house-detail-work-plan is-collapsible hidden" id="house-detail-work-plan">
+              <summary class="card-heading house-detail-work-plan-heading">
                 <div>
                   <span class="work-plan-source-tag">Surveyor plan</span>
                   <h2>Pre-start work plan</h2>
                   <p>Mark applicable items done. The checker and time are saved; only the original checker can undo a check.</p>
                 </div>
-              </div>
+                <span class="work-plan-summary-chevron" aria-hidden="true"></span>
+              </summary>
               <div id="house-detail-work-plan-rows"></div>
-            </article>
+            </details>
             <article class="card house-detail-usage-card hidden" id="house-detail-usage-card">
               <div class="card-heading"><div><h2>Materials used on this finished house</h2><p>Recorded usage plus the remaining on-site quantities automatically closed out when the house was finished.</p></div></div>
               <div id="house-detail-usage" class="house-detail-stock"></div>
@@ -1366,6 +1389,6 @@
     <button class="button button-primary presentation-resume hidden" id="resume-presentation" type="button">Resume presentation</button>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20261112-active-prestart-work-plan-survey-question-rows-supervisor-ewi-action-icons-delivery-reassignment-no-assignment-option-active-audit-generic-ewi-status-short-headings-linked-checklist-state-dark-ux-lock-clarity-row-colors-required-not-required-groups-surveyor-question-cards-surveyor-work-plan-dropdown-card-layout-ready-active-work-plan-dropdown-active-card-seai-measures-dark-checkbox-ready-layout-seai-unit-no-wrap" defer></script>
+    <script src="/app.js?v=20261112-active-prestart-work-plan-survey-question-rows-supervisor-ewi-action-icons-delivery-reassignment-no-assignment-option-active-audit-generic-ewi-status-short-headings-linked-checklist-state-dark-ux-lock-clarity-row-colors-required-not-required-groups-surveyor-question-cards-surveyor-work-plan-dropdown-card-layout-ready-active-work-plan-dropdown-active-card-seai-measures-dark-checkbox-ready-layout-seai-unit-no-wrap-attic-cavity-house-detail-photos-coordinator-prestart-checklist-info&plumbing-upload-state=20261113-2" defer></script>
   </body>
 </html>
