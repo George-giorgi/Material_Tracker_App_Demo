@@ -1062,6 +1062,14 @@ class NavigationBrowserTests(unittest.TestCase):
         work_plan = self.page.locator("#house-detail-work-plan")
         self.assertTrue(work_plan.is_visible())
         self.assertEqual(work_plan.locator("h3").count(), 0)
+        required_group = work_plan.locator(".work-plan-requirement-group-required")
+        not_required_group = work_plan.locator(
+            ".work-plan-requirement-group-not-required"
+        )
+        self.assertTrue(required_group.get_by_role("heading", name="Required").is_visible())
+        self.assertTrue(
+            not_required_group.get_by_role("heading", name="Not Required").is_visible()
+        )
         self.assertTrue(work_plan.get_by_text("Plumber work", exact=True).is_visible())
         self.assertTrue(work_plan.get_by_text("Check water pressure", exact=True).is_visible())
         self.assertTrue(work_plan.get_by_text("Is there a ceramic fuse board?", exact=True).is_visible())
@@ -1069,8 +1077,20 @@ class NavigationBrowserTests(unittest.TestCase):
             has_text="Is there a ceramic fuse board?"
         )
         self.assertTrue(ceramic_board.get_by_text("Required", exact=True).is_visible())
+        self.assertEqual(
+            required_group.locator(".work-plan-detail-item").filter(
+                has_text="Is there a ceramic fuse board?"
+            ).count(),
+            1,
+        )
         self.assertTrue(work_plan.get_by_text("Is solar PV required?", exact=True).is_visible())
         self.assertTrue(work_plan.get_by_text("Not required", exact=True).is_visible())
+        self.assertEqual(
+            not_required_group.locator(".work-plan-detail-item").filter(
+                has_text="Is solar PV required?"
+            ).count(),
+            1,
+        )
         self.assertEqual(
             work_plan.locator(".work-plan-check[data-trade='plumber']").count(),
             0,
@@ -2722,17 +2742,16 @@ class NavigationBrowserTests(unittest.TestCase):
               const details = element.querySelector(".house-insulation-summary").getBoundingClientRect();
               return {
                 buttonWidth: button.width,
+                buttonTop: button.top,
                 buttonBottom: button.bottom,
                 cardBottom: bounds.bottom,
-                detailsTop: details.top,
-                viewportHeight: window.innerHeight
+                detailsBottom: details.bottom
               };
             }"""
         )
         self.assertGreater(button_layout["buttonWidth"], 0)
         self.assertLessEqual(button_layout["buttonBottom"], button_layout["cardBottom"])
-        self.assertLess(button_layout["buttonBottom"], button_layout["viewportHeight"])
-        self.assertLess(button_layout["buttonBottom"], button_layout["detailsTop"])
+        self.assertGreaterEqual(button_layout["buttonTop"], button_layout["detailsBottom"])
         self.assertEqual(
             " ".join(self.page.locator("#houses-list article[data-house-id='DASHBOARD-2'] .surveyor-house-action").inner_text().split()),
             "Review survey · View your room →",
@@ -5214,6 +5233,13 @@ class NavigationBrowserTests(unittest.TestCase):
         for trade in ("scaffolding", "esb", "plumber"):
             work_plan.locator(f"[name='{trade}_required']").select_option("false")
         self.answer_work_plan_questions(work_plan)
+        ceramic_answer = work_plan.locator(
+            "[data-work-plan-dropdown]:has(input[name='ceramic_fuse_board'])"
+        )
+        ceramic_answer.locator("[data-work-plan-dropdown-trigger]").click()
+        ceramic_answer.locator(
+            '[data-work-plan-dropdown-option][data-value="true"]'
+        ).click()
         work_plan.locator("button[type='submit']").click()
         self.page.wait_for_function(
             """() => document.querySelector('#toast').textContent.includes(
@@ -5230,6 +5256,65 @@ class NavigationBrowserTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(survey["updated_by"], "Surveyor One")
         self.assertEqual(json.loads(survey["data"])["perimeter_m"], 42.5)
+        surveyor_card.wait_for()
+        work_plan_dropdown = surveyor_card.locator(
+            "details.house-work-plan-summary"
+        )
+        self.assertTrue(work_plan_dropdown.is_visible())
+        self.assertFalse(work_plan_dropdown.get_attribute("open"))
+        header_layout = work_plan_dropdown.locator("summary").evaluate(
+            """summary => {
+              const title = summary.querySelector(".house-stock-title").getBoundingClientRect();
+              const actions = summary.querySelector(".work-plan-summary-actions").getBoundingClientRect();
+              const bounds = summary.getBoundingClientRect();
+              return {
+                titleRight: title.right,
+                actionsLeft: actions.left,
+                rightGap: bounds.right - actions.right
+              };
+            }"""
+        )
+        self.assertLessEqual(header_layout["titleRight"], header_layout["actionsLeft"])
+        self.assertLessEqual(header_layout["rightGap"], 16)
+        work_plan_dropdown.locator("summary").click()
+        surveyor_checklist = surveyor_card.locator(".work-plan-requirement-groups")
+        surveyor_checklist.wait_for()
+        self.assertTrue(surveyor_checklist.is_visible())
+        not_required_group = surveyor_checklist.locator(
+            ".work-plan-requirement-group-not-required"
+        )
+        self.assertTrue(
+            not_required_group.locator(".work-plan-trade-row").filter(
+                has_text="Scaffolding"
+            ).is_visible()
+        )
+        self.assertTrue(
+            surveyor_checklist.locator(
+                ".work-plan-requirement-group-required"
+            ).is_visible()
+        )
+        surveyor_question_check = surveyor_card.locator(
+            ".work-plan-check[data-trade='ceramic_fuse_board']"
+        )
+        self.assertTrue(surveyor_question_check.is_enabled())
+        surveyor_question_check.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#houses-list [data-house-id='TEAM-ASSIGN-1'] " +
+              ".work-plan-check[data-trade='ceramic_fuse_board']"
+            )?.getAttribute("aria-pressed") === "true" """
+        )
+        surveyor_question_check = surveyor_card.locator(
+            ".work-plan-check[data-trade='ceramic_fuse_board']"
+        )
+        self.assertIn("Surveyor One", surveyor_card.inner_text())
+        surveyor_question_check.click()
+        self.page.wait_for_function(
+            """() => document.querySelector(
+              "#houses-list [data-house-id='TEAM-ASSIGN-1'] " +
+              ".work-plan-check[data-trade='ceramic_fuse_board']"
+            )?.getAttribute("aria-pressed") === "false" """
+        )
 
         self.page.locator("#account-button").click()
         self.page.locator("#account-sign-out").click()
@@ -8147,12 +8232,60 @@ class NavigationBrowserTests(unittest.TestCase):
             checklist.locator(".work-plan-count").inner_text(),
             "5 outstanding",
         )
+        self.assertEqual(checklist.locator(".work-plan-trade-row").count(), 4)
         self.assertEqual(
-            checklist.locator(".work-plan-trade-items .work-plan-row").count(),
-            4,
+            checklist.locator(
+                ".work-plan-requirement-group-required .work-plan-row"
+            ).count(),
+            6,
+        )
+        self.assertEqual(
+            checklist.locator(
+                ".work-plan-requirement-group-not-required .work-plan-row"
+            ).count(),
+            3,
         )
         question_rows = checklist.locator(".work-plan-question-row")
         self.assertEqual(question_rows.count(), 5)
+        trade_required_row = checklist.locator(
+            ".work-plan-trade-row.work-plan-row-required"
+        ).first
+        question_required_row = checklist.locator(
+            ".work-plan-question-row.work-plan-row-required"
+        ).first
+        trade_not_required_row = checklist.locator(
+            ".work-plan-trade-row.work-plan-row-clear"
+        ).first
+        question_not_required_row = checklist.locator(
+            ".work-plan-question-row.work-plan-row-clear"
+        ).first
+        original_theme = self.page.locator("html").get_attribute("data-theme")
+        for theme in ("light", "dark"):
+            self.page.locator("html").evaluate(
+                "(root, value) => root.setAttribute('data-theme', value)",
+                theme,
+            )
+            trade_background = trade_required_row.evaluate(
+                "(row) => getComputedStyle(row).backgroundColor"
+            )
+            question_background = question_required_row.evaluate(
+                "(row) => getComputedStyle(row).backgroundColor"
+            )
+            self.assertEqual(question_background, trade_background)
+            trade_background = trade_not_required_row.evaluate(
+                "(row) => getComputedStyle(row).backgroundColor"
+            )
+            question_background = question_not_required_row.evaluate(
+                "(row) => getComputedStyle(row).backgroundColor"
+            )
+            self.assertEqual(question_background, trade_background)
+        self.page.locator("html").evaluate(
+            """(root, value) => {
+              if (value === null) root.removeAttribute("data-theme");
+              else root.setAttribute("data-theme", value);
+            }""",
+            original_theme,
+        )
         self.assertIn(
             "Not required",
             question_rows.filter(has_text="Is there a ceramic fuse board?").inner_text(),

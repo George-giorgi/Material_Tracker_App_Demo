@@ -3265,6 +3265,11 @@ async function loadSurveyorHouses({ quiet = false } = {}) {
 }
 function renderSurveyorHouses() {
   const query = $("#house-search").value.trim().toLocaleLowerCase();
+  const expandedWorkPlanHouseIds = new Set(
+    $$("#houses-list .surveyor-house-card details.house-work-plan-summary[open]")
+      .map((details) => details.closest(".surveyor-house-card")?.dataset.houseId)
+      .filter(Boolean),
+  );
   const completed = surveyHouses.filter(surveyIsComplete).length;
   $("#surveyor-stat-assigned").textContent = surveyHouses.length;
   $("#surveyor-stat-needed").textContent = surveyHouses.length - completed;
@@ -3309,12 +3314,20 @@ function renderSurveyorHouses() {
           </span>
         </div>`
       : "";
+    const savedChecklist = surveyIsComplete(h) && houseHasSavedWorkPlan(h)
+      ? houseWorkPlanSummaryHtml(
+        h,
+        true,
+        expandedWorkPlanHouseIds.has(h.id),
+      )
+      : "";
     return `<article class="card house-card surveyor-house-card${surveyIsComplete(h) ? " is-surveyed" : ""}" data-house-id="${escapeHtml(h.id)}">
     <div class="house-top"><span class="house-avatar" aria-hidden="true">&#8962;</span><div class="house-meta"><h2>${houseCardTitle(h, escapeHtml(h.id))}</h2><p>${escapeHtml(propertySummary)}</p></div></div>
     ${assignmentCredit}
     <div class="surveyor-house-update"><span class="surveyor-update-indicator ${surveyIsComplete(h) ? "is-complete" : ""}" aria-hidden="true"></span><span>${surveyStatus}</span>${surveyStatusBadge(surveyIsComplete(h), h.survey_updated_at)}</div>
-    <button class="button ${surveyIsComplete(h) ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="${surveyIsComplete(h) ? "Review survey and view your room" : "Start survey and view your room"}">${surveyIsComplete(h) ? "Review survey · View your room" : "Start survey · View your room"} <span aria-hidden="true">→</span></button>
+    ${savedChecklist}
     ${seaiInsulationSummaryHtml(seaiCardDetails(h), h.id)}
+    <button class="button ${surveyIsComplete(h) ? "button-secondary" : "button-primary"} house-survey-open surveyor-house-action" type="button" data-house-id="${escapeHtml(h.id)}" aria-label="${surveyIsComplete(h) ? "Review survey and view your room" : "Start survey and view your room"}">${surveyIsComplete(h) ? "Review survey · View your room" : "Start survey · View your room"} <span aria-hidden="true">→</span></button>
   </article>`;
   }).join("") : `<div class="surveyor-empty-state"><span class="surveyor-empty-icon" aria-hidden="true">⌂</span><strong>${query ? "No matching houses" : surveyHouses.length ? "No houses in this filter" : "No houses assigned yet"}</strong><p>${query ? "Try a different house ID, owner, address or postcode." : surveyHouses.length ? "Choose another filter to see your other assigned houses." : "When a house is assigned to you and marked Ready for start, it will appear here."}</p></div>`;
 }
@@ -6033,35 +6046,132 @@ function workPlanLockNotice(house, item) {
   return `Checked by ${checker}. Only the original checker can change this status.`;
 }
 
-function houseWorkPlanQuestionSection(house, questions) {
+function savedWorkPlanValue(house, item, suffix = "") {
+  const field = `${item}${suffix ? `_${suffix}` : ""}`;
+  const draftField = `draft_plan_${field}`;
+  const canViewDraft =
+    Boolean(house.work_plan_draft_saved_at) &&
+    (hasAccessProfile(state.user, "admin") ||
+      hasAccessProfile(state.user, "surveyor"));
+  return canViewDraft && Object.prototype.hasOwnProperty.call(house, draftField)
+    ? house[draftField]
+    : house[`plan_${field}`];
+}
+
+function houseWorkPlanChecklistItems(house) {
+  const trades = [
+    ["scaffolding", "Scaffolding"],
+    ["esb", "ESB work"],
+    ["plumber", "Plumber work"],
+    ["vent", "Vent work"],
+  ].map(([item, label]) => {
+    const required = savedWorkPlanValue(house, item, "required");
+    const publishedRequired = house[`plan_${item}_required`];
+    const draftChanged =
+      required !== publishedRequired &&
+      Boolean(house.work_plan_draft_saved_at) &&
+      (hasAccessProfile(state.user, "admin") ||
+        hasAccessProfile(state.user, "surveyor"));
+    return {
+      item,
+      label,
+      kind: "trade",
+      required,
+      notes: savedWorkPlanValue(house, item, "notes"),
+      draftChanged,
+      doneBy: draftChanged ? "" : house[`plan_${item}_done_by`],
+      doneAt: draftChanged ? "" : house[`plan_${item}_done_at`],
+      doneByUserId: draftChanged ? null : house[`plan_${item}_done_by_user_id`],
+    };
+  });
+  const questions = WORK_PLAN_SURVEY_QUESTIONS.map(([item, label]) => {
+    const required = savedWorkPlanValue(house, item);
+    const publishedRequired = house[`plan_${item}`];
+    const draftChanged =
+      required !== publishedRequired &&
+      Boolean(house.work_plan_draft_saved_at) &&
+      (hasAccessProfile(state.user, "admin") ||
+        hasAccessProfile(state.user, "surveyor"));
+    return {
+      item,
+      label,
+      kind: "question",
+      required,
+      notes: "",
+      draftChanged,
+      doneBy: draftChanged ? "" : house[`plan_${item}_done_by`],
+      doneAt: draftChanged ? "" : house[`plan_${item}_done_at`],
+      doneByUserId: draftChanged
+        ? null
+        : house[`plan_${item}_done_by_user_id`],
+    };
+  });
+  return [...trades, ...questions];
+}
+
+function renderWorkPlanRequirementGroups(
+  requiredRows,
+  notRequiredRows,
+  itemGridClass,
+) {
+  const renderGroup = (key, label, rows, emptyMessage) => `
+    <section class="work-plan-requirement-group work-plan-requirement-group-${key}" aria-label="${label}">
+      <header class="work-plan-requirement-heading">
+        <h4>${label}</h4>
+        <span>${rows.length}</span>
+      </header>
+      <div class="${itemGridClass}">${rows.length
+        ? rows.join("")
+        : `<p class="work-plan-requirement-empty">${emptyMessage}</p>`}</div>
+    </section>`;
+  return `<div class="work-plan-requirement-groups">
+    ${renderGroup("required", "Required", requiredRows, "No items require action.")}
+    ${renderGroup("not-required", "Not Required", notRequiredRows, "No items marked not required.")}
+  </div>`;
+}
+
+function houseHasSavedWorkPlan(house) {
+  return houseWorkPlanChecklistItems(house).some(
+    ({ required, notes }) =>
+      (required !== null && required !== undefined) || Boolean(notes),
+  );
+}
+
+function houseWorkPlanQuestionSection(house) {
   const permissions = house.work_plan_permissions || {};
+  const questions = houseWorkPlanChecklistItems(house).filter(
+    ({ kind }) => kind === "question",
+  );
   const recorded = questions.some(
-    ([, , answer]) => answer !== null && answer !== undefined,
+    ({ required }) => required !== null && required !== undefined,
   );
   const openCount = recorded
     ? questions.filter(
-      ([key, , answer]) =>
-        answer === null ||
-        answer === undefined ||
-        (Number(answer) === 1 && !house[`plan_${key}_done_by`]),
+      ({ required, doneBy }) =>
+        required === null ||
+        required === undefined ||
+        (Number(required) === 1 && !doneBy),
     ).length
     : 0;
-  const html = recorded
-    ? `<div class="work-plan-question-summary" role="group" aria-label="Survey questions"><div class="work-plan-question-items">${questions.map(([key, label, answer]) => {
-      const isAnswered = answer !== null && answer !== undefined;
-      const isNotRequired = isAnswered && Number(answer) !== 1;
-      const isDone = isAnswered && !isNotRequired && Boolean(house[`plan_${key}_done_by`]);
-      const canCheck = isAnswered && !isNotRequired && permissions[key] === true;
+  const requiredRows = [];
+  const notRequiredRows = [];
+  if (recorded) {
+    for (const question of questions) {
+      const { item, label, required, doneBy, doneAt } = question;
+      const isAnswered = required !== null && required !== undefined;
+      const isNotRequired = isAnswered && Number(required) !== 1;
+      const isDone = isAnswered && !isNotRequired && Boolean(doneBy);
+      const canCheck = isAnswered && !isNotRequired && permissions[item] === true;
       const tone = !isAnswered ? "unset" : isNotRequired ? "clear" : isDone ? "done" : "required";
-      const doneBy = house[`plan_${key}_done_by`];
-      const isLocked = isDone && !workPlanCheckedByCurrentUser(house, key);
+      const isLocked = isDone && !workPlanCheckedByCurrentUser(house, item);
       const control = canCheck
-        ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${key}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, key)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
+        ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${item}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, item)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
         : `<span class="work-plan-icon" aria-hidden="true">${!isAnswered ? "?" : isNotRequired || isDone ? "✓" : "!"}</span>`;
-      return `<div class="work-plan-row work-plan-row-${tone} work-plan-question-row">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${key}_done_at`], key))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
-    }).join("")}</div></div>`
-    : "";
-  return { html, recorded, openCount };
+      const row = `<div class="work-plan-row work-plan-question-row work-plan-row-${tone}">${control}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, item))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${!isAnswered ? "Not answered" : isNotRequired ? "Not required" : isDone ? "Done" : "Required"}</span></div>`;
+      (isNotRequired ? notRequiredRows : requiredRows).push(row);
+    }
+  }
+  return { requiredRows, notRequiredRows, recorded, openCount };
 }
 
 function activeHouseSurveyReferenceHtml(house) {
@@ -6122,33 +6232,30 @@ function activeHouseSurveyReferenceHtml(house) {
   return `<details class="house-survey-reference"><summary><span>Ready-stage survey record</span><small>${escapeHtml(summary)}</small></summary><div class="house-survey-reference-content"><p class="house-survey-reference-meta">${savedDetails || "Survey save details not recorded"}</p><div class="house-survey-reference-grid">${windows}${doors}${corners}</div><div class="house-survey-reference-perimeter"><strong>Surveyed perimeter</strong><span>${escapeHtml(perimeter)}</span></div>${notes ? `<div class="house-survey-reference-notes"><strong>Survey notes</strong><p>${escapeHtml(notes)}</p></div>` : ""}</div></details>`;
 }
 
-function houseWorkPlanSummaryHtml(house) {
+function houseWorkPlanSummaryHtml(house, collapsible = false, open = false) {
   const permissions = house.work_plan_permissions || {};
-  const rows = [
-    ["scaffolding", "Scaffolding", house.plan_scaffolding_required, house.plan_scaffolding_notes],
-    ["esb", "ESB work", house.plan_esb_required, house.plan_esb_notes],
-    ["plumber", "Plumber work", house.plan_plumber_required, house.plan_plumber_notes],
-    ["vent", "Vent work", house.plan_vent_required, house.plan_vent_notes],
-  ];
-  const questions = WORK_PLAN_SURVEY_QUESTIONS.map(([key, label]) => [
-    key,
-    label,
-    house[`plan_${key}`],
-  ]);
-  const questionSection = houseWorkPlanQuestionSection(house, questions);
+  const checklistItems = houseWorkPlanChecklistItems(house);
+  const trades = checklistItems.filter(({ kind }) => kind === "trade");
+  const questions = checklistItems.filter(({ kind }) => kind === "question");
+  const questionSection = houseWorkPlanQuestionSection(house);
   const questionsRecorded = questionSection.recorded;
   const recorded =
-    rows.some(([, , required]) => required !== null && required !== undefined) ||
+    trades.some(({ required }) => required !== null && required !== undefined) ||
     questionsRecorded;
-  const isDoneTrade = (trade, required) =>
+  const isDoneTrade = ({ item, required, doneBy, draftChanged }) =>
+    !draftChanged &&
     Number(required) === 1 &&
-    (trade === "plumber"
-      ? house.plumber_status === "done" || Boolean(house.plan_plumber_done_by)
-      : Boolean(house[`plan_${trade}_done_by`]));
-  const requiredCount = rows.filter(([, , required]) => Number(required) === 1).length;
+    (item === "plumber"
+      ? house.plumber_status === "done" || Boolean(doneBy)
+      : Boolean(doneBy));
+  const requiredCount = trades.filter(
+    ({ required }) => Number(required) === 1,
+  ).length;
   const trackedQuestionCount = questionsRecorded ? questions.length : 0;
   const openCount =
-    rows.filter(([trade, , required]) => Number(required) === 1 && !isDoneTrade(trade, required)).length +
+    trades.filter(
+      (item) => Number(item.required) === 1 && !isDoneTrade(item),
+    ).length +
     questionSection.openCount;
   const trackedCount = requiredCount + trackedQuestionCount;
   const summary = !recorded
@@ -6158,11 +6265,13 @@ function houseWorkPlanSummaryHtml(house) {
       : openCount
         ? `${openCount} outstanding`
         : "All done";
-  return `<div class="house-work-plan-summary"><div class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span>${summary ? `<span class="work-plan-count${openCount ? " has-required" : ""}">${summary}</span>` : ""}</div>${recorded ? `<div class="work-plan-trade-items">${rows.map(([trade, label, required, notes]) => {
+  const requiredRows = [];
+  const notRequiredRows = [];
+  for (const workItem of trades) {
+    const { item: trade, label, required, notes, doneBy, doneAt, draftChanged } = workItem;
     const isSet = required !== null && required !== undefined;
     const isRequired = Number(required) === 1;
-    const isDone = isDoneTrade(trade, required);
-    const doneBy = house[`plan_${trade}_done_by`];
+    const isDone = isDoneTrade(workItem);
     const tone = !isSet ? "unset" : isDone ? "done" : isRequired ? "required" : "clear";
     const isLocked = isDone && !workPlanCheckedByCurrentUser(house, trade);
     const canCheck = isRequired && permissions[trade] === true;
@@ -6170,8 +6279,24 @@ function houseWorkPlanSummaryHtml(house) {
       ? `<button class="work-plan-check" type="button" data-house-id="${escapeHtml(house.id)}" data-trade="${trade}" aria-pressed="${isDone}" aria-label="${isLocked ? escapeHtml(workPlanLockNotice(house, trade)) : `${isDone ? "Mark as not done:" : "Mark as done:"} ${escapeHtml(label)}`}"${isLocked ? " disabled" : ""}>${isDone ? "✓" : ""}</button>`
       : `<span class="work-plan-icon" aria-hidden="true">${!isSet ? "?" : isDone ? "✓" : isRequired ? "!" : "✓"}</span>`;
     const badge = !isSet ? "Not set" : isDone ? "Done" : isRequired ? "Required" : "Not required";
-    return `<div class="work-plan-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, house[`plan_${trade}_done_at`], trade))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
-  }).join("")}</div>` : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>'}${questionSection.html}</div>`;
+    const row = `<div class="work-plan-row work-plan-trade-row work-plan-row-${tone}">${icon}<span class="work-plan-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${isDone && doneBy ? `<small class="work-plan-done-by">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, trade))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}` : ""}</span><span class="work-plan-badge">${badge}</span></div>`;
+    (isSet && !isRequired ? notRequiredRows : requiredRows).push(row);
+  }
+  requiredRows.push(...questionSection.requiredRows);
+  notRequiredRows.push(...questionSection.notRequiredRows);
+  const countBadge = summary
+    ? `<span class="work-plan-count${openCount ? " has-required" : ""}">${summary}</span>`
+    : "";
+  const heading = collapsible
+    ? `<summary class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span><span class="work-plan-summary-actions">${countBadge}<span class="work-plan-summary-chevron" aria-hidden="true"></span></span></summary>`
+    : `<div class="work-plan-heading"><span class="house-stock-title">Pre-start work plan</span>${countBadge}</div>`;
+  const content = recorded
+    ? renderWorkPlanRequirementGroups(requiredRows, notRequiredRows, "work-plan-trade-items")
+    : '<div class="work-plan-empty" role="status"><span class="work-plan-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.75h7l4 4v12.5H7z"></path><path d="M14 3.75v4h4M10 12h5m-5 3.5h5"></path></svg></span><span class="work-plan-empty-copy"><strong>Work plan not added yet</strong><small>The Surveyor will add the pre-start work details here.</small></span></div>';
+  if (collapsible) {
+    return `<details class="house-work-plan-summary is-collapsible"${open ? " open" : ""}>${heading}${content}</details>`;
+  }
+  return `<div class="house-work-plan-summary">${heading}${content}</div>`;
 }
 async function toggleWorkPlanDone(button) {
   if (button.disabled) return;
@@ -6195,6 +6320,12 @@ async function toggleWorkPlanDone(button) {
         house[`plan_${trade}_done_by_user_id`] = result.done_by_user_id;
       }
     }
+    for (const house of surveyHouses) {
+      if (house.id !== houseId) continue;
+      house[`plan_${trade}_done_by`] = result.done_by;
+      house[`plan_${trade}_done_at`] = result.done_at;
+      house[`plan_${trade}_done_by_user_id`] = result.done_by_user_id;
+    }
     for (const house of state.houseMapData || []) {
       if (house.id !== houseId) continue;
       house[`plan_${trade}_done_by`] = result.done_by;
@@ -6203,6 +6334,8 @@ async function toggleWorkPlanDone(button) {
     }
     if (state.viewingHouseId === houseId) {
       await loadHouseDetail(houseId);
+    } else if (hasAccessProfile(state.user, "surveyor")) {
+      renderSurveyorHouses();
     } else {
       renderNotStartedHouses($("#house-search").value.trim().toLocaleLowerCase(), "ready");
     }
@@ -7697,12 +7830,10 @@ function renderHouses() {
     const requiredChecklist = checklist.filter(([, , , , required]) =>
       Number(required) === 1,
     );
-    const workPlanQuestions = WORK_PLAN_SURVEY_QUESTIONS.map(([key, label]) => [
-      key,
-      label,
-      house[`plan_${key}`],
-    ]);
-    const questionSection = houseWorkPlanQuestionSection(house, workPlanQuestions);
+    const workPlanQuestions = houseWorkPlanChecklistItems(house).filter(
+      ({ kind }) => kind === "question",
+    );
+    const questionSection = houseWorkPlanQuestionSection(house);
     const ventRequired = Number(house.plan_vent_required) === 1;
     const requiredWorkCount = requiredChecklist.length + (ventRequired ? 1 : 0);
     const trackedWorkCount = requiredWorkCount + (questionSection.recorded ? workPlanQuestions.length : 0);
@@ -7723,7 +7854,9 @@ function renderHouses() {
         : openWorkCount
           ? `${openWorkCount} outstanding`
           : "All done";
-    const checklistRows = checklist.map(
+    const requiredRows = [];
+    const notRequiredRows = [];
+    checklist.forEach(
       ([label, status, field, notes, required, doneBy, doneAt]) => {
         const isSet = required !== null && required !== undefined;
         const isRequired = Number(required) === 1;
@@ -7764,7 +7897,8 @@ function renderHouses() {
         const completionAudit = doneBy
           ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(doneBy, doneAt, trade))}</small>${isLocked ? '<small class="work-plan-lock-note">Only the original checker can change this.</small>' : ""}`
           : `<small class="work-plan-done-by checklist-completion-audit hidden"></small>`;
-        return `<div class="checklist-card-row work-plan-row work-plan-row-${tone}">${statusHtml}<span class="work-plan-label checklist-card-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${completionAudit}</span><span class="work-plan-badge">${badge}</span></div>`;
+        const row = `<div class="checklist-card-row work-plan-row work-plan-trade-row work-plan-row-${tone}">${statusHtml}<span class="work-plan-label checklist-card-label"><strong>${escapeHtml(label)}</strong>${notes ? `<small>${escapeHtml(notes)}</small>` : ""}${completionAudit}</span><span class="work-plan-badge">${badge}</span></div>`;
+        (isSet && !isRequired ? notRequiredRows : requiredRows).push(row);
       },
     );
     const ventIsSet = house.plan_vent_required !== null && house.plan_vent_required !== undefined;
@@ -7772,8 +7906,13 @@ function renderHouses() {
     const ventTone = !ventIsSet ? "unset" : ventDone ? "done" : ventRequired ? "required" : "clear";
     const ventBadge = !ventIsSet ? "Not set" : ventDone ? "Done" : ventRequired ? "Required" : "Not required";
     const ventRow = ventIsSet
-      ? `<div class="checklist-card-row work-plan-row work-plan-row-${ventTone}"><span class="work-plan-icon" aria-hidden="true">${ventDone || !ventRequired ? "✓" : "!"}</span><span class="work-plan-label checklist-card-label"><strong>Vent work</strong>${house.plan_vent_notes ? `<small>${escapeHtml(house.plan_vent_notes)}</small>` : ""}${house.plan_vent_done_by ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(house.plan_vent_done_by, house.plan_vent_done_at, "vent"))}</small>` : ""}</span><span class="work-plan-badge">${ventBadge}</span></div>`
+      ? `<div class="checklist-card-row work-plan-row work-plan-trade-row work-plan-row-${ventTone}"><span class="work-plan-icon" aria-hidden="true">${ventDone || !ventRequired ? "✓" : "!"}</span><span class="work-plan-label checklist-card-label"><strong>Vent work</strong>${house.plan_vent_notes ? `<small>${escapeHtml(house.plan_vent_notes)}</small>` : ""}${house.plan_vent_done_by ? `<small class="work-plan-done-by checklist-completion-audit">${escapeHtml(workPlanDoneLabel(house.plan_vent_done_by, house.plan_vent_done_at, "vent"))}</small>` : ""}</span><span class="work-plan-badge">${ventBadge}</span></div>`
       : "";
+    if (ventRow) {
+      (ventRequired ? requiredRows : notRequiredRows).push(ventRow);
+    }
+    requiredRows.push(...questionSection.requiredRows);
+    notRequiredRows.push(...questionSection.notRequiredRows);
     const held = canViewMaterials ? data.materials.flatMap((material) => {
       const quantity = material.balances[`house:${house.id}`] || 0;
       return Math.abs(quantity) > 1e-9
@@ -7795,11 +7934,7 @@ function renderHouses() {
             <span class="house-stock-title">Pre-start work plan</span>
             ${workPlanSummary ? `<span class="work-plan-count${openWorkCount ? " has-required" : ""}">${workPlanSummary}</span>` : ""}
           </div>
-          <div class="work-plan-trade-items">
-            ${checklistRows.join("")}
-            ${ventRow}
-          </div>
-          ${questionSection.html}
+          ${renderWorkPlanRequirementGroups(requiredRows, notRequiredRows, "work-plan-trade-items")}
         </div>
                   </div>
                   <div class="house-card-actions">
@@ -8134,49 +8269,37 @@ function renderHouseDetail(result) {
     )
     .join("");
 
-  const workPlanRows = [
-    ["scaffolding", "Scaffolding", house.plan_scaffolding_required, house.plan_scaffolding_notes],
-    ["esb", "ESB work", house.plan_esb_required, house.plan_esb_notes],
-    ["plumber", "Plumber work", house.plan_plumber_required, house.plan_plumber_notes],
-    ["vent", "Vent work", house.plan_vent_required, house.plan_vent_notes],
-  ]
-    .filter(([, , required, notes]) =>
-      (required !== null && required !== undefined) || Boolean(notes),
+  const savedChecklistItems = houseWorkPlanChecklistItems(house);
+  const toDetailItem = ({ item, label, required, notes, doneBy, doneAt, doneByUserId }) => ({
+    item,
+    label,
+    value: required === null || required === undefined
+      ? "Not specified"
+      : Number(required) === 1
+        ? "Required"
+        : "Not required",
+    tone: required === null || required === undefined
+      ? "unset"
+      : Number(required) === 1
+        ? "required"
+        : "clear",
+    applicable: Number(required) === 1,
+    doneBy,
+    doneAt,
+    doneByUserId,
+    notes,
+  });
+  const workPlanRows = savedChecklistItems
+    .filter(({ kind, required, notes }) =>
+      kind === "trade" &&
+      ((required !== null && required !== undefined) || Boolean(notes)),
     )
-    .map(([item, label, required, notes]) => ({
-      item,
-      label,
-      value: required === null || required === undefined
-        ? "Not specified"
-        : Number(required) === 1
-          ? "Required"
-          : "Not required",
-      tone: required === null || required === undefined
-        ? "unset"
-        : Number(required) === 1
-          ? "required"
-          : "clear",
-      applicable: Number(required) === 1,
-      doneBy: house[`plan_${item}_done_by`],
-      doneAt: house[`plan_${item}_done_at`],
-      doneByUserId: house[`plan_${item}_done_by_user_id`],
-      notes,
-    }));
-  const workPlanQuestions = WORK_PLAN_SURVEY_QUESTIONS
-    .filter(([key]) => house[`plan_${key}`] !== null && house[`plan_${key}`] !== undefined)
-    .map(([key, label]) => {
-      const answer = Number(house[`plan_${key}`]) === 1;
-      return {
-        item: key,
-        label,
-        value: answer ? "Required" : "Not required",
-        tone: answer ? "required" : "clear",
-        applicable: answer,
-        doneBy: house[`plan_${key}_done_by`],
-        doneAt: house[`plan_${key}_done_at`],
-        doneByUserId: house[`plan_${key}_done_by_user_id`],
-      };
-    });
+    .map(toDetailItem);
+  const workPlanQuestions = savedChecklistItems
+    .filter(({ kind, required }) =>
+      kind === "question" && required !== null && required !== undefined,
+    )
+    .map(toDetailItem);
   const isPlumbingCoordinator = hasAccessProfile(
     state.user,
     "plumbing_coordinator",
@@ -8227,19 +8350,22 @@ function renderHouseDetail(result) {
         ${audit}
       </article>`;
     },
-  ).join("");
-  const workPlanGroups = [
-    ["Work packages", workPlanRows],
-    ["Survey checks", workPlanQuestions],
-  ].filter(([, items]) => items.length);
+  );
   const allWorkPlanRows = [...workPlanRows, ...workPlanQuestions];
+  const requiredWorkPlanRows = allWorkPlanRows.filter(
+    (item) => item.applicable || item.value === "Not specified",
+  );
+  const notRequiredWorkPlanRows = allWorkPlanRows.filter(
+    (item) => !item.applicable && item.value !== "Not specified",
+  );
   $("#house-detail-work-plan").classList.toggle("hidden", !allWorkPlanRows.length);
   $("#house-detail-work-plan-rows").innerHTML = `
     <div class="work-plan-detail-groups">
-      ${workPlanGroups.map(([label, items]) => `
-        <section class="work-plan-detail-group" aria-label="${escapeHtml(label)}">
-          <div class="work-plan-detail-grid">${renderWorkPlanItems(items)}</div>
-        </section>`).join("")}
+      ${renderWorkPlanRequirementGroups(
+        renderWorkPlanItems(requiredWorkPlanRows),
+        renderWorkPlanItems(notRequiredWorkPlanRows),
+        "work-plan-detail-grid",
+      )}
     </div>`;
   const preStart = house.status === "ready" || house.status === "not_started";
   $("#house-detail-snag-section").classList.toggle("hidden", preStart);

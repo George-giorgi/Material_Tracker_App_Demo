@@ -6969,6 +6969,20 @@ html[data-theme="dark"] .work-plan-lock-note { border-color: #705b37; background
 .house-work-plan-summary { margin-top: 12px; display: grid; gap: 6px; }
 .house-work-plan-summary .work-plan-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .house-work-plan-summary .house-stock-title { margin-bottom: 0; }
+.house-work-plan-summary.is-collapsible { gap: 0; overflow: hidden; border: 1px solid #dfe9e2; border-radius: 11px; background: #fbfdfb; }
+.house-work-plan-summary.is-collapsible > summary { min-height: 42px; padding: 9px 12px; cursor: pointer; list-style: none; }
+.house-work-plan-summary.is-collapsible > summary::-webkit-details-marker { display: none; }
+.work-plan-summary-actions { display: inline-flex; align-items: center; gap: 9px; margin-left: auto; }
+.work-plan-summary-chevron { width: 8px; height: 8px; flex: 0 0 8px; border-right: 1.5px solid #668071; border-bottom: 1.5px solid #668071; transform: translateY(-2px) rotate(45deg); transition: transform .16s ease; }
+.house-work-plan-summary.is-collapsible[open] > summary { border-bottom: 1px solid #e3ebe5; }
+.house-work-plan-summary.is-collapsible[open] .work-plan-summary-chevron { transform: translateY(2px) rotate(225deg); }
+.house-work-plan-summary.is-collapsible > .work-plan-requirement-groups { padding: 10px; }
+.house-work-plan-summary.is-collapsible > .work-plan-empty { margin: 10px; }
+.house-work-plan-summary.is-collapsible > summary:focus-visible { outline: 3px solid #4c9a6d66; outline-offset: -3px; }
+html[data-theme="dark"] .house-work-plan-summary.is-collapsible { border-color: #35483f; background: #192622; }
+html[data-theme="dark"] .house-work-plan-summary.is-collapsible > summary { color: #e6efe9; }
+html[data-theme="dark"] .work-plan-summary-chevron { border-color: #aabfb2; }
+html[data-theme="dark"] .house-work-plan-summary.is-collapsible[open] > summary { border-bottom-color: #35483f; }
 .work-plan-empty { display: flex; align-items: center; gap: 10px; margin: 0; border: 1px solid #dfe9e2; border-radius: 9px; padding: 9px 10px; background: #f7faf8; color: #53675a; }
 .work-plan-empty-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border: 1px solid #d6e5da; border-radius: 8px; background: #eaf3ed; color: #477457; }
 .work-plan-empty-icon svg { width: 17px; height: 17px; }
@@ -6977,6 +6991,21 @@ html[data-theme="dark"] .work-plan-lock-note { border-color: #705b37; background
 .work-plan-empty-copy small { color: #66776c; font-size: 10px; line-height: 1.4; }
 .work-plan-count { border-radius: 999px; padding: 2px 9px; background: #e2f5e8; color: #17653a; font-size: 10px; font-weight: 700; }
 .work-plan-count.has-required { background: #fff0d1; color: #8a5400; }
+.work-plan-requirement-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-width: 0; }
+.work-plan-requirement-group { display: grid; align-content: start; gap: 8px; min-width: 0; border: 1px solid #e1e9e3; border-radius: 11px; padding: 10px; background: #fbfdfb; }
+.work-plan-requirement-group-required { border-color: #f0cf91; border-top: 3px solid #e0a13c; background: #fff3d6; }
+.work-plan-requirement-group-not-required { border-color: #b7e0c6; border-top: 3px solid #55a477; background: #e6f7ed; }
+.work-plan-requirement-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.work-plan-requirement-heading h4 { margin: 0; color: #344b3b; font-size: 11px; font-weight: 800; }
+.work-plan-requirement-group-required .work-plan-requirement-heading h4 { color: #80520c; }
+.work-plan-requirement-group-not-required .work-plan-requirement-heading h4 { color: #236942; }
+.work-plan-requirement-heading span { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; padding: 0 6px; background: #e9efeb; color: #53675a; font-size: 10px; font-weight: 800; }
+.work-plan-requirement-group-required .work-plan-requirement-heading span { background: #fff0d1; color: #80520c; }
+.work-plan-requirement-group-not-required .work-plan-requirement-heading span { background: #e2f5e8; color: #236942; }
+.work-plan-requirement-empty { margin: 0; border: 1px dashed #dce5de; border-radius: 8px; padding: 10px; color: #718076; font-size: 10px; line-height: 1.4; }
+.work-plan-requirement-group .work-plan-trade-items { grid-template-columns: minmax(0, 1fr); }
+.work-plan-requirement-group .work-plan-detail-grid { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 640px) { .work-plan-requirement-groups { grid-template-columns: minmax(0, 1fr); } }
 .work-plan-trade-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 7px; }
 .work-plan-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; border: 1px solid #e3ebe5; border-left-width: 4px; border-radius: 9px; padding: 7px 10px; background: #fbfdfb; }
 .work-plan-icon { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 800; line-height: 1; }
@@ -7012,6 +7041,16 @@ html[data-theme="dark"] .work-plan-lock-note { border-color: #705b37; background
 }
 html[data-theme="dark"] .work-plan-count { background: #1f4a31; color: #b9efc6; }
 html[data-theme="dark"] .work-plan-count.has-required { background: #5a3d0a; color: #ffd98a; }
+html[data-theme="dark"] .work-plan-requirement-group { border-color: #394b40; background: #1d2922; }
+html[data-theme="dark"] .work-plan-requirement-group-required { border-color: #7a5a1c; border-top-color: #d3a24f; background: #2c2617; }
+html[data-theme="dark"] .work-plan-requirement-group-not-required { border-color: #2f6a47; border-top-color: #65bd80; background: #1b2e24; }
+html[data-theme="dark"] .work-plan-requirement-heading h4 { color: #e0ece4; }
+html[data-theme="dark"] .work-plan-requirement-group-required .work-plan-requirement-heading h4 { color: #f0d7a4; }
+html[data-theme="dark"] .work-plan-requirement-group-not-required .work-plan-requirement-heading h4 { color: #b9efc6; }
+html[data-theme="dark"] .work-plan-requirement-heading span { background: #33413a; color: #d0ddd5; }
+html[data-theme="dark"] .work-plan-requirement-group-required .work-plan-requirement-heading span { background: #40351f; color: #ffd98a; }
+html[data-theme="dark"] .work-plan-requirement-group-not-required .work-plan-requirement-heading span { background: #203d2a; color: #b9efc6; }
+html[data-theme="dark"] .work-plan-requirement-empty { border-color: #3a5043; color: #aabbb0; }
 html[data-theme="dark"] .work-plan-empty { border-color: #3a5043; background: #202c26; color: #c1d0c6; }
 html[data-theme="dark"] .work-plan-empty-icon { border-color: #45634e; background: #293d30; color: #a8d7b4; }
 html[data-theme="dark"] .work-plan-empty-copy strong { color: #e1eee5; }
@@ -7056,6 +7095,8 @@ html[data-theme="dark"] .house-plan-ready .work-plan-row-done > .work-plan-check
 html[data-theme="dark"] .work-plan-row-unset .work-plan-icon,
 html[data-theme="dark"] .work-plan-row-unset .work-plan-badge { background: #33413a; color: #c3d0c8; }
 html[data-theme="dark"] .work-plan-question-row { grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; min-height: 0; border-color: #33483d; border-left-width: 3px; border-radius: 10px; padding: 9px 11px; background: #19251f; }
+html[data-theme="dark"] .work-plan-question-row.work-plan-row-required { border-color: #7a5a1c; border-left-color: #f2b23a; background: #2c2617; }
+html[data-theme="dark"] .work-plan-question-row.work-plan-row-clear { border-color: #35483f; border-left-color: #4fbf80; background: #1f2b26; }
 html[data-theme="dark"] .work-plan-question-row .work-plan-check { width: 30px; height: 30px; border: 1.5px solid #60776a; border-radius: 9px; background: #202e27; color: #c7e6d0; }
 html[data-theme="dark"] .work-plan-question-row .work-plan-check:hover:not(:disabled) { border-color: #70bd88; background: #263b2e; }
 html[data-theme="dark"] .work-plan-question-row .work-plan-check[aria-pressed="true"] { border-color: #65bd80; background: #244632; color: #c9f0d4; }

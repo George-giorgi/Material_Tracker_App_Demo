@@ -5056,6 +5056,7 @@ class LegacyRouteHandlers:
                     "/api/house-notes",
                     "/api/survey-notes",
                     "/api/house-work-plan",
+                    "/api/house-work-plan/complete",
                     "/api/seai-measure-variation",
                     "/api/seai-documents/share",
                     "/api/auth/pin",
@@ -5492,7 +5493,10 @@ class LegacyRouteHandlers:
                 }
                 work_plan_permissions.update(
                     {
-                        question: _has_access_profile(user, "assign")
+                        question: (
+                            _has_access_profile(user, "assign")
+                            or _has_access_profile(user, "surveyor")
+                        )
                         for question in WORK_PLAN_SURVEY_QUESTIONS
                     }
                 )
@@ -11691,10 +11695,31 @@ class LegacyRouteHandlers:
                                     "Plumbing and Vent work must be checked from the appropriate team dashboard.",
                                 )
                         elif item in WORK_PLAN_SURVEY_QUESTIONS:
-                            if not _has_access_profile(user, "assign"):
+                            if not (
+                                _has_access_profile(user, "assign")
+                                or _has_access_profile(user, "surveyor")
+                            ):
                                 raise ApiError(
                                     403,
-                                    "Only Assign access can check pre-start survey questions.",
+                                    "Only Assign or Surveyor access can check pre-start survey questions.",
+                                )
+                            if (
+                                _has_access_profile(user, "surveyor")
+                                and not _has_access_profile(user, "assign")
+                                and not db.execute(
+                                    """
+                                    SELECT 1
+                                    FROM house_role_assignments
+                                    WHERE house_id = ?
+                                      AND role = 'surveyor'
+                                      AND user_id = ?
+                                    """,
+                                    (house_id, user["id"]),
+                                ).fetchone()
+                            ):
+                                raise ApiError(
+                                    403,
+                                    "This house is not assigned to your Surveyor account.",
                                 )
                         elif not _can_complete_work_plan_trade(db, user, item):
                             raise ApiError(

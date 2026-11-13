@@ -7011,6 +7011,81 @@ class WorkPlanCompletionTests(HttpBase):
         self.assertEqual(tuple(completion), ("", ""))
         self.assertEqual(self.complete(cathy, "solar_pv_required")[0], 409)
 
+    def test_assigned_surveyor_can_check_questions_on_their_dashboard(self):
+        surveyor = self.login(
+            "assigned-question-surveyor", "Assigned Surveyor", "surveyor"
+        )
+        with server.connect_db() as db:
+            surveyor_id = db.execute(
+                "SELECT id FROM app_users WHERE username = ?",
+                ("assigned-question-surveyor",),
+            ).fetchone()["id"]
+            db.execute(
+                """
+                INSERT INTO house_role_assignments
+                    (house_id, role, user_id, assigned_by, assigned_at)
+                VALUES ('PLAN-1', 'surveyor', ?, 'Admin', '2026-11-13T08:00:00')
+                """,
+                (surveyor_id,),
+            )
+            db.execute(
+                """
+                UPDATE provided_houses
+                SET plan_ceramic_fuse_board = 1,
+                    plan_solar_pv_required = 0
+                WHERE id = 'PLAN-1'
+                """
+            )
+
+        status, houses, _ = self.call(
+            "GET",
+            "/api/calculator/houses?status=ready",
+            cookie=surveyor,
+        )
+        self.assertEqual(status, 200)
+        house = next(item for item in houses["houses"] if item["id"] == "PLAN-1")
+        self.assertTrue(house["work_plan_permissions"]["ceramic_fuse_board"])
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan/complete",
+                {
+                    "house_id": "UNASSIGNED-HOUSE",
+                    "item": "ceramic_fuse_board",
+                    "done": True,
+                },
+                cookie=surveyor,
+            )[0],
+            403,
+        )
+
+        status, result, _ = self.call(
+            "POST",
+            "/api/house-work-plan/complete",
+            {
+                "house_id": "PLAN-1",
+                "item": "ceramic_fuse_board",
+                "done": True,
+            },
+            cookie=surveyor,
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["done_by"], "Assigned Surveyor")
+        self.assertEqual(result["done_by_user_id"], surveyor_id)
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/house-work-plan/complete",
+                {
+                    "house_id": "PLAN-1",
+                    "item": "ceramic_fuse_board",
+                    "done": False,
+                },
+                cookie=surveyor,
+            )[0],
+            200,
+        )
+
     def test_checked_by_is_listed_and_cleared_when_unchecked_or_not_required(self):
         cathy = self.login("cathy-plan", "Cathy", "assign")
         self.assertEqual(self.complete(cathy, "scaffolding")[0], 200)
